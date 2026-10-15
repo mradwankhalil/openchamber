@@ -176,9 +176,34 @@ const spaceEntrySchema = z.object({
 export type SpaceEntry = z.infer<typeof spaceEntrySchema>;
 
 // `machine` is the SSH destination of the Docker over SSH place, as the user wrote it; null for this computer.
+/** The actions that get Docker going on this computer, see `places/docker-setup.js` on the server. */
+const DOCKER_SETUP_ACTIONS = ['install_all', 'install_cli', 'start_colima', 'start_desktop'] as const;
+export type DockerSetupAction = typeof DOCKER_SETUP_ACTIONS[number];
+
+// What gets Docker going on this computer: one action, or a step the user takes themselves.
+const DOCKER_REMEDIES = [...DOCKER_SETUP_ACTIONS, 'get_brew', 'linux_install', 'linux_start', 'permission', 'windows_install', 'windows_start'] as const;
+export type DockerRemedy = typeof DOCKER_REMEDIES[number];
+
+// The action under way, or the last one that failed with the end of its command's output.
+const dockerSetupJobSchema = z.object({
+  action: z.enum(DOCKER_SETUP_ACTIONS),
+  running: z.boolean(),
+  failure: failureSchema.extend({ output: z.string().default('') }).nullable(),
+});
+
+export type DockerSetupJob = z.infer<typeof dockerSetupJobSchema>;
+
+// This computer's place only: what gets Docker going, and how much memory Docker has while it answers.
+const dockerSetupSchema = z.object({
+  // A remedy a later host knows and this window does not reads as none: the place's own text stays.
+  remedy: z.enum(DOCKER_REMEDIES).nullable().catch(null),
+  job: dockerSetupJobSchema.nullable(),
+  memory: z.object({ bytes: z.number().min(0), engine: z.enum(['colima', 'docker_desktop', 'other']).catch('other'), low: z.boolean() }).nullable(),
+}).nullable().default(null);
+
 const placeSchema = z.union([
-  z.object({ id: z.string(), machine: z.string().nullable().default(null), available: z.literal(true), hostIsolation: z.boolean(), version: z.string().default('') }),
-  z.object({ id: z.string(), machine: z.string().nullable().default(null), available: z.literal(false), code: z.string(), message: z.string() }),
+  z.object({ id: z.string(), machine: z.string().nullable().default(null), available: z.literal(true), hostIsolation: z.boolean(), version: z.string().default(''), setup: dockerSetupSchema }),
+  z.object({ id: z.string(), machine: z.string().nullable().default(null), available: z.literal(false), code: z.string(), message: z.string(), setup: dockerSetupSchema }),
 ]);
 
 export type SpacePlace = z.infer<typeof placeSchema>;
@@ -307,6 +332,17 @@ export const cleanUpSpaceDisk = (placeId: string): Promise<SpaceCleanUp> =>
   request(`${SPACES_ROUTE}/places/${encodeURIComponent(placeId)}/clean-up`, spaceCleanUpSchema, { method: 'POST' });
 
 /** Starts the download of the image ahead of the first space; answers the disk with `imagePulling` set. */
+/** The Docker setup action under way on this computer, or the last one that failed; null for none. */
+export const readDockerSetupJob = async (signal?: AbortSignal): Promise<DockerSetupJob | null> =>
+  (await request(`${SPACES_ROUTE}/places/local/setup`, z.object({ job: dockerSetupJobSchema.nullable() }), { signal })).job;
+
+/**
+ * Starts `action` on this computer and answers at once; the host refuses one its Docker no longer
+ * needs with `docker_setup_not_offered`, and a second one with `docker_setup_running`.
+ */
+export const startDockerSetup = async (action: DockerSetupAction): Promise<DockerSetupJob | null> =>
+  (await request(`${SPACES_ROUTE}/places/local/setup`, z.object({ job: dockerSetupJobSchema.nullable() }), { method: 'POST', body: JSON.stringify({ action }) })).job;
+
 export const pullSpaceImage = (placeId: string): Promise<SpaceDisk> =>
   request(`${SPACES_ROUTE}/places/${encodeURIComponent(placeId)}/image`, spaceDiskSchema, { method: 'POST' });
 

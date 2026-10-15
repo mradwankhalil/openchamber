@@ -31,6 +31,7 @@ import { createSpaceOpenCode } from './space-opencode.js';
 import { createSpaceSessionIndex, mergeSessionLists } from './space-sessions.js';
 import { createSpaceWebSocketForwarder } from './websocket.js';
 import { DOCKER_SSH_PLACE_ID, createDockerPlace } from './places/docker.js';
+import { createDockerSetup } from './places/docker-setup.js';
 import { createPlaceRegistry } from './places/registry.js';
 import { openCommandStream as openCommandStreamProcess, runCommand as runCommandProcess } from './run-command.js';
 import { createSpaceServerChannel } from './space-server.js';
@@ -114,7 +115,9 @@ export function readOrCreateOwner(dataDir) {
 
 /**
  * `dataDir` is the host's data directory, `dockerPath` the docker CLI to run, `colimaPath` the
- * colima CLI or null, used only after a disk clean-up on a Colima machine, `sshDockerHost` the
+ * colima CLI or null, used only after a disk clean-up on a Colima machine, `findProgram(name)`
+ * the path of a program on this computer or null, asked again at every look of the Docker setup
+ * (`places/docker-setup.js`), `sshDockerHost` the
  * `ssh://<machine>` of the Docker over SSH place or null for none, and `gitPath` the
  * host git that moves code in and out, with `hostEnvironment` as its environment: git starts
  * `docker exec` itself, so the PATH in it must find docker. `place` replaces the Docker place,
@@ -136,6 +139,7 @@ export function createSpacesHost({
   dataDir,
   dockerPath = 'docker',
   colimaPath = null,
+  findProgram = () => null,
   sshDockerHost = null,
   gitPath = 'git',
   hostEnvironment = process.env,
@@ -162,6 +166,8 @@ export function createSpacesHost({
   // The same Docker place on another machine's daemon: the local CLI runs every command there
   // over SSH, so the image, the tools volume and the spaces' volumes live on that machine.
   const sshPlace = sshDockerHost === null ? null : createDockerPlace({ runCommand, openCommandStream, dockerPath, dockerHost: sshDockerHost, id: DOCKER_SSH_PLACE_ID, owner, toolsSource });
+  // Getting Docker ready on this computer, for the local place only.
+  const dockerSetup = createDockerSetup({ runCommand, findProgram, dockerPath, environment: hostEnvironment, check: () => dockerPlace.check(), logger });
   const registry = createPlaceRegistry(sshPlace ? [dockerPlace, sshPlace] : [dockerPlace]);
   registry.seal();
   const records = createSpaceRecords({ dataDir, logger });
@@ -407,6 +413,10 @@ export function createSpacesHost({
     journey,
     /** The places a space can be made on, for the funnel. */
     places: () => registry.list(),
+    /** What gets Docker going on this computer, and the action that does it, for the local place. */
+    dockerSetup,
+    /** The id of the place that `dockerSetup` is about. */
+    localPlaceId: dockerPlace.id,
     /** The dispatcher, to mount after the API auth gate and before every route that reads a directory. */
     middleware: dispatcher.middleware,
     /**

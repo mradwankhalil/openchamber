@@ -30,6 +30,7 @@ import { resolveSpaceSetupPlan } from '@/lib/spaces/space-setup';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { failureOfError, spaceFailureText } from './spaceFailureText';
+import { DockerSetupNotice } from './DockerSetupNotice';
 import { ModelKeySource } from './ModelKeySource';
 import { isAccessChoiceComplete, modelGrantOf, usableHostLoginOf, useSpaceHostLogins, useSpaceModelProviders, type KeySourceChoice } from './spaceModelKeys';
 
@@ -47,8 +48,11 @@ type NewSpaceDialogProps = {
   project: { id: string; path: string };
 };
 
-const usePlaces = (open: boolean): PlacesState => {
+/** The places, checked when the dialog opens and again on `recheck`. */
+const usePlaces = (open: boolean): [PlacesState, () => void] => {
   const [state, setState] = React.useState<PlacesState>({ kind: 'checking' });
+  const [turn, setTurn] = React.useState(0);
+  const recheck = React.useCallback(() => setTurn((current) => current + 1), []);
   React.useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
@@ -61,8 +65,8 @@ const usePlaces = (open: boolean): PlacesState => {
       setState({ kind: 'failed', failure: failureOfError(error) });
     });
     return () => controller.abort();
-  }, [open]);
-  return state;
+  }, [open, turn]);
+  return [state, recheck];
 };
 
 const useChanges = (open: boolean, directory: string): ChangesState => {
@@ -83,7 +87,7 @@ const useChanges = (open: boolean, directory: string): ChangesState => {
 export const NewSpaceDialog: React.FC<NewSpaceDialogProps> = ({ open, onOpenChange, project }) => {
   const { t } = useI18n();
   const isMobile = useUIStore((state) => state.isMobile);
-  const places = usePlaces(open);
+  const [places, recheckPlaces] = usePlaces(open);
   const changes = useChanges(open, project.path);
 
   const [name, setName] = React.useState(generateBranchSlug);
@@ -221,10 +225,16 @@ export const NewSpaceDialog: React.FC<NewSpaceDialogProps> = ({ open, onOpenChan
 
   // A place by the name the user knows it: this computer, or the machine as they wrote it.
   const placeName = (candidate: SpacePlace) => candidate.machine ?? t('spaces.create.place.localDocker');
-  // What the host said of a place that cannot take a space now, under its name.
-  const placeFailure = (candidate: SpacePlace) => (candidate.available ? null : (
-    <div className="typography-meta text-status-error">{spaceFailureText(t, candidate, candidate.machine === null ? undefined : { machine: candidate.machine })}</div>
-  ));
+  // What the host said of a place that cannot take a space now, under its name. On this computer,
+  // the action that gets Docker going, or the step to take, and a memory too small for a space.
+  const placeFailure = (candidate: SpacePlace) => {
+    if (candidate.setup && (candidate.setup.remedy || candidate.setup.job || (candidate.available && candidate.setup.memory?.low))) {
+      return <DockerSetupNotice place={candidate} onRecheck={recheckPlaces} withCheck={!candidate.available} />;
+    }
+    return candidate.available ? null : (
+      <div className="typography-meta text-status-error">{spaceFailureText(t, candidate, candidate.machine === null ? undefined : { machine: candidate.machine })}</div>
+    );
+  };
   // Under the machine, whether or not a key is chosen yet: what granting one below means there.
   const machineNotice = (candidate: SpacePlace) => (candidate.machine === null ? null : (
     <p className="typography-meta text-status-warning">{t('spaces.create.place.keysOnMachine', { machine: candidate.machine })}</p>
