@@ -1354,8 +1354,10 @@ function SessionGroupSectionBase(props: SessionGroupSectionProps): React.ReactNo
          ) : null}
         </TooltipProvider>
       </div>
-      {/* Outside the header, which is a button of its own: the status line can hold one. */}
-      {group.space ? <SpaceGroupStatus spaceId={group.space.id} className="pb-1 ps-5" /> : null}
+      {/* Outside the header, which is a button of its own: the status line can hold one.
+          Its 12px icon sits under the header's slot icon and its text starts at 26px, where the
+          header label and the group's other sub-rows start. */}
+      {group.space ? <SpaceGroupStatus spaceId={group.space.id} className="pb-1 ps-2" /> : null}
       {!isCollapsed && renderBody ? <div className={cn('oc-group-body', groupBodyPaddingClass)}>{body}</div> : null}
     </div>{folderDeleteDialog}</>
   );
