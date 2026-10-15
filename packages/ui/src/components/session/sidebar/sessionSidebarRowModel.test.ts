@@ -183,6 +183,21 @@ describe('buildSessionSidebarRowModel', () => {
     expect(model.selectionEntries.filter((entry) => entry.id === 'ses_parent')).toHaveLength(1);
   });
 
+  test('timeline leaves sessions listed in Pinned out of their project', () => {
+    const input = args([project([group([])])]);
+    input.viewMode = 'timeline';
+    input.timelineItems = [timelineItem('pinned'), timelineItem('working'), timelineItem('other')];
+    input.pinnedItems = [timelineItem('pinned')];
+    input.workItems = [timelineItem('working')];
+    input.zoneSessionIds = new Set(['pinned', 'working']);
+
+    const sessions = buildSessionSidebarRowModel(input).rows.flatMap((row) => (
+      row.kind === 'session' ? [`${row.renderContext}:${row.node.session.id}`] : []
+    ));
+
+    expect(sessions).toEqual(['timeline-mixed:pinned', 'timeline-mixed:working', 'timeline:working', 'timeline:other']);
+  });
+
   test('timeline lists work sessions with the project icon and keeps them in their project', () => {
     const input = args([project([group([])])]);
     input.viewMode = 'timeline';
