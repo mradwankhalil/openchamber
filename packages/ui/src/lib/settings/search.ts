@@ -1483,6 +1483,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => !ctx.isVSCode && !ctx.isMobile,
   },
   {
+    id: 'integrations.extensions.resource-monitor',
+    page: 'integrations',
+    titleKey: 'settings.integrations.extensionCatalog.resourceMonitor.name',
+    descriptionKey: 'settings.integrations.extensionCatalog.resourceMonitor.description',
+    keywords: ['resource', 'monitor', 'cpu', 'memory', 'ram', 'process', 'activity', 'task manager', 'dev server', 'port', 'performance'],
+    isAvailable: (ctx) => !ctx.isVSCode && !ctx.isMobile,
+  },
+  {
     id: 'integrations.guests',
     page: 'integrations',
     titleKey: 'settings.integrations.guests.title',

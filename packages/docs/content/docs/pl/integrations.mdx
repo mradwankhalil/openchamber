@@ -79,6 +79,18 @@ Excalidraw pozwala rysować w plikach `.excalidraw` i rysunkach Obsidian `.excal
 
 Karta aktualizuje rozszerzenie, gdy pojawi się nowa wersja, włącza je ponownie, jeśli je wstrzymano, i je usuwa. Po usunięciu Twoje rysunki pozostają bez zmian; po prostu otwierają się jako tekst. Tylko w wersji web i desktop.
 
+## Resource Monitor
+
+Resource Monitor pokazuje, ile procesora i pamięci zużywa komputer i ile z tego przypada na OpenChamber, OpenCode, wszystko, co uruchomiły, oraz serwery deweloperskie działające pod nimi. To rozszerzenie OpenChamber, widoczne w sekcji **OpenChamber extensions** na tej samej stronie.
+
+1. Otwórz **Settings → Integrations** i wybierz **Install** na karcie Resource Monitor.
+2. Zatwierdź jego lokalną usługę w **Settings → Extensions**. Liczby pochodzą z małego procesu, który OpenChamber uruchamia obok panelu. Proces mierzy tylko wtedy, gdy na ekranie jest panel albo sekcja **Resources**.
+3. Otwórz **Resource Monitor** z prawego paska. Krótkie podsumowanie pojawia się też w sekcji **Resources** panelu Work Status.
+
+Stop przy serwerze deweloperskim lub zadaniu kończy to polecenie razem ze wszystkim, co uruchomiło, więc watcher nie postawi serwera ponownie. **Stop all** w grupie Terminal kończy wszystko, co działa w terminalu i w project actions, a karty terminala zostają otwarte. Sam OpenChamber i serwer OpenCode nie mają przycisku Stop.
+
+Serwery deweloperskie są widoczne, gdy działają pod OpenChamber: uruchomione we wbudowanym terminalu albo przez agenta, gdy OpenCode uruchomił sam OpenChamber. Serwer, który odłącza się od procesu nadrzędnego, ani kontener uruchomiony przez `docker compose up -d` nie pojawią się na liście. Gdy łączysz się ze zdalnym OpenChamber, monitor pokazuje tamtą maszynę. Tylko wersja webowa i desktopowa.
+
 ## Powiązane
 
 - [Issues i PR na GitHub](/pl/github/) — wszystko, co GitHub potrafi w OpenChamber

@@ -79,6 +79,18 @@ Excalidraw 让你直接在 Files 中绘制 `.excalidraw` 文件和 Obsidian 的 
 
 在卡片上，你可以在有新版本时更新扩展、重新启用已暂停的扩展，或将其移除。移除后你的绘图保持不变，只是会以文本形式打开。仅支持 Web 和桌面端。
 
+## Resource Monitor
+
+Resource Monitor 显示本机使用了多少 CPU 和内存，以及其中有多少用在 OpenChamber、OpenCode、它们启动的所有进程，以及在它们下面运行的开发服务器上。它是一个 OpenChamber 扩展，列在同一页面的 **OpenChamber extensions** 下。
+
+1. 打开 **Settings → Integrations**，在 Resource Monitor 卡片上选择 **Install**。
+2. 在 **Settings → Extensions** 中批准它的本地服务。数据来自 OpenChamber 在面板旁启动的一个小进程。它只在面板或 **Resources** 部分显示在屏幕上时采样。
+3. 从右侧栏打开 **Resource Monitor**。Work Status 面板的 **Resources** 下也会显示简短摘要。
+
+开发服务器或任务上的 Stop 会结束该命令及其启动的所有进程，因此 watcher 无法重新拉起服务器。Terminal 组中的 **Stop all** 会结束终端和 project actions 中运行的所有内容，终端标签页保持打开。OpenChamber 本身和 OpenCode 服务器没有 Stop。
+
+开发服务器在 OpenChamber 下运行时才会显示，即在内置终端中启动的服务器，或在 OpenChamber 自己启动 OpenCode 时由智能体启动的服务器。脱离父进程的服务器，或用 `docker compose up -d` 启动的容器，不会列出。连接到远程 OpenChamber 时，监视器显示那台机器。仅支持网页版和桌面版。
+
 ## 相关内容
 
 - [GitHub Issue 与 PR](/zh-cn/github/) — GitHub 在 OpenChamber 中能做的一切

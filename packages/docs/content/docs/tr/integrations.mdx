@@ -79,6 +79,18 @@ Excalidraw, `.excalidraw` dosyalarında ve Obsidian `.excalidraw.md` çizimlerin
 
 Kart, yeni bir sürüm çıktığında uzantıyı günceller, duraklattıysanız yeniden açar ve kaldırır. Kaldırdığınızda çizimleriniz olduğu gibi kalır; yalnızca metin olarak açılır. Yalnızca web ve masaüstü.
 
+## Resource Monitor
+
+Resource Monitor, bilgisayarınızın ne kadar CPU ve bellek kullandığını ve bunun ne kadarının OpenChamber'a, OpenCode'a, onların başlattığı her şeye ve altlarında çalışan geliştirme sunucularına gittiğini gösterir. Bir OpenChamber uzantısıdır ve aynı sayfada **OpenChamber extensions** altında listelenir.
+
+1. **Settings → Integrations** sayfasını açın ve Resource Monitor kartında **Install** seçeneğini seçin.
+2. Yerel hizmetini **Settings → Extensions** içinde onaylayın. Sayılar, OpenChamber'ın panelin yanında başlattığı küçük bir süreçten gelir. Bu süreç yalnızca panel veya **Resources** bölümü ekrandayken ölçer.
+3. Sağdaki çubuktan **Resource Monitor**'ı açın. Work Status panelinde **Resources** altında kısa bir özet de görünür.
+
+Bir geliştirme sunucusunda veya işte Stop, o komutu başlattığı her şeyle birlikte sonlandırır; böylece bir watcher sunucuyu yeniden başlatamaz. Terminal grubundaki **Stop all**, terminalde ve project actions içinde çalışan her şeyi sonlandırır ve terminal sekmelerini açık bırakır. OpenChamber'ın kendisinde ve OpenCode sunucusunda Stop yoktur.
+
+Geliştirme sunucuları OpenChamber altında çalıştıklarında görünür: yerleşik terminalde başlatılanlar ya da OpenCode'u OpenChamber'ın kendisi başlattıysa bir ajanın başlattıkları. Üst sürecinden ayrılan bir sunucu veya `docker compose up -d` ile başlatılan bir kapsayıcı listede yer almaz. Uzak bir OpenChamber'a bağlıysanız monitör o makineyi gösterir. Yalnızca web ve masaüstü.
+
 ## İlgili
 
 - [GitHub Issues & PRs](/tr/github/) — GitHub’ın OpenChamber’da yapabildiği her şey

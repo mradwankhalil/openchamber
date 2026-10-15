@@ -79,6 +79,18 @@ Mit Excalidraw zeichnest du in `.excalidraw`-Dateien und Obsidian-Zeichnungen im
 
 Über die Karte aktualisierst du die Erweiterung, sobald eine neue Version erscheint, schaltest sie wieder ein, wenn du sie pausiert hast, und entfernst sie. Deine Zeichnungen bleiben beim Entfernen unverändert; sie öffnen sich dann einfach als Text. Nur Web und Desktop.
 
+## Resource Monitor
+
+Resource Monitor zeigt, wie viel CPU und Arbeitsspeicher dein Rechner nutzt und wie viel davon auf OpenChamber, OpenCode, alles, was sie gestartet haben, und die darunter laufenden Dev-Server entfällt. Es ist eine OpenChamber-Erweiterung und steht auf derselben Seite unter **OpenChamber extensions**.
+
+1. Öffne **Settings → Integrations** und wähle **Install** auf der Resource-Monitor-Karte.
+2. Erlaube den lokalen Dienst unter **Settings → Extensions**. Die Zahlen kommen von einem kleinen Prozess, den OpenChamber neben dem Panel startet. Er misst nur, solange das Panel oder der Abschnitt **Resources** zu sehen ist.
+3. Öffne **Resource Monitor** in der rechten Leiste. Eine kurze Übersicht erscheint außerdem unter **Resources** im Work-Status-Panel.
+
+Stop bei einem Dev-Server oder einem Job beendet diesen Befehl mit allem, was er gestartet hat, damit ein Watcher den Server nicht neu startet. **Stop all** in der Gruppe Terminal beendet alles, was im Terminal und in Project Actions läuft, und lässt die Terminal-Tabs offen. OpenChamber selbst und der OpenCode-Server haben kein Stop.
+
+Dev-Server erscheinen, wenn sie unter OpenChamber laufen: im eingebauten Terminal gestartet oder von einem Agenten, wenn OpenChamber OpenCode selbst gestartet hat. Ein Server, der sich von seinem Elternprozess löst, oder ein mit `docker compose up -d` gestarteter Container wird nicht aufgeführt. Bist du mit einem entfernten OpenChamber verbunden, zeigt der Monitor diesen Rechner. Nur Web und Desktop.
+
 ## Verwandtes
 
 - [GitHub Issues & PRs](/de/github/) — alles, was GitHub in OpenChamber kann
