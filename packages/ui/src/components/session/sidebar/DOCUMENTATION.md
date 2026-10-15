@@ -302,8 +302,11 @@ all / Expand all.
   cluster, and its Show more and empty rows carry `flat`, so they line up with
   that text. In Tree they render with `'tree-chat'`: the tree's geometry at
   level 0 with the status in the slot (`hasTreeSlotContext`), and Show more
-  lines up with the titles after the slot. Both views, on
-  every surface, open Chats with a reveal of 3 and 7 more per Show more;
+  lines up with the titles after the slot. A Tree Chats row with subsessions
+  expands like a project row (`isExpandableSessionContext`), so a chat's
+  subagent sessions stay reachable under it; List Chats rows stay leaves.
+  Both views, on every surface, open Chats with a reveal of 3 and 7 more per
+  Show more;
   pinned chats are always shown and never spend that limit, so Show more/Show
   fewer count only unpinned rows. Pinned sessions under a project do spend
   its limit, so a project or worktree list never opens with more than 7.

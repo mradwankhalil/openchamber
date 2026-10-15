@@ -45,6 +45,15 @@ export const hasTreeSlotContext = (context: SessionSidebarRenderContext): boolea
   context === 'project' || context === 'mixed-compact' || context === 'tree-chat'
 );
 
+/**
+ * Rows that open their subsessions under them: project rows and the Tree
+ * view's Chats rows. Every other row is a leaf; Pinned and In work feed their
+ * subsessions into the row's badges instead.
+ */
+export const isExpandableSessionContext = (context: SessionSidebarRenderContext): boolean => (
+  context === 'project' || context === 'tree-chat'
+);
+
 /** Rows that render through `SessionTimelineRowBody` with two lines. */
 export const isTwoLineTimelineContext = (context: SessionSidebarRenderContext): boolean => (
   context === 'timeline' || context === 'timeline-mixed'

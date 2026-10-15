@@ -45,7 +45,7 @@ import { canShowSessionWorktreeMenu, getSessionWorktreeMenuDisabled, nodeContain
 import { useSessionRowMenuState } from './useSessionRowMenuState';
 import { buildActiveSessionTreeFromCache, collectSessionMoveDescendants } from './sessionSubtreeActions';
 import type { SessionNode } from '../types';
-import { hasTreeSlotContext, isTwoLineTimelineContext, type SessionSidebarRenderContext } from '../sessionSidebarRowModel';
+import { hasTreeSlotContext, isExpandableSessionContext, isTwoLineTimelineContext, type SessionSidebarRenderContext } from '../sessionSidebarRowModel';
 import { SessionTimelineRowBody } from './SessionTimelineRowBody';
 import { sessionTreeRowPaddingLeft } from './sessionTreeGeometry';
 import { FileTreeChevron } from '@/components/views/files/FileTreeRowParts';
@@ -408,9 +408,9 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   // view's Pinned and In work rows keep it on one line.
   const isOneLineTimelineRow = renderContext === 'timeline-chat' || renderContext === 'tree-chat' || renderContext === 'mixed-compact';
   const isTimelineRow = isTwoLineTimelineContext(renderContext) || isOneLineTimelineRow;
-  // The Tree view's one-line Chats, Pinned and In work rows never expand, but
-  // they keep the tree's slot and geometry, so their state reads down the
-  // same left edge as the tree under them. List rows stay flat.
+  // The Tree view's one-line Chats, Pinned and In work rows keep the tree's
+  // slot and geometry, so their state reads down the same left edge as the
+  // tree under them. List rows stay flat.
   const hasTreeSlot = hasTreeSlotContext(renderContext);
   // While the Pinned section is shown it holds every pinned zone session, and
   // its header already says they are pinned; In work then has none of them.
@@ -655,9 +655,10 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
     </RowMarkTooltip>
   ) : null;
   const sessionTitle = resolvedSession.title || t('sessions.sidebar.session.untitled');
-  // Timeline is a flat list: a node that still carries children renders as a
-  // leaf, without a chevron and without an expansion state.
-  const hasChildren = !isTimelineRow && node.children.length > 0;
+  // Project rows and the Tree view's Chats rows open their subsessions under
+  // them. Any other row renders a node that still carries children as a leaf,
+  // without a chevron and without an expansion state.
+  const hasChildren = isExpandableSessionContext(renderContext) && node.children.length > 0;
   const isPinnedSession = isSessionPinned(pinnedSessionIds, sessionDirectory, session.id);
   // Per-render-context expansion key: the same session can appear in both
   // the project's root and the "Recent" list, and expanding one should not

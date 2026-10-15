@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { Session } from '@/lib/opencode/model';
 import type { SessionGroup, SessionNode } from './types';
 import type { ProjectSection } from './projects/sessionProjectRender';
-import { buildSessionSidebarRowModel, countSessionSearchMatches, resolveSessionSidebarStickyHeader, runExpansionKey, timelineProjectContainerKey, type SessionSidebarActivityItem, type SessionSidebarRowModelArgs } from './sessionSidebarRowModel';
+import { buildSessionSidebarRowModel, countSessionSearchMatches, isExpandableSessionContext, resolveSessionSidebarStickyHeader, runExpansionKey, timelineProjectContainerKey, type SessionSidebarActivityItem, type SessionSidebarRenderContext, type SessionSidebarRowModelArgs } from './sessionSidebarRowModel';
 import { countSessionTreeQueryMatches } from './recent/activitySections';
 import { buildMultiRunIndex } from '@/lib/multirun/runs';
 import { withMultiRunMembership } from '@/lib/multirun/identity';
@@ -432,6 +432,27 @@ describe('buildSessionSidebarRowModel', () => {
 
     expect(chatRows('projects')).toMatchObject({ contexts: ['tree-chat'], control: { flat: false } });
     expect(chatRows('timeline')).toMatchObject({ contexts: ['timeline-chat'], control: { flat: true } });
+  });
+
+  test('an expanded Chats row in Tree lists its subagent sessions one level deeper', () => {
+    const subagent = node('subagent');
+    subagent.session.parentID = 'chat';
+    const input = args([]);
+    input.viewMode = 'projects';
+    input.chatGroup = group([node('chat', [subagent])], { id: 'managed-chats' });
+    const sessionRows = () => buildSessionSidebarRowModel(input).rows
+      .flatMap((row) => (row.kind === 'session' ? [`${row.renderContext}:${row.node.session.id}@${row.depth}`] : []));
+
+    expect(sessionRows()).toEqual(['tree-chat:chat@0']);
+    // The key the row's chevron toggles: `${renderContext}:active:${id}`.
+    input.expandedParents = new Set(['tree-chat:active:chat']);
+    expect(sessionRows()).toEqual(['tree-chat:chat@0', 'tree-chat:subagent@1']);
+  });
+
+  test('only project rows and Tree Chats rows expand their subsessions', () => {
+    const contexts: SessionSidebarRenderContext[] = ['project', 'timeline', 'timeline-mixed', 'mixed-compact', 'timeline-chat', 'tree-chat'];
+
+    expect(contexts.filter(isExpandableSessionContext)).toEqual(['project', 'tree-chat']);
   });
 
   test('Chats failure stays visible beside retained sessions', () => {
