@@ -360,6 +360,16 @@ describe('docker place: create', () => {
     }
   });
 
+  it('names the slow parts it does as they begin, and none it skips', async () => {
+    const fresh = [];
+    await makePlace(createFakeDocker({ imagePresent: false })).create(SPEC, { onStep: (step) => fresh.push(step) });
+    expect(fresh).toEqual(['downloading_image', 'preparing_tools', 'creating']);
+
+    const ready = [];
+    await makePlace(createFakeDocker({ resources: [toolsResource()] })).create(SPEC, { onStep: (step) => ready.push(step) });
+    expect(ready).toEqual([]);
+  });
+
   it('pulls the image, fills the tools, then makes the space, starts it, and waits for its server', async () => {
     const fake = createFakeDocker({ imagePresent: false });
     await makePlace(fake).create(SPEC);

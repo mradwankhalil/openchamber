@@ -32,6 +32,7 @@ const entry = {
   grants: [],
   access: null,
   needsAccess: [],
+  accessFailures: [],
   damaged: false,
   missing: [],
   orphans: [],
@@ -112,10 +113,10 @@ describe('spaces-api', () => {
 
   test('a creation posts the four choices as JSON', async () => {
     const seen = answer(202, JSON.stringify(entry));
-    await createSpace({ projectDirectory: '/home/me/app', placeId: 'docker', name: 'Fix login', start: 'clean', network: { mode: 'open', domains: [] }, setupCommands: ['npm ci'] });
+    await createSpace({ projectDirectory: '/home/me/app', placeId: 'docker', name: 'Fix login', start: 'clean', network: { mode: 'open', domains: [] }, setupCommands: ['npm ci'], grants: [] });
     expect(seen[0]?.method).toBe('POST');
     expect(new URL(seen[0]?.url ?? '').pathname).toBe('/api/openchamber/spaces');
-    expect(await seen[0]?.json()).toEqual({ projectDirectory: '/home/me/app', placeId: 'docker', name: 'Fix login', start: 'clean', network: { mode: 'open', domains: [] }, setupCommands: ['npm ci'] });
+    expect(await seen[0]?.json()).toEqual({ projectDirectory: '/home/me/app', placeId: 'docker', name: 'Fix login', start: 'clean', network: { mode: 'open', domains: [] }, setupCommands: ['npm ci'], grants: [] });
   });
 });
 

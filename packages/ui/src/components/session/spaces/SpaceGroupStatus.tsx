@@ -27,8 +27,11 @@ import { spaceFailureText } from './spaceFailureText';
 const STEP_TEXT = {
   checking_place: 'spaces.group.step.checkingPlace',
   creating: 'spaces.group.step.creating',
+  downloading_image: 'spaces.group.step.downloadingImage',
+  preparing_tools: 'spaces.group.step.preparingTools',
   setting_network: 'spaces.group.step.settingNetwork',
   bringing_code: 'spaces.group.step.bringingCode',
+  giving_access: 'spaces.group.step.givingAccess',
 } satisfies Record<Exclude<SpaceCreationStep, 'ready'>, I18nKey>;
 
 const BUSY_TEXT = {
@@ -74,6 +77,9 @@ const shownCommand = (command: string): string => {
   return first.length > MAX_COMMAND_SHOWN || lines.length > 1 ? `${first.slice(0, MAX_COMMAND_SHOWN)}…` : first;
 };
 
+// A status line that opens something: no hover fill, the text rests at 80% and turns full on hover.
+const LINE_BUTTON_CLASS = 'self-start rounded text-start opacity-80 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
 /** The setup commands' line: which runs now, which failed with its output, or a run cut off. */
 const SetupLine: React.FC<{ spaceId: string; setup: SpaceSetup | null }> = ({ spaceId, setup }) => {
   const { t } = useI18n();
@@ -98,25 +104,25 @@ const SetupLine: React.FC<{ spaceId: string; setup: SpaceSetup | null }> = ({ sp
       </div>
     );
   }
+  // A failed command leaves the space working, so it reads as a warning, and the line itself opens
+  // the window that says what happened and offers the run again.
   return (
-    <div className="flex flex-col gap-1">
-      <Line icon="error-warning" tone="error">
+    <button
+      type="button"
+      className={LINE_BUTTON_CLASS}
+      title={t('spaces.group.setup.output')}
+      onClick={() => useSpacesStore.getState().openSetupOutputDialog(spaceId)}
+    >
+      <Line icon="alert" tone="warning">
         {t(setup.timedOut ? 'spaces.group.setup.timedOut' : 'spaces.group.setup.failed', { command: shownCommand(setup.command) })}
       </Line>
-      <div className="flex flex-wrap gap-1">
-        <Button variant="outline" size="xs" onClick={() => useSpacesStore.getState().openSetupOutputDialog(spaceId)}>
-          {t('spaces.group.setup.output')}
-        </Button>
-        {runAgain}
-      </div>
-    </div>
+    </button>
   );
 };
 
 export const SpaceGroupStatus: React.FC<{ spaceId: string; className?: string }> = ({ spaceId, className }) => {
   const { t } = useI18n();
   const entry = useSpacesStore((state) => state.journey?.get(spaceId));
-  const access = useSpacesStore((state) => state.creationAccess.get(spaceId));
   const catalog = useConfigStore((state) => state.providers);
   const providerName = (providerId: string) => catalog.find((provider) => provider.id === providerId)?.name ?? providerId;
   // The access line is the way to the grant dialog (the maintainer's call of 2026-10-08): no
@@ -125,7 +131,7 @@ export const SpaceGroupStatus: React.FC<{ spaceId: string; className?: string }>
   const grantLine = (providerId: string | null, children: React.ReactNode) => (
     <button
       type="button"
-      className="-mx-1 self-start rounded px-1 text-start hover:bg-[var(--interactive-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className={LINE_BUTTON_CLASS}
       title={t('spaces.group.access.give')}
       aria-label={t('spaces.group.access.giveAria', { label: entry?.name ?? '' })}
       onClick={() => useSpacesStore.getState().openAccessDialog(spaceId, providerId)}
@@ -151,10 +157,7 @@ export const SpaceGroupStatus: React.FC<{ spaceId: string; className?: string }>
   if (entry?.state === 'preparing' && entry.step && entry.step !== 'ready' && entry.step !== 'failed') {
     return (
       <div className={className}>
-        <Line icon="loader-4" tone="muted">
-          {t(STEP_TEXT[entry.step])}
-          {entry.step === 'creating' ? ` ${t('spaces.group.step.creatingFirstTime')}` : null}
-        </Line>
+        <Line icon="loader-4" tone="muted">{t(STEP_TEXT[entry.step])}</Line>
       </div>
     );
   }
@@ -222,14 +225,11 @@ export const SpaceGroupStatus: React.FC<{ spaceId: string; className?: string }>
   }
 
   const accessLine = (() => {
-    if (access?.kind === 'giving') {
-      return <div><Line icon="loader-4" tone="muted">{t('spaces.group.step.givingAccess')}</Line></div>;
-    }
-
-    if (access?.kind === 'failed') {
+    const failures = entry?.accessFailures ?? [];
+    if (failures.length > 0) {
       return (
         <div className="flex flex-col gap-1">
-          {access.failures.map((failure) => (
+          {failures.map((failure) => (
             <React.Fragment key={failure.provider}>
               {grantLine(failure.provider, t('spaces.group.accessMissing', { provider: providerName(failure.provider), reason: spaceFailureText(t, failure, { name: SPACE_LOGIN_NAMES.get(failure.provider) ?? providerName(failure.provider) }) }))}
             </React.Fragment>

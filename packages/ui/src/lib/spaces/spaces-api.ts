@@ -117,7 +117,9 @@ export const providerGrantOf = (grants: readonly SpaceGrant[], providerId: strin
   grants.find((grant): grant is Extract<SpaceGrant, { kind: 'model' | 'login' | 'custom' }> => (grant.kind === 'model' || grant.kind === 'login' || grant.kind === 'custom') && grant.provider === providerId);
 
 /** The steps of a creation, in order, as `openchamber:space-progress` announces them. */
-const SPACE_CREATION_STEPS = ['checking_place', 'creating', 'setting_network', 'bringing_code', 'ready'] as const;
+// `downloading_image` and `preparing_tools` come inside `creating`, only when the place does that slow
+// part now, and `creating` follows them again.
+const SPACE_CREATION_STEPS = ['checking_place', 'creating', 'downloading_image', 'preparing_tools', 'setting_network', 'bringing_code', 'giving_access', 'ready'] as const;
 
 export type SpaceCreationStep = (typeof SPACE_CREATION_STEPS)[number];
 
@@ -166,6 +168,9 @@ const spaceEntrySchema = z.object({
   grants: z.array(grantSchema),
   access: z.enum(['granted', 'needs_access', 'unknown']).nullable(),
   needsAccess: z.array(z.string()),
+  // The model access the creation carried and the host could not give, with the reason; gone once
+  // a grant for the provider succeeds. Empty from a host before the creation carried its access.
+  accessFailures: z.array(z.object({ provider: z.string(), code: z.string(), message: z.string() })).default([]),
   // What is broken in a damaged space: `repairable` comes back with a restart of the container,
   // `gatekeeper_gone` never does. Null for a space that is whole.
   damage: z.enum(['repairable', 'gatekeeper_gone']).nullable().default(null),
@@ -222,6 +227,8 @@ export type CreateSpaceRequest = {
   network: SpaceNetwork;
   /** The project's setup commands, resolved as for a new worktree, trust included. */
   setupCommands: string[];
+  /** The model access chosen in the dialog; the host gives it before the space is ready. */
+  grants: Extract<GrantRequest, { kind: 'model' | 'login' | 'custom' }>[];
 };
 
 export type GrantRequest =
