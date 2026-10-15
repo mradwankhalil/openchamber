@@ -22,6 +22,10 @@ and `FormDock`. They mount inside the composer form, outside both the
 full editor and collapsed mobile pill, with one absolute `bottom-full`
 anchor, input-column width, gap, and glass surface. Appearing, disappearing,
 or collapsing a panel does not resize the transcript or composer.
+One panel shows at a time, in this order: an expanded BTW (its sheet or
+its unsent draft), a permission, a form, then a collapsed BTW strip. A collapsed BTW gives the
+composer back to the parent session, so the parent's own request takes the
+dock and the strip returns once it is answered (`btwHoldsDock`).
 The frame also owns the header row through its `header` and `compact` props;
 callers supply controls and content, not their own header padding.
 
