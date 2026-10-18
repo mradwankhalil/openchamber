@@ -572,12 +572,11 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
 
     const setImagePreviewOpen = useUIStore((state) => state.setImagePreviewOpen);
 
+    // Images and diagrams open the overlay; a text payload (a pasted text
+    // attachment) opens the content dialog.
     const handleShowPopup = React.useCallback((content: ToolPopupContent) => {
-
-        if (content.image || content.mermaid) {
-            setPopupContent(content);
-            setImagePreviewOpen(true);
-        }
+        setPopupContent(content);
+        setImagePreviewOpen(true);
     }, [setImagePreviewOpen]);
 
     const handlePopupChange = React.useCallback((open: boolean) => {

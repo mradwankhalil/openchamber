@@ -335,6 +335,17 @@ Why: only navigation tools use the compact static path; all other tools need obs
   (`lib/messages/inlineMessageLinks.ts`) that `markdownCore` renders as a span
   and `decorate.ts` gives its icon; the plain-text path builds the same chip
   directly. Brackets around anything that is not an attachment stay text.
+  In a sent message a citation opens what its attachment chip above the
+  message opens: one resolver (`lib/messages/attachmentPreview.ts`) decides for
+  both, and `message/useOpenAttachment.ts` carries it out per runtime. An image
+  opens the viewer, text sent inline (a pasted text, a picked text file) the
+  text dialog, a file attached by path (`file://`) the file itself, in the
+  editor in VS Code and a Files tab elsewhere. A citation whose file opens
+  nothing (a PDF sent inline, a folder) stays a label. Only `UserTextPart`
+  makes chips clickable: `withAttachmentChips` draws labels unless the caller
+  passes `isOpenable`, so the composer, the queue and context blocks get no
+  dead tab stops. A click that ends a text selection over a chip leaves it
+  closed.
   A known skill (`$name`, or `/name` in messages sent before skills moved to
   `$`) renders as the same chip with the book icon and still opens the skill
   file on click. The composer draws both chips too

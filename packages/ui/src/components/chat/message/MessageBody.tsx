@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Part } from '@/lib/opencode/model';
+import type { FilePart, Part } from '@/lib/opencode/model';
 
 import UserTextPart from './parts/UserTextPart';
 import ToolPart from './parts/ToolPart';
@@ -441,6 +441,10 @@ const UserMessageBody = React.memo(({ messageId, parts, messageCreatedAt, isMobi
         part.type === 'file' && part.filename ? [part.filename] : []
     )), [parts]);
 
+    const attachmentFiles = React.useMemo(() => parts.filter((part): part is FilePart => (
+        part.type === 'file' && Boolean(part.url)
+    )), [parts]);
+
     const mentionToken = agentMention?.token;
     let mentionInjected = false;
 
@@ -777,6 +781,8 @@ const UserMessageBody = React.memo(({ messageId, parts, messageCreatedAt, isMobi
                                 partIndex={index}
                                 onTruncationChange={handlePartTruncationChange}
                                 attachmentFilenames={attachmentFilenames}
+                                attachmentFiles={attachmentFiles}
+                                onShowPopup={onShowPopup}
                             />
                         </React.Fragment>
                     );
