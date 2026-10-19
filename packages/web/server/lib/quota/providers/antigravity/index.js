@@ -14,6 +14,7 @@ import {
   fetchAntigravityQuotaSummary
 } from './api.js';
 import { transformSummary, transformModels } from './transforms.js';
+import { warnIfGeminiGroupMissing } from './client.js';
 import { resolveCliProxyAuth, fetchCliProxyQuota } from './cliproxy.js';
 
 export { isConfigured } from './auth.js';
@@ -54,6 +55,7 @@ export const fetchQuota = async () => {
     fetchAntigravityModels(accessToken, projectId)
   ]);
 
+  warnIfGeminiGroupMissing(summaryPayload);
   const { modelGroupWindows } = transformSummary(summaryPayload);
   const models = transformModels(modelsPayload, modelGroupWindows);
 

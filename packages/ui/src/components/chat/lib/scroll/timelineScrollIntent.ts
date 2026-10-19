@@ -5,7 +5,8 @@
 // inputs that do not: which keys mean "scroll up", when a middle-button press
 // starts a pan, and when an upward wheel belongs to a nested scroller (a tool
 // output box) that can still consume it. Pure functions, no DOM ownership,
-// so the rules are testable without a renderer.
+// so the rules are testable without a renderer; the one event below carries
+// gestures made inside a page frame out to the timeline.
 
 // A nested scroller inside the timeline marks itself with this attribute
 // (see ToolPart). Wheel-up over it scrolls the box, not the conversation, for
@@ -33,6 +34,28 @@ export const nestedScrollableConsumesWheelUp = (root: HTMLElement, target: Event
     const nested = nestedScrollable(root, target);
     return nested !== null && nested.scrollTop > 0;
 };
+
+// A wheel or swipe over a sandboxed page frame (`openchamber_render`) scrolls
+// the timeline, but its events stay in the frame. The frame's owner reports
+// the gesture's direction as this event from the frame element, so the
+// timeline holding that frame hears it like its own wheel or touch.
+const FRAME_SCROLL_EVENT = 'openchamber:frame-scroll';
+
+/** `up` moves toward older content: a wheel up, or a finger dragging down. */
+export type FrameScrollDirection = 'up' | 'down';
+
+export function dispatchFrameScroll(frame: HTMLElement, direction: FrameScrollDirection): void {
+    frame.dispatchEvent(new CustomEvent<FrameScrollDirection>(FRAME_SCROLL_EVENT, { bubbles: true, detail: direction }));
+}
+
+/** Listens for frame scroll gestures inside `container`. */
+export function onFrameScroll(container: HTMLElement, listener: (direction: FrameScrollDirection) => void): () => void {
+    const handle = (event: Event) => {
+        if (event instanceof CustomEvent && (event.detail === 'up' || event.detail === 'down')) listener(event.detail);
+    };
+    container.addEventListener(FRAME_SCROLL_EVENT, handle);
+    return () => container.removeEventListener(FRAME_SCROLL_EVENT, handle);
+}
 
 // Middle-button press starts the platform's autoscroll pan (Windows/Linux
 // Chromium); the pan then scrolls without wheel events, so the press itself is

@@ -748,9 +748,15 @@ const createParser = (imageMode: MarkdownImageMode, rawHtml: MarkdownRawHtmlMode
           }
           // An attachment citation is a label, not a link: the file-type icon
           // is added by the decoration pass (`decorateAttachmentCitations`).
+          // An openable one is a button the message text opens by its
+          // `data-attachment-open` name.
           const attachment = parseAttachmentHref(target);
           if (attachment) {
-            return `<span class="${INLINE_REFERENCE_CHIP_CLASS}" data-attachment-citation="${escapeAttr(attachment.iconId)}" title="${escapeAttr(attachment.filename)}">${escapeAttr(attachment.filename)}</span>`;
+            const filename = escapeAttr(attachment.filename);
+            const chip = attachment.openable
+              ? `class="${INTERACTIVE_REFERENCE_CHIP_CLASS}" role="button" tabindex="0" data-attachment-open="${filename}"`
+              : `class="${INLINE_REFERENCE_CHIP_CLASS}"`;
+            return `<span ${chip} data-attachment-citation="${escapeAttr(attachment.iconId)}" title="${filename}">${filename}</span>`;
           }
           const skillName = parseSkillHref(target);
           if (skillName) {

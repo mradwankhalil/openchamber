@@ -132,10 +132,14 @@ export function LiveTurnActivity({ turn, hasLaterAssistant, expanded, onToggle, 
     // openedFoldMessageWindow), so a very long turn opens at once.
     const handleToggle = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
         if (!expanded && windowStore) {
-            windowStore.setRange(turn.turnId, openedFoldMessageWindow(activityMessages.length, isReaderAtTimelineEnd(event.currentTarget)));
+            const rowCount = activityMessages.reduce(
+                (total, message) => total + activityRowParts(message.parts, showReasoningTraces).length,
+                0,
+            );
+            windowStore.setRange(turn.turnId, openedFoldMessageWindow(rowCount, isReaderAtTimelineEnd(event.currentTarget)));
         }
         onToggle();
-    }, [activityMessages.length, expanded, onToggle, turn.turnId, windowStore]);
+    }, [activityMessages, expanded, onToggle, showReasoningTraces, turn.turnId, windowStore]);
     const headerClass = 'w-full justify-start normal-case !ps-px !pe-2 text-[var(--tools-description)] hover:!bg-transparent active:!bg-transparent';
     return (
         <LiveTurnHoistedPagesContext.Provider value={hoistedPages}>

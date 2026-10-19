@@ -79,6 +79,7 @@ import { useChatColumnActions } from '@/components/chat/chatColumnSession';
 import { useStreamingTextThrottle } from '../../hooks/useStreamingTextThrottle';
 import { getStreamingOutputAppend, getToolOutput } from './toolOutput';
 import { toAbsoluteFilePath } from '@/lib/path-utils';
+import { hasTextSelectionInside } from '@/lib/textSelection';
 import {
     executeOutputTruncation,
     executeScript,
@@ -795,7 +796,10 @@ const ToolScrollableTextOutput: React.FC<{
 
     if (isShellTool(part.tool)) {
         return (
-            <div className="relative typography-code text-muted-foreground/90">
+            // min-h-7 holds the copy button (top-1 + h-6): an absolute child taller
+            // than one output line overflows the scroller, and platforms with
+            // classic scrollbars (Windows) then show one for a single line.
+            <div className="relative min-h-7 typography-code text-muted-foreground/90">
                 <div className="absolute inset-e-1 top-1 z-10">
                     <CopyToolOutputButton output={renderedOutput} />
                 </div>
@@ -1096,6 +1100,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
     const hasVisualDiffEntry = diffEntries.some((entry) => entry.renderMode === 'diff');
     // `execute` renders its script and its call list itself, below.
     const hideToolInputPreview = part.tool === 'openchamber'
+        || part.tool === 'openchamber_schedule'
         || part.tool === 'openchamber_web'
         || part.tool === 'openchamber_memory'
         || part.tool === 'openchamber_knowledge'
@@ -1759,6 +1764,9 @@ const ToolPartContent: React.FC<ToolPartProps & { header?: ToolRowHeader; subage
         }
 
         event.stopPropagation();
+        if (hasTextSelectionInside(event.currentTarget)) {
+            return;
+        }
         const rawPath = getApplyPatchFilePath(file);
         const displayPath = rawPath ? getRelativePath(rawPath, currentDirectory) : '';
         openApplyPatchFileInEditor({
@@ -1807,6 +1815,12 @@ const ToolPartContent: React.FC<ToolPartProps & { header?: ToolRowHeader; subage
         } else {
             onToggle(part.id);
         }
+    };
+
+    const handleMainRowClick = (event: React.MouseEvent<HTMLDivElement>) => {
+        // Selecting the tool title must not open the file or toggle the row.
+        if (hasTextSelectionInside(event.currentTarget)) return;
+        handleMainClick(event);
     };
 
     const handleMainKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1888,7 +1902,7 @@ const ToolPartContent: React.FC<ToolPartProps & { header?: ToolRowHeader; subage
                     'group/tool flex gap-1.5 pe-2 ps-px py-1.5 rounded-xl',
                     isMultiFileApplyPatch ? 'flex-wrap items-start cursor-pointer' : 'items-center cursor-pointer',
                 )}
-                onClick={isMultiFileApplyPatch ? () => onToggle(part.id) : handleMainClick}
+                onClick={isMultiFileApplyPatch ? () => onToggle(part.id) : handleMainRowClick}
                 onKeyDown={isMultiFileApplyPatch ? (event) => {
                     if (event.target !== event.currentTarget) return;
                     if (event.key !== 'Enter' && event.key !== ' ') return;

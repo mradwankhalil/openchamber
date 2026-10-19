@@ -45,6 +45,7 @@ import {
   readPreferredLocale,
   readThemeSource,
   resolveMainWindowBounds,
+  resolveBrowserPanelPreloadPath,
   resolvePreloadPath,
   resolveSplashBackgroundColor,
   settingsFilePath,
@@ -99,8 +100,10 @@ import {
 } from './linux-autostart.mjs';
 import { reconcileAppImageDesktopEntry } from './linux-desktop-entry.mjs';
 import { unsupportedAppSpecificOpenError, validateLocalPath } from './path-open-utils.mjs';
+import { keepSessionCookies } from './browser-panel-cookies.mjs';
 import {
   browserPanelPermissionAuditDetails,
+  browserPanelWindowOpenTarget,
   plainChromeUserAgent,
   shouldAllowBrowserPanelCertificateError,
   shouldAllowBrowserPanelPermission,
@@ -109,7 +112,7 @@ import { isSpaceId, spaceIdOfPreviewPartition, spacePreviewPartition, spacePrevi
 import { shouldBlockGuestFrameNavigation } from './guest-frame-navigation.mjs';
 import { createRelayDevTunnelBridge } from './relay-dev-tunnel.mjs';
 import { parsePairingDeepLink } from './pairing-deep-link.mjs';
-import { attachRendererRecovery } from './renderer-recovery.mjs';
+import { attachRendererRecovery, takeSafeStart } from './renderer-recovery.mjs';
 import { createLoadFailureWarningFilter } from './load-failure-warnings.mjs';
 import { mintOutsideFileGrant } from '@openchamber/web/server/lib/fs/routes.js';
 import { fetchUpdateNotes } from '@openchamber/web/server/lib/changelog/update-notes.js';
@@ -440,14 +443,27 @@ const flushRendererStorage = async () => {
     .map((window) => window.webContents
       .executeJavaScript("window.dispatchEvent(new Event('openchamber:flush-persisted-state'))", true)
       .catch(() => undefined));
+  // The browser panel's logins: session cookies get an expiry so they outlive
+  // the quit (browser-panel-cookies.mjs), and Chromium writes cookies to disk
+  // on a timer, so a sign-in shortly before quitting would be lost with the rest.
+  const panelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
+  const panelCookies = keepSessionCookies(panelSession.cookies, {
+    onError: (error) => log.warn('[electron] could not keep a browser panel session cookie:', error?.message || error),
+  })
+    .then(() => panelSession.cookies.flushStore())
+    .catch((error) => {
+      log.warn('[electron] browser panel cookie flush before quit failed:', error);
+    });
   await Promise.race([
-    Promise.all(pages),
+    Promise.all([...pages, panelCookies]),
     new Promise((resolve) => setTimeout(resolve, RENDERER_STORAGE_FLUSH_TIMEOUT_MS)),
   ]);
-  try {
-    session.defaultSession.flushStorageData();
-  } catch (error) {
-    log.warn('[electron] storage flush before quit failed:', error);
+  for (const storageSession of [session.defaultSession, panelSession]) {
+    try {
+      storageSession.flushStorageData();
+    } catch (error) {
+      log.warn('[electron] storage flush before quit failed:', error);
+    }
   }
 };
 
@@ -1175,7 +1191,10 @@ const hardenPanelSession = (panelSession) => {
 };
 
 const hardenBrowserPanelSession = () => {
-  hardenPanelSession(session.fromPartition(BROWSER_PANEL_PARTITION));
+  const panelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
+  hardenPanelSession(panelSession);
+  // Only the user's session: a space's pages open everything in place anyway.
+  panelSession.registerPreloadScript({ type: 'frame', filePath: resolveBrowserPanelPreloadPath() });
 
   app.on('certificate-error', (event, contents, url, error, _certificate, callback) => {
     if (isPanelSession(contents.session) && shouldAllowBrowserPanelCertificateError({ url, error })) {
@@ -1386,6 +1405,17 @@ const focusForegroundWindow = () => {
 const activeNotifications = new Set();
 const nativeNotificationClaims = new Map();
 const NATIVE_NOTIFICATION_DEDUPE_TTL_MS = 5000;
+// Ids of the notifications this run delivered on macOS, by session, so viewing
+// the session removes them from Notification Center. Only macOS can remove a
+// delivered notification.
+const deliveredNotificationIdsBySession = new Map();
+
+const clearSessionNotifications = (sessionId) => {
+  const ids = deliveredNotificationIdsBySession.get(sessionId);
+  if (!ids) return;
+  deliveredNotificationIdsBySession.delete(sessionId);
+  Notification.remove(ids);
+};
 
 const getNativeNotificationClaimKey = (payload) => {
   const tag = typeof payload?.tag === 'string' ? payload.tag.trim() : '';
@@ -1444,12 +1474,19 @@ const maybeShowNativeNotification = (rawInput) => {
     : null;
   const runtimeKey = readTrimmedString(payload.runtimeKey) || null;
 
+  const notificationId = globalThis.crypto.randomUUID();
   const notification = new Notification({
+    id: notificationId,
     title,
     body,
     silent: false,
     ...(process.platform === 'darwin' ? { sound: 'Glass' } : {}),
   });
+  if (process.platform === 'darwin' && sessionId) {
+    const ids = deliveredNotificationIdsBySession.get(sessionId) ?? [];
+    ids.push(notificationId);
+    deliveredNotificationIdsBySession.set(sessionId, ids);
+  }
 
   activeNotifications.add(notification);
   const release = () => { activeNotifications.delete(notification); };
@@ -2646,7 +2683,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {}, 
 
     if (process.platform === 'darwin' && !state.quitRequested) {
       const remainingVisible = BrowserWindow.getAllWindows().filter(
-        (window) => !window.isDestroyed() && window.isVisible(),
+        (window) => !window.isDestroyed() && window.isVisible() && !isBrowserPanelPopup(window),
       ).length;
 
       if (remainingVisible <= 1) {
@@ -2781,10 +2818,9 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {}, 
     log.warn(`[guests] refused an extension frame navigating to ${host || 'an invalid URL'}`);
   });
 
-  browserWindow.webContents.setZoomFactor(1);
-  browserWindow.webContents.on('zoom-changed', () => {
-    browserWindow.webContents.setZoomFactor(1);
-  });
+  // The app scales itself (View > Zoom changes the interface scale), so
+  // Chromium's page zoom from pinch or Ctrl+wheel stays off.
+  browserWindow.webContents.setZoomMode('disabled');
   attachRendererRecovery(browserWindow, { log, label: 'window' });
   attachDevWindowTape(app, browserWindow);
 
@@ -2806,7 +2842,6 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {}, 
         documentClass: classifyStartupDocument(browserWindow.webContents.getURL()),
       });
     }
-    browserWindow.webContents.setZoomFactor(1);
     if (state.mainWindow && browserWindow.id === state.mainWindow.id && pendingDeepLinks.length > 0) {
       const timer = setTimeout(() => flushPendingDeepLinks({ includeSessions: false }), 400);
       if (typeof timer?.unref === 'function') timer.unref();
@@ -4423,7 +4458,6 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const enabled = args.enabled === true;
       const settingsArgs = {
         openAtLogin: enabled,
-        ...(process.platform === 'darwin' ? { openAsHidden: enabled } : {}),
         ...(process.platform === 'win32' ? getLoginItemOptions() : { args: enabled ? [BACKGROUND_START_ARG] : [] }),
         ...(process.platform === 'win32' ? { enabled } : {}),
       };
@@ -4844,6 +4878,12 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         ? readTrimmedString(browserWindow.__ocHostWindowId) || null
         : null;
       maybeShowNativeNotification(stampForwardedNotification(args, senderHostId));
+      return null;
+    }
+
+    case 'desktop_clear_session_notifications': {
+      const sessionId = readTrimmedString(args?.sessionId);
+      if (sessionId) clearSessionNotifications(sessionId);
       return null;
     }
 
@@ -5751,8 +5791,10 @@ const buildAutoHiddenMenu = (locale = 'en') => {
         { label: t('back'), accelerator: 'Ctrl+[', click: () => dispatchAction('go-back') },
         { label: t('forward'), accelerator: 'Ctrl+]', click: () => dispatchAction('go-forward') },
         { type: 'separator' },
-        { label: t('previousSession'), accelerator: 'Alt+Up', click: () => dispatchAction('previous-session') },
-        { label: t('nextSession'), accelerator: 'Alt+Down', click: () => dispatchAction('next-session') },
+        // No accelerator: Alt+Up/Down duplicated the customizable Ctrl+Alt+Left/Right
+        // session shortcuts and leaked out of views that use Alt+arrows themselves.
+        { label: t('previousSession'), click: () => dispatchAction('previous-session') },
+        { label: t('nextSession'), click: () => dispatchAction('next-session') },
         { type: 'separator' },
         { label: t('previousProject'), accelerator: 'Ctrl+Alt+Up', click: () => dispatchAction('previous-project') },
         { label: t('nextProject'), accelerator: 'Ctrl+Alt+Down', click: () => dispatchAction('next-project') },
@@ -5811,6 +5853,52 @@ const loadUrlInsideWebContents = (contents, rawUrl) => {
   }
 };
 
+/**
+ * Sign-in popups opened by pages of the user's browser panel. They are app
+ * windows to Electron, so the checks that decide whether the app still has a
+ * window of its own leave them out, and they close with the window that holds
+ * the panel.
+ */
+const browserPanelPopups = new WeakSet();
+const isBrowserPanelPopup = (browserWindow) => browserPanelPopups.has(browserWindow);
+
+const BROWSER_PANEL_POPUP_WEB_PREFERENCES = {
+  sandbox: true,
+  contextIsolation: true,
+  nodeIntegration: false,
+};
+
+const openBrowserPanelTab = (contents, url, background) => {
+  const host = contents.hostWebContents;
+  if (!host || host.isDestroyed()) {
+    loadUrlInsideWebContents(contents, url);
+    return;
+  }
+  host.send('openchamber:emit', {
+    event: 'openchamber:browser-panel-open-tab',
+    detail: { webContentsId: contents.id, url, background },
+  });
+};
+
+const trackBrowserPanelPopup = (contents, popup) => {
+  browserPanelPopups.add(popup);
+  // The popup may open nothing of its own: a page asking for one more window
+  // gets it in place.
+  popup.webContents.setWindowOpenHandler(({ url }) => {
+    loadUrlInsideWebContents(popup.webContents, url);
+    return { action: 'deny' };
+  });
+  const hostWindow = contents.hostWebContents ? BrowserWindow.fromWebContents(contents.hostWebContents) : null;
+  if (!hostWindow) return;
+  const closePopup = () => {
+    if (!popup.isDestroyed()) popup.close();
+  };
+  hostWindow.once('closed', closePopup);
+  popup.once('closed', () => {
+    if (!hostWindow.isDestroyed()) hostWindow.removeListener('closed', closePopup);
+  });
+};
+
 app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() === 'window') {
     guardAttachedWebviews(contents);
@@ -5818,9 +5906,35 @@ app.on('web-contents-created', (_event, contents) => {
   }
   if (contents.getType() !== 'webview') return;
 
-  contents.setWindowOpenHandler(({ url }) => {
-    loadUrlInsideWebContents(contents, url);
+  // Pages of a space keep everything in their own view: a window or tab of
+  // theirs would leave the space's session for the user's.
+  const isUserPanelPage = () => contents.session === session.fromPartition(BROWSER_PANEL_PARTITION);
+
+  contents.setWindowOpenHandler(({ url, disposition, postBody }) => {
+    const target = isUserPanelPage()
+      ? browserPanelWindowOpenTarget({ url, disposition, hasPostBody: Boolean(postBody) })
+      : 'in-place';
+    if (target === 'popup') {
+      const hostWindow = contents.hostWebContents ? BrowserWindow.fromWebContents(contents.hostWebContents) : null;
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          parent: hostWindow ?? undefined,
+          autoHideMenuBar: true,
+          webPreferences: BROWSER_PANEL_POPUP_WEB_PREFERENCES,
+        },
+      };
+    }
+    if (target === 'tab' || target === 'background-tab') {
+      openBrowserPanelTab(contents, url, target === 'background-tab');
+    } else if (target === 'in-place') {
+      loadUrlInsideWebContents(contents, url);
+    }
     return { action: 'deny' };
+  });
+
+  contents.on('did-create-window', (popup) => {
+    trackBrowserPanelPopup(contents, popup);
   });
 });
 
@@ -5886,6 +6000,8 @@ const COMMANDS_SAFE_FOR_REMOTE = new Set([
   'desktop_get_lan_address',
   'desktop_capture_page_rect',
   'desktop_tray_update',
+  // A remote page can only dismiss delivered notifications of a session id it names.
+  'desktop_clear_session_notifications',
 ]);
 
 ipcMain.handle('openchamber:invoke', async (event, command, args) => {
@@ -5897,6 +6013,12 @@ ipcMain.handle('openchamber:invoke', async (event, command, args) => {
   const browserWindow = BrowserWindow.fromWebContents(event.sender);
   const result = await handleInvoke(browserWindow, command, args);
   return !local && command === 'desktop_hosts_get' ? redactHostsConfigForRemote(result) : result;
+});
+
+// Sync, because preload must know before the page's scripts restore their
+// layout. The answer is about the asking page only, so any origin may ask.
+ipcMain.on('openchamber:take-safe-start', (event) => {
+  event.returnValue = takeSafeStart(event.sender);
 });
 
 ipcMain.handle('openchamber:dialog:open', async (event, options) => {
@@ -6316,7 +6438,7 @@ app.whenReady().then(async () => {
     const openAtLogin = loginItemSettings?.openAtLogin === true;
     app.setLoginItemSettings({
       openAtLogin,
-      ...(process.platform === 'darwin' ? { openAsHidden: openAtLogin, args: openAtLogin ? [BACKGROUND_START_ARG] : [] } : {}),
+      ...(process.platform === 'darwin' ? { args: openAtLogin ? [BACKGROUND_START_ARG] : [] } : {}),
       ...(process.platform === 'win32' ? { ...getLoginItemOptions(), enabled: openAtLogin } : {}),
     });
   }

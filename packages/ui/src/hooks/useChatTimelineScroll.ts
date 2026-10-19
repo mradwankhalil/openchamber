@@ -43,6 +43,7 @@ import {
     isFollowReleaseKey,
     isMiddleButtonPan,
     nestedScrollableConsumesWheelUp,
+    onFrameScroll,
 } from '@/components/chat/lib/scroll/timelineScrollIntent';
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -224,7 +225,8 @@ const lastMatch = (node: HTMLElement, selector: string): HTMLElement | null => {
 
 interface FollowStop {
     readonly element: HTMLElement;
-    // The scroll offset that puts the element's start at the top.
+    // The scroll offset that puts the element's start at the top, just under
+    // its turn's sticky user header when the header sticks.
     readonly limit: number;
     // The content offset of the element's end.
     readonly bottom: number;
@@ -233,9 +235,11 @@ interface FollowStop {
 const readFollowStop = (node: HTMLElement, element: HTMLElement): FollowStop => {
     const rect = element.getBoundingClientRect();
     const offset = node.scrollTop - node.getBoundingClientRect().top;
+    const header = element.closest('[data-turn-id]')?.querySelector<HTMLElement>(':scope > [data-turn-sticky-header]');
+    const headerHeight = header ? header.getBoundingClientRect().height : 0;
     return {
         element,
-        limit: Math.max(0, rect.top + offset - REPLY_START_GAP_PX),
+        limit: Math.max(0, rect.top + offset - headerHeight - REPLY_START_GAP_PX),
         bottom: rect.bottom + offset,
     };
 };
@@ -261,13 +265,15 @@ const findStreamingReply = (node: HTMLElement): HTMLElement | null => lastMatch(
 /**
  * Where the follow of a live turn may stop, top first (see followEnd). With
  * Activity collapsed, the end of the reader's message: the compact work and the
- * answer land right under it. Then, in both modes, the start of the reply
+ * answer land right under it (and under the sticky header, which keeps the
+ * message on top). Then, in both modes, the start of the reply
  * (`reply`, the streaming text part), so a reader watching all the work
  * follows it until a long answer starts.
  */
 const findFollowStops = (node: HTMLElement, stopAfterUserMessage: boolean, reply: HTMLElement | null): FollowStop[] => {
     const stops: FollowStop[] = [];
-    // The turn's work starts right after the reader's message row.
+    // The turn's work starts right after the reader's message: the sticky
+    // header, or the message row itself when the header does not stick.
     const turn = stopAfterUserMessage ? findLatestTurn(node) : null;
     const work = turn?.children[1];
     if (work instanceof HTMLElement) stops.push(readFollowStop(node, work));
@@ -1224,6 +1230,11 @@ export const useChatTimelineScroll = ({
         const handleKeyDown = (event: KeyboardEvent) => {
             if (isFollowReleaseKey(event) && canScrollUp()) gesture();
         };
+        // A wheel or swipe over a page frame, which keeps its own events:
+        // read as the wheel and touch above read theirs.
+        const stopFrameScroll = onFrameScroll(scrollNode, (direction) => {
+            if ((direction === 'up' || !isAtEndRef.current) && canScrollUp()) gesture();
+        });
         const handleScroll = () => {
             const scrollTop = scrollNode.scrollTop;
             // The list's scroll length is the viewport height it measured,
@@ -1275,6 +1286,7 @@ export const useChatTimelineScroll = ({
             scrollNode.removeEventListener('pointerdown', handlePointerDown);
             scrollNode.removeEventListener('keydown', handleKeyDown);
             scrollNode.removeEventListener('scroll', handleScroll);
+            stopFrameScroll();
         };
     }, [isLiveFollowActive, realContentOverflowsViewport, scrollNode]);
 

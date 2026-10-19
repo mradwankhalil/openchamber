@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { asNonEmptyString, buildResult, resolveConfigApiKey, toNumber } from '../../utils/index.js';
-import { ANTIGRAVITY_ENDPOINTS, ANTIGRAVITY_HEADERS } from './api.js';
+import { ANTIGRAVITY_ENDPOINTS } from './api.js';
+import { antigravityHeaders } from './client.js';
 import { transformSummary } from './transforms.js';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -308,7 +309,7 @@ const fetchSummary = async (source, account, deadline) => {
         header: {
           Authorization: 'Bearer $TOKEN$',
           'Content-Type': 'application/json',
-          ...ANTIGRAVITY_HEADERS
+          ...antigravityHeaders()
         },
         data: JSON.stringify(account.projectId ? { project: account.projectId } : {})
       }, deadline);

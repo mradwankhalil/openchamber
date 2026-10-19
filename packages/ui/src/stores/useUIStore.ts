@@ -17,8 +17,10 @@ import { useFilesViewTabsStore } from './useFilesViewTabsStore';
 import { rebaseMovedPath } from '@/lib/filePathMoves';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { noteBrowserTabOpenedWithAddress, requestBrowserTabLoad } from '@/lib/browser/devServerWait';
+import { clampLiveBrowserTabs, LIVE_BROWSER_TABS_DEFAULT } from '@/lib/browser/liveTabs';
 import { isContextPanelMode, type ContextPanelMode } from '@/lib/surfaces/modes';
 import { CONTEXT_SURFACE_WIDTHS } from '@/lib/surfaces/registry';
+import { orderMobileWorkspaceTabs, shownMobileWorkspaceTabs, type MobileWorkspaceTab } from '@/lib/mobileWorkspaceTabs';
 import {
   carrySurfaceToZone,
   getZoneView,
@@ -858,6 +860,10 @@ interface UIStore {
   /** Surface ids the user hid from the context rail; stored as the hidden set
       so surfaces added later appear for everyone. */
   contextRailHiddenSurfaces: string[];
+  /** Order of the phone's workspace drawer tabs (lib/mobileWorkspaceTabs.ts). */
+  mobileWorkspaceTabOrder: string[];
+  /** Workspace drawer tabs the user hid; stored as the hidden set so tabs added later appear for everyone. */
+  mobileWorkspaceHiddenTabs: string[];
   /** Surfaces the user moved off the right zone, per device (lib/workspace/zones.ts). */
   contextSurfaceZones: ContextZonePlacement;
   contextEditorTreeVisible: boolean;
@@ -999,6 +1005,8 @@ interface UIStore {
   layoutAnimations: boolean;
   /** Plain clicks on links in chat open in the built-in browser panel (desktop only). */
   openLinksInBrowserPanel: boolean;
+  /** How many of the user's browser tabs keep their page loaded, across projects (desktop only). */
+  liveBrowserTabLimit: number;
   /** Plain clicks on issue, PR and Linear links in chat open them on the issues and PRs board. */
   openTrackerLinksOnBoard: boolean;
   autoDeleteAfterDays: number;
@@ -1085,6 +1093,7 @@ interface UIStore {
   persistChatDraft: boolean;
   showOpenCodeUpdateNotifications: boolean;
   agentControlToolEnabled: boolean;
+  agentScheduleToolEnabled: boolean;
   agentWebToolEnabled: boolean;
   /** Full-text message search (server index). Opt-in: off keeps every part of it idle. */
   messageSearchEnabled: boolean;
@@ -1141,9 +1150,11 @@ interface UIStore {
   mermaidRenderingMode: MermaidRenderingMode;
   userMessageRenderingMode: UserMessageRenderingMode;
   collapsibleUserMessages: boolean;
+  stickyUserHeader: boolean;
   promptNavigatorEnabled: boolean;
   showSplitAssistantMessageActions: boolean;
   allowPromptingSubagentSessions: boolean;
+  saveImagesForTextOnlyModels: boolean;
   isExpandedInput: boolean;
   reportUsage: boolean;
   shortcutOverrides: Record<string, ShortcutCombo>;
@@ -1181,8 +1192,12 @@ interface UIStore {
   /** A new background browser tab for an agent at `url`; returns its tab id, or null where there is no browser. */
   openAgentBrowserTab: (directory: string, url: string, ownerSessionId: string | null) => string | null;
   setContextPanelTabTargetPath: (directory: string, tabID: string, targetPath: string) => void;
-  /** Points file tabs and the editor's open files at or under `fromPath` at `toPath` after a move or rename. */
-  moveContextFilePaths: (directory: string, fromPath: string, toPath: string) => void;
+  /**
+   * Points file tabs and the editor's open files at or under `fromPath` at `toPath` after a move or
+   * rename. `filesRoot` is the root the editor keeps them under when it is not `directory`: a draft
+   * waiting for a space shows the space's files in its own panel.
+   */
+  moveContextFilePaths: (directory: string, fromPath: string, toPath: string, filesRoot?: string) => void;
   setActiveContextPanelTab: (directory: string, tabID: string) => void;
   reorderContextPanelTabs: (directory: string, activeTabID: string, overTabID: string) => void;
   closeContextPanelTab: (directory: string, tabID: string) => void;
@@ -1213,6 +1228,8 @@ interface UIStore {
   setWorkStatusSectionOrder: (sectionIds: readonly string[]) => void;
   setContextRailSurfaceVisible: (surfaceId: string, visible: boolean) => void;
   setContextRailHiddenSurfaces: (surfaceIds: string[]) => void;
+  setMobileWorkspaceTabOrder: (order: readonly string[]) => void;
+  setMobileWorkspaceTabVisible: (tab: MobileWorkspaceTab, visible: boolean) => void;
   setSessionSwitcherOpen: (open: boolean) => void;
   setSessionDropdownOpen: (open: boolean) => void;
   setPendingDiffFile: (filePath: string | null, staged?: boolean, scope?: PendingDiffScope | null) => void;
@@ -1277,6 +1294,7 @@ interface UIStore {
   setConfirmFileTreeMove: (value: boolean) => void;
   setLayoutAnimations: (value: boolean) => void;
   setOpenLinksInBrowserPanel: (value: boolean) => void;
+  setLiveBrowserTabLimit: (value: number) => void;
   setOpenTrackerLinksOnBoard: (value: boolean) => void;
   setFileTreeSide: (side: 'left' | 'right') => void;
   setAutoDeleteAfterDays: (days: number) => void;
@@ -1358,6 +1376,7 @@ interface UIStore {
   setPersistChatDraft: (value: boolean) => void;
   setShowOpenCodeUpdateNotifications: (value: boolean) => void;
   setAgentControlToolEnabled: (value: boolean) => void;
+  setAgentScheduleToolEnabled: (value: boolean) => void;
   setAgentWebToolEnabled: (value: boolean) => void;
   setMessageSearchEnabled: (value: boolean) => void;
   setMessageSearchReasoningEnabled: (value: boolean) => void;
@@ -1392,9 +1411,11 @@ interface UIStore {
   setMermaidRenderingMode: (value: MermaidRenderingMode) => void;
   setUserMessageRenderingMode: (value: UserMessageRenderingMode) => void;
   setCollapsibleUserMessages: (value: boolean) => void;
+  setStickyUserHeader: (value: boolean) => void;
   setPromptNavigatorEnabled: (value: boolean) => void;
   setShowSplitAssistantMessageActions: (value: boolean) => void;
   setAllowPromptingSubagentSessions: (value: boolean) => void;
+  setSaveImagesForTextOnlyModels: (value: boolean) => void;
   viewPagerPage: 'left' | 'center' | 'right';
   setViewPagerPage: (page: 'left' | 'center' | 'right') => void;
   toggleExpandedInput: () => void;
@@ -1437,6 +1458,8 @@ export const useUIStore = create<UIStore>()(
         contextPanelByDirectory: {},
         contextRailOrder: [],
         contextRailHiddenSurfaces: [],
+        mobileWorkspaceTabOrder: [],
+        mobileWorkspaceHiddenTabs: [],
         contextSurfaceZones: {},
         contextEditorTreeVisible: true,
         fileTreeSide: 'right',
@@ -1512,6 +1535,7 @@ export const useUIStore = create<UIStore>()(
         confirmFileTreeMove: true,
         layoutAnimations: true,
         openLinksInBrowserPanel: false,
+        liveBrowserTabLimit: LIVE_BROWSER_TABS_DEFAULT,
         openTrackerLinksOnBoard: true,
         autoDeleteAfterDays: 30,
         sessionRetentionAction: 'archive',
@@ -1583,6 +1607,7 @@ export const useUIStore = create<UIStore>()(
         persistChatDraft: true,
         showOpenCodeUpdateNotifications: true,
         agentControlToolEnabled: true,
+        agentScheduleToolEnabled: true,
         agentWebToolEnabled: true,
         messageSearchEnabled: false,
         messageSearchReasoningEnabled: false,
@@ -1616,9 +1641,11 @@ export const useUIStore = create<UIStore>()(
         mermaidRenderingMode: 'svg',
         userMessageRenderingMode: 'markdown',
         collapsibleUserMessages: true,
+        stickyUserHeader: false,
         promptNavigatorEnabled: true,
         showSplitAssistantMessageActions: false,
         allowPromptingSubagentSessions: false,
+        saveImagesForTextOnlyModels: false,
         draftStartersVisible: true,
         isExpandedInput: false,
         reportUsage: true,
@@ -1944,7 +1971,7 @@ export const useUIStore = create<UIStore>()(
           });
         },
 
-        moveContextFilePaths: (directory, fromPath, toPath) => {
+        moveContextFilePaths: (directory, fromPath, toPath, filesRoot = directory) => {
           const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
           const normalizedFrom = normalizeContextTargetPath(fromPath);
           const normalizedTo = normalizeContextTargetPath(toPath);
@@ -1961,7 +1988,7 @@ export const useUIStore = create<UIStore>()(
               },
             };
           });
-          useFilesViewTabsStore.getState().movePaths(normalizedDirectory, normalizedFrom, normalizedTo);
+          useFilesViewTabsStore.getState().movePaths(normalizeDirectoryPath(filesRoot.trim()), normalizedFrom, normalizedTo);
         },
 
         setActiveContextPanelTab: (directory, tabID) => {
@@ -2327,6 +2354,24 @@ export const useUIStore = create<UIStore>()(
           set({ contextRailHiddenSurfaces: [...new Set(surfaceIds)] });
         },
 
+        setMobileWorkspaceTabOrder: (order) => {
+          set({ mobileWorkspaceTabOrder: orderMobileWorkspaceTabs(order) });
+        },
+
+        setMobileWorkspaceTabVisible: (tab, visible) => {
+          set((state) => {
+            const hidden = state.mobileWorkspaceHiddenTabs;
+            if (visible) {
+              return hidden.includes(tab) ? { mobileWorkspaceHiddenTabs: hidden.filter((entry) => entry !== tab) } : state;
+            }
+            if (hidden.includes(tab)) return state;
+            // The last tab the user keeps stays: the drawer would have nothing to show.
+            const shown = shownMobileWorkspaceTabs(state.mobileWorkspaceTabOrder, hidden);
+            if (shown.length <= 1) return state;
+            return { mobileWorkspaceHiddenTabs: [...hidden, tab] };
+          });
+        },
+
 
         setSessionSwitcherOpen: (open) => {
           if (get().isSessionSwitcherOpen === open) {
@@ -2622,6 +2667,10 @@ export const useUIStore = create<UIStore>()(
 
         setOpenLinksInBrowserPanel: (value) => {
           set({ openLinksInBrowserPanel: value });
+        },
+
+        setLiveBrowserTabLimit: (value) => {
+          set({ liveBrowserTabLimit: clampLiveBrowserTabs(value) });
         },
 
         setOpenTrackerLinksOnBoard: (value) => {
@@ -3157,6 +3206,9 @@ export const useUIStore = create<UIStore>()(
         setAgentControlToolEnabled: (value) => {
           set({ agentControlToolEnabled: value });
         },
+        setAgentScheduleToolEnabled: (value) => {
+          set({ agentScheduleToolEnabled: value });
+        },
         setAgentWebToolEnabled: (value) => {
           set({ agentWebToolEnabled: value });
         },
@@ -3268,6 +3320,9 @@ export const useUIStore = create<UIStore>()(
         setCollapsibleUserMessages: (value) => {
           set({ collapsibleUserMessages: value });
         },
+        setStickyUserHeader: (value) => {
+          set({ stickyUserHeader: value });
+        },
         setPromptNavigatorEnabled: (value) => {
           set({ promptNavigatorEnabled: value });
         },
@@ -3276,6 +3331,9 @@ export const useUIStore = create<UIStore>()(
         },
         setAllowPromptingSubagentSessions: (value) => {
           set({ allowPromptingSubagentSessions: value });
+        },
+        setSaveImagesForTextOnlyModels: (value) => {
+          set({ saveImagesForTextOnlyModels: value });
         },
         setReportUsage: (value) => {
           set({ reportUsage: value });
@@ -3575,6 +3633,10 @@ export const useUIStore = create<UIStore>()(
           state.contextRailOrder = Array.isArray(state.contextRailOrder)
             ? (state.contextRailOrder as unknown[]).filter((id): id is string => typeof id === 'string' && id.trim() !== '')
             : [];
+          for (const key of ['mobileWorkspaceTabOrder', 'mobileWorkspaceHiddenTabs']) {
+            const value = state[key];
+            state[key] = Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+          }
 
           // v23 -> v24: workspace zones. Panels gain closed left/bottom zones
           // (the sanitize above), and nothing is placed off the right.
@@ -3589,6 +3651,8 @@ export const useUIStore = create<UIStore>()(
           contextPanelByDirectory: withoutForeignComparisons(state.contextPanelByDirectory),
           contextRailOrder: state.contextRailOrder,
           contextRailHiddenSurfaces: state.contextRailHiddenSurfaces,
+          mobileWorkspaceTabOrder: state.mobileWorkspaceTabOrder,
+          mobileWorkspaceHiddenTabs: state.mobileWorkspaceHiddenTabs,
           contextSurfaceZones: state.contextSurfaceZones,
           contextEditorTreeVisible: state.contextEditorTreeVisible,
           fileTreeSide: state.fileTreeSide,
@@ -3629,6 +3693,7 @@ export const useUIStore = create<UIStore>()(
           confirmFileTreeMove: state.confirmFileTreeMove,
           layoutAnimations: state.layoutAnimations,
           openLinksInBrowserPanel: state.openLinksInBrowserPanel,
+          liveBrowserTabLimit: state.liveBrowserTabLimit,
           openTrackerLinksOnBoard: state.openTrackerLinksOnBoard,
           autoDeleteAfterDays: state.autoDeleteAfterDays,
           sessionRetentionAction: state.sessionRetentionAction,
@@ -3684,6 +3749,7 @@ export const useUIStore = create<UIStore>()(
           persistChatDraft: state.persistChatDraft,
           showOpenCodeUpdateNotifications: state.showOpenCodeUpdateNotifications,
           agentControlToolEnabled: state.agentControlToolEnabled,
+          agentScheduleToolEnabled: state.agentScheduleToolEnabled,
           agentWebToolEnabled: state.agentWebToolEnabled,
           messageSearchEnabled: state.messageSearchEnabled,
           messageSearchReasoningEnabled: state.messageSearchReasoningEnabled,
@@ -3714,9 +3780,11 @@ export const useUIStore = create<UIStore>()(
           mermaidRenderingMode: state.mermaidRenderingMode,
           userMessageRenderingMode: state.userMessageRenderingMode,
           collapsibleUserMessages: state.collapsibleUserMessages,
+          stickyUserHeader: state.stickyUserHeader,
           promptNavigatorEnabled: state.promptNavigatorEnabled,
           showSplitAssistantMessageActions: state.showSplitAssistantMessageActions,
           allowPromptingSubagentSessions: state.allowPromptingSubagentSessions,
+          saveImagesForTextOnlyModels: state.saveImagesForTextOnlyModels,
           draftStartersVisible: state.draftStartersVisible,
           shortcutOverrides: state.shortcutOverrides,
           fileEditorKeymap: state.fileEditorKeymap,

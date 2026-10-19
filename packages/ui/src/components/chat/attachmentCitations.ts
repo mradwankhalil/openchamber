@@ -174,6 +174,26 @@ export const buildAttachmentCitationText = (filenames: string[]): string => (
     filenames.map((filename) => `[${filename}]`).join(' ')
 );
 
+/**
+ * Markdown links to images saved where OpenCode runs, so a model without image
+ * input (or its subagent) can open them by path. A plain link: a draft that
+ * starts with `!` switches the composer into shell mode, so `![name](path)`
+ * cannot lead a message. Windows paths get forward slashes, which every
+ * Windows tool accepts and markdown does not read as escapes; a path with
+ * spaces or parentheses goes in angle brackets.
+ */
+export const buildImagePathCitationText = (images: Array<{ filename: string; path: string }>): string => (
+    images.map(({ filename, path }) => {
+        const target = path.replace(/\\/g, '/');
+        return `[${filename}](${/[\s()]/.test(target) ? `<${target}>` : target})`;
+    }).join(' ')
+);
+
+/** Names of the markdown links already in the text, so a new paste picks a free one. */
+export const findImagePathCitationNames = (text: string): string[] => (
+    Array.from(text.matchAll(/\[([^\]\n]+)\]\(/g), (match) => match[1])
+);
+
 export const findAttachmentCitationRanges = (text: string, filenames: string[]): CitationRange[] => {
     if (!text || !text.includes('[') || filenames.length === 0) {
         return [];
