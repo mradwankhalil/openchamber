@@ -4,6 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { antigravityUserAgent } from './client.js';
 
 test('CLIProxyAPI Antigravity account source', async (t) => {
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-cliproxy-'));
@@ -176,7 +177,7 @@ test('CLIProxyAPI Antigravity account source', async (t) => {
         assert.equal(call.authIndex, 'ready');
         assert.equal(call.url, 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary');
         assert.equal(call.header.Authorization, 'Bearer $TOKEN$');
-        assert.equal(call.header['User-Agent'], 'antigravity/1.11.5 windows/amd64');
+        assert.equal(call.header['User-Agent'], antigravityUserAgent());
         assert.ok(call.header['X-Goog-Api-Client']);
         assert.ok(call.header['Client-Metadata']);
         assert.deepEqual(JSON.parse(call.data), { project: 'project-test' });
