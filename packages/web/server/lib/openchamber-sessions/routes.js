@@ -183,25 +183,38 @@ const fetchSelectionInputs = async ({ client, readSettingsFromDiskMigrated }) =>
   return { settings, models, agents, opencodeDefaultAgent, opencodeDefaultModel };
 };
 
+/**
+ * The agent a stored reference names. v1 stored an agent's display name, and
+ * plugin agents are addressed by a namespaced id whose display name differs
+ * (`oh-my-openagent/Sisyphus - ultraworker` vs `Sisyphus - ultraworker`), so
+ * the id wins, then the display name, the id ignoring case, and the last
+ * segment of a namespaced id, each only when exactly one agent matches.
+ */
+const findAgentByReference = (agents, reference) => {
+  const wanted = asNonEmptyString(reference)?.trim();
+  if (!wanted) return null;
+  const exact = agents.find((agent) => agent?.id === wanted);
+  if (exact) return exact;
+  const lower = wanted.toLowerCase();
+  const only = (matches) => (matches.length === 1 ? matches[0] : null);
+  const lastSegment = (id) => (id.includes('/') ? id.slice(id.lastIndexOf('/') + 1) : null);
+  return only(agents.filter((agent) => typeof agent?.name === 'string' && agent.name.trim().toLowerCase() === lower))
+    || only(agents.filter((agent) => typeof agent?.id === 'string' && agent.id.toLowerCase() === lower))
+    || only(agents.filter((agent) => typeof agent?.id === 'string' && lastSegment(agent.id)?.toLowerCase() === lower))
+    || null;
+};
+
 const resolveDefaultSelection = ({ agents, models, settings, projectDefaults, opencodeDefaultAgent, opencodeDefaultModel, autoAvailable }) => {
   const primaryAgents = agents.filter((agent) => isPrimaryAgentMode(agent?.mode) && agent?.hidden !== true);
   let resolvedAgent = null;
   const projectDefaultAgent = asNonEmptyString(projectDefaults?.defaultAgent);
   const settingsDefaultAgent = asNonEmptyString(settings?.defaultAgent);
-  // The project's default agent wins over the global one. v1 stored the agent's
-  // display name; v2 agents are addressed by id (`build` vs `Build`), so a
-  // setting saved before the upgrade still resolves.
-  const findAgentBySetting = (wantedName) => {
-    const wanted = wantedName.toLowerCase();
-    return agents.find((agent) => agent?.id === wantedName)
-      || agents.find((agent) => typeof agent?.name === 'string' && agent.name.toLowerCase() === wanted)
-      || agents.find((agent) => typeof agent?.id === 'string' && agent.id.toLowerCase() === wanted)
-      || null;
-  };
-  if (projectDefaultAgent) resolvedAgent = findAgentBySetting(projectDefaultAgent);
-  if (!resolvedAgent && settingsDefaultAgent) resolvedAgent = findAgentBySetting(settingsDefaultAgent);
+  // The project's default agent wins over the global one; a setting saved as a
+  // display name still resolves to the id.
+  if (projectDefaultAgent) resolvedAgent = findAgentByReference(agents, projectDefaultAgent);
+  if (!resolvedAgent && settingsDefaultAgent) resolvedAgent = findAgentByReference(agents, settingsDefaultAgent);
   if (!resolvedAgent && opencodeDefaultAgent) {
-    const candidate = agents.find((agent) => agent?.id === opencodeDefaultAgent) || null;
+    const candidate = findAgentByReference(agents, opencodeDefaultAgent);
     if (candidate && isPrimaryAgentMode(candidate.mode) && candidate.hidden !== true) {
       resolvedAgent = candidate;
     }
@@ -280,14 +293,25 @@ const resolveNamedAgentModel = (agents, agentID, models) => {
  * switched once and then persists, so every dispatch sets it explicitly rather
  * than passing it alongside the prompt.
  */
-const applySessionSelection = async ({ client, sessionID, model, agent, variant }) => {
+const applySessionSelection = async ({ client, sessionID, model, agent, variant, recoverAgent }) => {
   if (model) {
     await client.session.switchModel({
       sessionID,
       model: { id: model.modelID, providerID: model.providerID, ...(variant ? { variant } : {}) },
     });
   }
-  if (agent) await client.session.switchAgent({ sessionID, agent });
+  if (!agent) return agent;
+  try {
+    await client.session.switchAgent({ sessionID, agent });
+    return agent;
+  } catch (error) {
+    // Only an agent taken from the session record is recovered: a requested
+    // one was validated, and its failure is the caller's to see.
+    const recovered = recoverAgent ? await recoverAgent(agent) : null;
+    if (!recovered || recovered === agent) throw error;
+    await client.session.switchAgent({ sessionID, agent: recovered });
+    return recovered;
+  }
 };
 
 const createSession = async ({ client, directory, title }) => {
@@ -715,6 +739,7 @@ export const createOpenChamberSessionService = (dependencies) => {
     let model = requestedModel;
     let agent = requestedAgent;
     let variant = requestedVariant;
+    let agentFromRecord = false;
     if (reuseSessionSelection && (!model || !agent)) {
       const previous = await fetchSessionSelection({ client, sessionID });
       if (previous) {
@@ -722,7 +747,10 @@ export const createOpenChamberSessionService = (dependencies) => {
           model = previous.model;
           if (variant == null) variant = previous.variant ?? undefined;
         }
-        if (!agent && previous.agent) agent = previous.agent;
+        if (!agent && previous.agent) {
+          agent = previous.agent;
+          agentFromRecord = true;
+        }
       }
     }
     if (!model || !agent) {
@@ -815,7 +843,24 @@ export const createOpenChamberSessionService = (dependencies) => {
     };
 
     try {
-      await applySessionSelection({ client, sessionID, model, agent, variant });
+      // The record is not validated like a requested agent: one holding a
+      // display name (#5379) was switched back verbatim and failed every turn.
+      // When OpenCode rejects it, the session continues on the agent it
+      // names, or on the default agent when the catalogue names none.
+      const recoverAgent = agentFromRecord
+        ? async (recorded) => {
+          const inputs = await fetchSelectionInputs({ client, readSettingsFromDiskMigrated });
+          if (inputs.agents.length === 0) return null;
+          const named = findAgentByReference(inputs.agents, recorded)?.id;
+          if (named) return named;
+          return resolveDefaultSelection({
+            ...inputs,
+            projectDefaults: resolveProjectDefaults(inputs.settings, directory, projectId),
+            autoAvailable: false,
+          }).agent ?? null;
+        }
+        : null;
+      agent = await applySessionSelection({ client, sessionID, model, agent, variant, recoverAgent });
     } catch (error) {
       throw markGoalPartial(error);
     }

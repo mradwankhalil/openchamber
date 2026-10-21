@@ -5,6 +5,7 @@ import { selectAutoReady, useRoutingStore } from '@/stores/useRoutingStore';
 import type { StoreApi, UseBoundStore } from "zustand";
 import { devtools, persist } from "zustand/middleware";
 import { findCatalogModel, type Provider, type Model, type Agent, type Config } from "@/lib/opencode/model";
+import { canonicalAgentName, findAgentByReference } from "@/lib/agentReference";
 import type { DesktopSettings } from "@/lib/desktop";
 import type { CatalogKind } from "@/lib/opencode/events";
 import { opencodeClient, type OpencodeHealthProbe } from "@/lib/opencode/client";
@@ -428,15 +429,17 @@ const resolveDefaultAgentModelSelection = ({
     // --- Agent cascade ---
     const primaryAgents = agents.filter((agent) => isPrimaryMode(agent.mode) && !isAgentHidden(agent));
 
+    // A default saved as a display name (`Sisyphus - ultraworker`) still finds
+    // the agent whose id (`oh-my-openagent/Sisyphus - ultraworker`) OpenCode expects.
     let resolvedAgent: Agent | undefined;
     if (projectDefaultAgent) {
-        resolvedAgent = agents.find((agent) => agent.name === projectDefaultAgent);
+        resolvedAgent = findAgentByReference(agents, projectDefaultAgent);
     }
     if (!resolvedAgent && settingsDefaultAgent) {
-        resolvedAgent = agents.find((agent) => agent.name === settingsDefaultAgent);
+        resolvedAgent = findAgentByReference(agents, settingsDefaultAgent);
     }
     if (!resolvedAgent && opencodeDefaultAgent) {
-        const candidate = agents.find((agent) => agent.name === opencodeDefaultAgent);
+        const candidate = findAgentByReference(agents, opencodeDefaultAgent);
         // OpenCode requires the default agent to be a visible primary agent.
         if (candidate && isPrimaryMode(candidate.mode) && !isAgentHidden(candidate)) {
             resolvedAgent = candidate;
@@ -2797,7 +2800,7 @@ export const useConfigStore = create<ConfigStore>()(
                             sttLanguage: defaults.sttLanguage ?? state.sttLanguage,
                         };
                         if (!useSessionUIStore.getState().currentSessionId && state.selectionSource === 'auto' && state.agentSelectionSource === 'auto' && next.settingsDefaultAgent) {
-                            next.currentAgentName = next.settingsDefaultAgent;
+                            next.currentAgentName = canonicalAgentName(state.agents, next.settingsDefaultAgent);
                         }
                         return next;
                     });
@@ -3087,7 +3090,9 @@ export const useConfigStore = create<ConfigStore>()(
                                 const selectionSource = isActive ? state.selectionSource : (baseSnapshot.selectionSource ?? "auto");
                                 const agentSelectionSource = isActive ? state.agentSelectionSource : (baseSnapshot.agentSelectionSource ?? "auto");
                                 const nextSelection = resolveSelectionWithManualGuard({
-                                    currentAgentName,
+                                    // A kept pick is re-read against the fresh catalogue, so a
+                                    // display name held from before resolves to the agent id.
+                                    currentAgentName: canonicalAgentName(safeAgents, currentAgentName),
                                     currentProviderId,
                                     currentModelId,
                                     currentVariant,
@@ -3253,7 +3258,7 @@ export const useConfigStore = create<ConfigStore>()(
                     set({ modelsMetadata: new Map<string, ModelMetadata>() });
                 },
 
-                setAgent: (agentName: string | undefined, options?: { keepModel?: boolean }) => {
+                setAgent: (requestedAgentName: string | undefined, options?: { keepModel?: boolean }) => {
                     const {
                         agents,
                         providers,
@@ -3262,6 +3267,9 @@ export const useConfigStore = create<ConfigStore>()(
                         currentModelId,
                         currentAgentName,
                     } = get();
+                    // Callers may pass a display name (a session record, a saved
+                    // default); what is stored and later sent is the agent id.
+                    const agentName = canonicalAgentName(agents, requestedAgentName);
                     const hadManualSelection = get().selectionSource === "manual";
                     // The agent is a choice even when its model is inherited, so
                     // it is recorded apart from `selectionSource`. Without it a

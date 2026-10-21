@@ -1,6 +1,7 @@
 import { parseModelIdentifier } from '@/lib/modelIdentifier';
 import { modelVariantNames } from '@/lib/modelVariants';
 import { useConfigStore } from '@/stores/useConfigStore';
+import { canonicalAgentName } from '@/lib/agentReference';
 import { useSelectionStore } from '@/sync/selection-store';
 
 /**
@@ -12,7 +13,7 @@ import { useSelectionStore } from '@/sync/selection-store';
 const resolveDefaultAgentName = (): string | undefined => {
   const configState = useConfigStore.getState();
   if (configState.settingsDefaultAgent) {
-    return configState.settingsDefaultAgent;
+    return canonicalAgentName(configState.agents, configState.settingsDefaultAgent);
   }
   const visibleAgents = configState.agents.filter((agent) => !agent.hidden);
   return (

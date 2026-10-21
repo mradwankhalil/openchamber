@@ -22,6 +22,7 @@ import { opencodeClient, type SkillMentions } from "@/lib/opencode/client"
 import { buildSkillMentionInstruction } from "@/lib/skillMentionInstruction"
 import { runtimeFetch } from "@/lib/runtime-fetch"
 import { useConfigStore } from "@/stores/useConfigStore"
+import { canonicalAgentName } from "@/lib/agentReference"
 import { runAfterOpenCodeStartup } from "./opencode-startup-gate"
 import { useProjectsStore } from "@/stores/useProjectsStore"
 import { useSessionDisplayStore } from "@/stores/useSessionDisplayStore"
@@ -1050,9 +1051,7 @@ export async function materializeOpenDraftSession(selection: {
   if (!draft?.open) return null
   const draftPermissionMode = draft.permissionMode
 
-  const trimmedAgent = typeof selection.agent === "string" && selection.agent.trim().length > 0
-    ? selection.agent.trim()
-    : undefined
+  const trimmedAgent = canonicalAgentName(useConfigStore.getState().agents, selection.agent)
   let draftDirectoryOverride = draft.bootstrapPendingDirectory ?? draft.directoryOverride ?? null
   const draftProjectId = draft.selectedProjectId ?? null
 
@@ -1834,7 +1833,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     // Held sends go out one after another, in the order they were made.
     return runAfterOpenCodeStartup(async () => {
       const draft = options?.draftSnapshot ?? get().newSessionDraft
-      const trimmedAgent = typeof agent === "string" && agent.trim().length > 0 ? agent.trim() : undefined
+      const trimmedAgent = canonicalAgentName(useConfigStore.getState().agents, agent)
 
       const queuedGoal = options?.queuedGoal
       const goalArm = inputMode === "shell" || content.trim().length === 0
@@ -1963,8 +1962,13 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
       const sessionAgentSelection = targetSessionId
         ? useSelectionStore.getState().getSessionAgentSelection(targetSessionId)
         : null
-      const configAgentName = useConfigStore.getState().currentAgentName
-      const effectiveAgent = trimmedAgent || sessionAgentSelection || configAgentName || undefined
+      const configState = useConfigStore.getState()
+      // A selection saved from a session record can be the agent's display
+      // name; OpenCode only accepts the id, so the send carries the id.
+      const effectiveAgent = canonicalAgentName(
+        configState.agents,
+        trimmedAgent || sessionAgentSelection || configState.currentAgentName,
+      )
 
       if (targetSessionId) {
         useSelectionStore.getState().saveSessionModelSelection(targetSessionId, providerID, modelID)

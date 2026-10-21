@@ -64,6 +64,7 @@ const CATALOG_MODELS = [
   { id: 'gpt-5.5', modelID: 'gpt-5.5', providerID: 'openai', variants: [{ id: 'high' }] },
   { id: 'claude-sonnet-5', modelID: 'claude-sonnet-5', providerID: 'anthropic', variants: [{ id: 'high' }] },
 ];
+const OMO_AGENT_IDS = ['build', 'general', 'oh-my-openagent/Sisyphus - ultraworker'];
 const CATALOG_AGENTS = [
   { id: 'build', name: 'Build', mode: 'primary', hidden: false },
   { id: 'plan', name: 'plan', mode: 'primary', hidden: false },
@@ -927,6 +928,109 @@ describe('openchamber session routes', () => {
     expect(sessionSwitchModelMock).toHaveBeenCalledWith({
       sessionID: 'ses_source',
       model: { id: 'gpt-5.5', providerID: 'openai' },
+    });
+  });
+
+  // #5379: a session record holding a plugin agent's display name was switched
+  // back verbatim on every send, and OpenCode answered `Agent not found`.
+  it('sends to a session whose record holds an agent display name on that agent id', async () => {
+    // OpenCode answers an unknown agent with AgentNotFoundError.
+    sessionSwitchAgentMock.mockImplementation(async ({ agent }) => {
+      if (!OMO_AGENT_IDS.includes(agent)) throw Object.assign(new Error(`Agent not found: "${agent}"`), { status: 404 });
+    });
+    useCatalog({ agents: [
+        { id: 'build', name: 'Build', mode: 'primary' },
+        { id: 'general', name: 'General', mode: 'primary' },
+        { id: 'oh-my-openagent/Sisyphus - ultraworker', name: 'Sisyphus - ultraworker', mode: 'primary' },
+      ] });
+    sessionGetMock.mockImplementation(async ({ sessionID }) => ({
+      id: sessionID,
+      agent: 'Sisyphus - ultraworker',
+      model: { providerID: 'openai', id: 'gpt-5.5' },
+      location: { directory: '/repo/app' },
+    }));
+    setSessionMessages([{ id: 'msg_before', type: 'assistant', time: { created: 10, completed: 20 } }]);
+
+    const { app } = createApp();
+    const response = await request(app)
+      .post('/api/openchamber/sessions/ses_source/send')
+      .send({ directory: '/repo/app', prompt: 'Continue' })
+      .expect(200);
+
+    expect(response.body.agent).toBe('oh-my-openagent/Sisyphus - ultraworker');
+    expect(sessionSwitchAgentMock).toHaveBeenLastCalledWith({
+      sessionID: 'ses_source',
+      agent: 'oh-my-openagent/Sisyphus - ultraworker',
+    });
+  });
+
+  it('sends to a session whose record names no known agent on the default agent', async () => {
+    // OpenCode answers an unknown agent with AgentNotFoundError.
+    sessionSwitchAgentMock.mockImplementation(async ({ agent }) => {
+      if (!OMO_AGENT_IDS.includes(agent)) throw Object.assign(new Error(`Agent not found: "${agent}"`), { status: 404 });
+    });
+    useCatalog({ agents: [
+        { id: 'build', name: 'Build', mode: 'primary' },
+        { id: 'general', name: 'General', mode: 'primary' },
+        { id: 'oh-my-openagent/Sisyphus - ultraworker', name: 'Sisyphus - ultraworker', mode: 'primary' },
+      ] });
+    sessionGetMock.mockImplementation(async ({ sessionID }) => ({
+      id: sessionID,
+      agent: 'Retired agent',
+      model: { providerID: 'openai', id: 'gpt-5.5' },
+      location: { directory: '/repo/app' },
+    }));
+    setSessionMessages([{ id: 'msg_before', type: 'assistant', time: { created: 10, completed: 20 } }]);
+
+    const { app } = createApp();
+    const response = await request(app)
+      .post('/api/openchamber/sessions/ses_source/send')
+      .send({ directory: '/repo/app', prompt: 'Continue' })
+      .expect(200);
+
+    expect(response.body.agent).toBe('build');
+    expect(sessionSwitchAgentMock).toHaveBeenLastCalledWith({ sessionID: 'ses_source', agent: 'build' });
+  });
+
+  it('does not recover an agent the caller requested', async () => {
+    useCatalog({ agents: [
+        { id: 'build', name: 'Build', mode: 'primary' },
+        { id: 'oh-my-openagent/Sisyphus - ultraworker', name: 'Sisyphus - ultraworker', mode: 'primary' },
+      ] });
+    sessionSwitchAgentMock.mockImplementation(async () => {
+      throw Object.assign(new Error('switch failed'), { status: 500 });
+    });
+    const { app } = createApp();
+    const response = await request(app)
+      .post('/api/openchamber/sessions')
+      .send({ directory: '/repo/app', prompt: 'Run this', model: 'openai/gpt-5.5', agent: 'build' });
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(sessionSwitchAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves a default agent saved as a plugin agent display name to its id', async () => {
+    useCatalog({ agents: [
+        { id: 'build', name: 'Build', mode: 'primary' },
+        { id: 'general', name: 'General', mode: 'primary' },
+        { id: 'oh-my-openagent/Sisyphus - ultraworker', name: 'Sisyphus - ultraworker', mode: 'primary' },
+      ] });
+    const { app } = createApp({
+      readSettingsFromDiskMigrated: async () => ({
+        defaultModel: 'openai/gpt-5.5',
+        defaultAgent: 'Sisyphus - ultraworker',
+        projects: [{ id: 'proj_1', path: '/repo/app' }],
+      }),
+    });
+    const response = await request(app)
+      .post('/api/openchamber/sessions')
+      .send({ directory: '/repo/app', prompt: 'Run this' })
+      .expect(200);
+
+    expect(response.body.agent).toBe('oh-my-openagent/Sisyphus - ultraworker');
+    expect(sessionSwitchAgentMock).toHaveBeenCalledWith({
+      sessionID: 'ses_123',
+      agent: 'oh-my-openagent/Sisyphus - ultraworker',
     });
   });
 

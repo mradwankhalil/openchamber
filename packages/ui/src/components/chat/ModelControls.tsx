@@ -35,6 +35,7 @@ import { getEditModeColors } from '@/lib/permissions/editModeColors';
 import { cn } from '@/lib/utils';
 import { usePopupSideOnOpen } from '@/components/ui/popup-side';
 import { agentLabel } from '@/lib/agentLabel';
+import { canonicalAgentName, findAgentByReference } from '@/lib/agentReference';
 import { matchesRankQuery, rankByQuery } from '@/lib/search/fuzzySearch';
 import { useContextStore } from '@/stores/contextStore';
 import { useConfigStore, isStaleAutoSelection, selectKnownAgent, selectKnownCatalogModel } from '@/stores/useConfigStore';
@@ -644,7 +645,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
 
     const defaultAgentName = React.useMemo(() => {
         if (settingsDefaultAgent) {
-            const found = selectableDesktopAgents.find(a => a.name === settingsDefaultAgent);
+            const found = findAgentByReference(selectableDesktopAgents, settingsDefaultAgent);
             if (found) return found.name;
         }
         const buildAgent = selectableDesktopAgents.find(a => a.name === 'build');
@@ -1015,11 +1016,13 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     React.useEffect(() => {
         if (!currentSessionId || !contextHydrated || !sessionRecordAgent) return;
         if (!useSelectionStore.getState().followSessionAgent(currentSessionId, sessionRecordAgent)) return;
-        if (useConfigStore.getState().currentAgentName === sessionRecordAgent) return;
+        // A record holding the display name follows the agent it names, by id.
+        const recordAgent = canonicalAgentName(useConfigStore.getState().agents, sessionRecordAgent) ?? sessionRecordAgent;
+        if (useConfigStore.getState().currentAgentName === recordAgent) return;
         // The model this session last used with that agent is not what it
         // runs on now, so the agent-change effect must not bring it back.
-        prevAgentNameRef.current = sessionRecordAgent;
-        setAgent(sessionRecordAgent, { keepModel: true });
+        prevAgentNameRef.current = recordAgent;
+        setAgent(recordAgent, { keepModel: true });
     }, [contextHydrated, currentSessionId, sessionRecordAgent, setAgent]);
 
     React.useEffect(() => {

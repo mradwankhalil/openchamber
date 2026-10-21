@@ -8,6 +8,7 @@ import { toast } from '@/components/ui';
 import { useSessionUIStore, type NewSessionDraftState } from '@/sync/session-ui-store';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useConfigStore } from '@/stores/useConfigStore';
+import { findAgentByReference } from '@/lib/agentReference';
 import { useContextStore } from '@/stores/contextStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { checkIsGitRepository, resolveGitPrimaryRoot, resolveGitRepositoryPrefix } from '@/lib/gitApi';
@@ -124,7 +125,7 @@ const applyDefaultAgentAndModelSelection = (sessionId: string, configState = use
     let agentName: string | undefined;
 
     if (configState.settingsDefaultAgent) {
-      const settingsAgent = visibleAgents.find((a) => a.name === configState.settingsDefaultAgent);
+      const settingsAgent = findAgentByReference(visibleAgents, configState.settingsDefaultAgent);
       if (settingsAgent) {
         agentName = settingsAgent.name;
       }

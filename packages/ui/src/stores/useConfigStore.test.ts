@@ -882,6 +882,32 @@ describe('useConfigStore provider persistence', () => {
     expect(persisted.state.directoryScoped[DIRECTORY].selectedProviderId).toBe('');
   });
 
+  // #5379: a session record or saved default holding a plugin agent's display
+  // name must select, store and later send the agent id OpenCode expects.
+  test('setAgent stores the agent id when given a plugin agent display name', () => {
+    useSessionUIStore.setState({ currentSessionId: 'ses_omo_display_name' });
+    useConfigStore.setState({
+      activeDirectoryKey: DIRECTORY,
+      providers: [provider('openai', 'gpt-5.5', ['low', 'high'])],
+      agents: [
+        testAgent('general'),
+        { ...testAgent('oh-my-openagent/Sisyphus - ultraworker'), displayName: 'Sisyphus - ultraworker' },
+      ],
+      currentProviderId: 'openai',
+      currentModelId: 'gpt-5.5',
+      currentAgentName: 'general',
+      directoryScoped: {},
+    });
+
+    useConfigStore.getState().setAgent('Sisyphus - ultraworker', { keepModel: true });
+
+    const state = useConfigStore.getState();
+    expect(state.currentAgentName).toBe('oh-my-openagent/Sisyphus - ultraworker');
+    expect(state.directoryScoped[DIRECTORY]?.currentAgentName).toBe('oh-my-openagent/Sisyphus - ultraworker');
+    expect(useSelectionStore.getState().getSessionAgentSelection('ses_omo_display_name'))
+      .toBe('oh-my-openagent/Sisyphus - ultraworker');
+  });
+
   test('setAgent applies settings default variant for an agent configured model', () => {
     useSessionUIStore.setState({ currentSessionId: 'ses_agent_default_variant' });
     useConfigStore.setState({
