@@ -1485,6 +1485,64 @@ describe('useConfigStore provider persistence', () => {
     expect(useConfigStore.getState().currentAgentName).toBe('plan');
   });
 
+  // #5379: switching General -> the OMO agent reloads the agent catalogue. A pick or a
+  // stored selection holding the display name must come out of the reload as the id.
+  test('a General -> OMO switch and the catalogue reload keep the namespaced id', async () => {
+    const omoId = 'oh-my-openagent/Sisyphus - ultraworker';
+    const agentsList = [
+      testAgent('general'),
+      { ...testAgent(omoId), displayName: 'Sisyphus - ultraworker' },
+    ];
+    listAgentsImpl = async () => agentsList;
+    useConfigStore.setState({
+      activeDirectoryKey: DIRECTORY,
+      providers: [provider('openai', 'gpt-5.6-sol')],
+      agents: agentsList,
+      currentProviderId: 'openai',
+      currentModelId: 'gpt-5.6-sol',
+      currentAgentName: 'general',
+      selectionSource: 'auto',
+      agentSelectionSource: 'manual',
+      directoryScoped: {},
+    });
+
+    useConfigStore.getState().setAgent('Sisyphus - ultraworker');
+    await useConfigStore.getState().loadAgents({ directory: DIRECTORY, source: 'test:omoSwitchReload', fresh: true });
+    expect(useConfigStore.getState().currentAgentName).toBe(omoId);
+    const shown = useConfigStore.getState().agents.find((agent) => agent.name === useConfigStore.getState().currentAgentName);
+    expect(shown?.displayName).toBe('Sisyphus - ultraworker');
+
+    // A display name persisted from before the fix heals on the next reload.
+    useConfigStore.setState({ currentAgentName: 'Sisyphus - ultraworker', agentSelectionSource: 'manual' });
+    await useConfigStore.getState().loadAgents({ directory: DIRECTORY, source: 'test:omoStaleReload', fresh: true });
+    expect(useConfigStore.getState().currentAgentName).toBe(omoId);
+  });
+
+  test('a default agent saved as a plugin agent display name resolves to its id on load', async () => {
+    const omoId = 'oh-my-openagent/Sisyphus - ultraworker';
+    const agentsList = [
+      testAgent('build'),
+      { ...testAgent(omoId), displayName: 'Sisyphus - ultraworker' },
+    ];
+    listAgentsImpl = async () => agentsList;
+    loadSettingsImpl = async () => ({ defaultAgent: 'Sisyphus - ultraworker', defaultModel: 'openai/gpt-5.6-sol' });
+    useConfigStore.setState({
+      activeDirectoryKey: DIRECTORY,
+      providers: [provider('openai', 'gpt-5.6-sol')],
+      agents: agentsList,
+      currentAgentName: undefined,
+      selectionSource: 'auto',
+      agentSelectionSource: 'auto',
+      settingsDefaultAgent: 'Sisyphus - ultraworker',
+      settingsDefaultModel: 'openai/gpt-5.6-sol',
+      settingsDefaultsLoaded: true,
+      directoryScoped: {},
+    });
+
+    await useConfigStore.getState().loadAgents({ directory: DIRECTORY, source: 'test:omoDefault', fresh: true });
+    expect(useConfigStore.getState().currentAgentName).toBe(omoId);
+  });
+
   test('default selection clears an agent pick so the next draft resolves defaults again', async () => {
     const agentsList = [
       testAgent('build', { model: { providerID: 'openai', modelID: 'gpt-5.6-sol' } }),
