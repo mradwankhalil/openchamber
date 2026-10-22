@@ -444,6 +444,29 @@ export interface ChangeRequestVerdict {
   url: string;
 }
 
+/**
+ * Pull requests stacked on one another, bottom layer first: each targets the
+ * branch of the one below, and the bottom one targets `base`. GitHub keeps a
+ * stack as its own object (`number`); on GitLab it is a chain of merge
+ * requests by target branch, with no number.
+ */
+export interface PullRequestStack {
+  number: number | null;
+  /** The branch the whole stack lands on. */
+  base: string;
+  layers: PullRequestStackLayer[];
+}
+
+export interface PullRequestStackLayer {
+  number: number;
+  title: string;
+  url: string;
+  state: 'open' | 'closed' | 'merged';
+  draft: boolean;
+  /** The layer's branch, which the layer above it targets. */
+  head: string;
+}
+
 export interface ChangeRequestContext {
   identity: SourceControlIdentity;
   fetchedAt?: number;
@@ -462,6 +485,12 @@ export interface ChangeRequestContext {
   verdicts?: ChangeRequestVerdict[];
   /** With `includeTimeline`: who is asked to review. */
   reviewers?: SourceControlUser[];
+  /**
+   * The stack the change request is a layer of: GitHub's own (sent only for
+   * a layer of one), or on GitLab the chain of open merge requests by branch
+   * (null in none). Absent when it could not be read.
+   */
+  stack?: PullRequestStack | null;
 }
 
 export interface ChangeRequestStatus {
@@ -550,9 +579,23 @@ export interface SourceControlMutationReceipt<TResult> {
 }
 
 export type SourceControlEmptyMutationResult = Record<string, never>;
+export interface SourceControlCreateMutationResult {
+  /**
+   * Set when the new pull request's base is another open one's branch: true
+   * once the host keeps the two as a stack, false when it refused, so the
+   * request stands on that base outside any stack.
+   */
+  stacked?: boolean;
+}
 export interface SourceControlMergeMutationResult {
   merged: boolean;
   message?: string;
+  /**
+   * Set when the host accepted the merge without finishing it yet: added to a
+   * merge queue, or still merging in the background (GitHub, a stack's lower
+   * layers included). The PR's live state shows the outcome.
+   */
+  outcome?: 'queued' | 'merging';
 }
 export interface SourceControlReadyMutationResult {
   ready: boolean;

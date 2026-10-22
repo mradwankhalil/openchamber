@@ -5,6 +5,7 @@ import yaml from 'yaml';
 
 import { assertGitAvailable, looksLikeAuthError, runGit } from './git.js';
 import { parseSkillRepoSource } from './source.js';
+import { removeDirectory } from './remove-directory.js';
 
 const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
 
@@ -34,14 +35,6 @@ function parseSkillMd(content) {
       frontmatter: {},
       warnings: ['Invalid SKILL.md: failed to parse YAML frontmatter'],
     };
-  }
-}
-
-async function safeRm(dir) {
-  try {
-    await fs.promises.rm(dir, { recursive: true, force: true });
-  } catch {
-    // ignore
   }
 }
 
@@ -226,6 +219,6 @@ export async function scanSkillsRepository({
       items,
     };
   } finally {
-    await safeRm(tempBase);
+    await removeDirectory(tempBase);
   }
 }

@@ -14,12 +14,16 @@ Une session worktree s’exécute dans sa propre copie extraite de votre dépôt
    - **new branch** — nommez la branche
    - **existing branch** — récupérez une branche que vous avez déjà
    - **PR or issue** — choisissez-en un depuis GitHub, Linear ou une extension ; la branche prend son nom (une PR récupère sa propre branche) et l'élément est joint à votre premier message
-3. Vérifiez **Based on** (la branche de départ d'une nouvelle branche, par défaut la branche actuelle du projet) et **Folder name** ; ne les modifiez que si nécessaire.
+3. Vérifiez **Based on** (la branche de départ d'une nouvelle branche, par défaut la branche par défaut du dépôt distant, par exemple `origin/main`) et **Folder name** ; ne les modifiez que si nécessaire.
 4. Créez-le. Si le projet a des commandes de configuration, elles s'exécutent juste après.
 
 OpenChamber crée la branche, prépare le dossier et y ouvre une nouvelle session, prête pour votre premier message. Vous pouvez aussi en lancer une directement depuis une [todo](/notes-todos-plans/) ou une [issue ou PR GitHub](/github/).
 
 Pour éviter les questions, choisissez **Worktree rapide** dans le même menu : OpenChamber nomme la branche pour vous et y place la nouvelle session.
+
+## Projets ouverts sur un dossier du dépôt
+
+Si vous ouvrez un projet sur un dossier à l'intérieur d'un dépôt, comme `repo/ai`, les nouveaux worktrees s'ouvrent aussi à cet endroit. Une session dans un nouveau worktree démarre dans le même dossier du checkout, et OpenCode trouve ainsi la configuration qui s'y trouve. Un projet ouvert à la racine du dépôt démarre à la racine du worktree, comme avant. Si une branche n'a pas ce dossier, la session démarre à la racine du worktree et OpenChamber vous le signale.
 
 ## Ramener le travail
 

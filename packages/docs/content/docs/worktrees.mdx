@@ -14,12 +14,16 @@ A worktree session runs in its own checked-out copy of your repo, on its own bra
    - **new branch** — name the branch
    - **existing branch** — check out a branch you already have
    - **PR or issue** — pick one from GitHub, Linear or an extension; the branch is named after it (a PR checks out its own branch), and the item is attached to your first message
-3. Check **Based on** (the branch a new one starts from, the project's current branch by default) and **Folder name**; change them only if you need to.
+3. Check **Based on** (the branch a new one starts from, by default the remote's default branch, such as `origin/main`) and **Folder name**; change them only if you need to.
 4. Create it. If the project has setup commands, they run right after.
 
 OpenChamber makes the branch, sets up the folder, and opens a new session there, ready for your first message. You can also kick one off straight from a [todo](/notes-todos-plans/) or a [GitHub issue or PR](/github/).
 
 To skip the questions, pick **Quick worktree** in the same branch menu: OpenChamber names the branch for you and points the new session at it.
+
+## Projects opened on a folder of the repository
+
+If you open a project on a folder inside a repository, such as `repo/ai`, new worktrees open there too. A session in a new worktree starts in the same folder of the checkout, so OpenCode finds the config that lives in it. A project opened on the repository root starts at the worktree root, as before. When a branch has no such folder, the session starts in the worktree root and OpenChamber tells you.
 
 ## Bring the work back
 

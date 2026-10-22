@@ -21,8 +21,10 @@ has to ask for it.
 - `schema.js` — response schema, response normalization, tolerant JSON parsing.
 - `store.js` — content-addressed cache entries plus mutable pointers.
 - `pull-request.js` — PR diffs and per-file contents: GitHub through the
-  shared octokit helper, GitLab merge requests through the readers the runtime
-  injects from the GitLab module (`readGitLabChangeRequestPatch`/`File`).
+  shared octokit helper (the host is resolved from the checkout's remote, not
+  the PR's source repo, so an enterprise checkout pulls its diff from its own
+  host with that host's token), GitLab merge requests through the readers the
+  runtime injects from the GitLab module (`readGitLabChangeRequestPatch`/`File`).
 - `model-settings.js` — the feature's own model override.
 - `languages.js` — the languages the prose may be written in.
 - `index.js` — orchestration.
@@ -170,6 +172,14 @@ falls back to whatever the small-model chain resolves to. Choosing a model *is*
 the opt-out, so there is no separate toggle to disagree with the picker — the
 settings picker simply shows "Small model will be used" until a choice is made,
 and clearing it restores the fallback.
+
+`walkthroughModelVariant` is the thinking level chosen beside that model in
+Settings. It applies only while the walkthrough runs on the saved model: a
+model picked for one review runs at its own default level, and changing or
+clearing the saved model clears the level. The server checks it against the
+catalog the way the small model's level is checked (`small-model`'s
+`resolveModelVariant`). The level is not part of the cache key, so changing it
+keeps the review on screen until the user regenerates.
 
 The separation exists because the two roles pull in opposite directions: the
 small model is chosen to be cheap and fast for recaps and commit messages, while

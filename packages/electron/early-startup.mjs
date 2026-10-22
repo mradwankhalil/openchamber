@@ -61,8 +61,7 @@ export const readLoginItemSettings = () => {
 export const shouldStartInBackground = (loginItemSettings = readLoginItemSettings()) => {
   return (
     process.argv.includes(BACKGROUND_START_ARG) ||
-    loginItemSettings?.wasOpenedAtLogin === true ||
-    loginItemSettings?.wasOpenedAsHidden === true
+    loginItemSettings?.wasOpenedAtLogin === true
   );
 };
 
@@ -391,6 +390,10 @@ export const resolvePreloadPath = () => (
   isDev ? path.join(__dirname, 'preload.mjs') : path.join(app.getAppPath(), 'preload.mjs')
 );
 
+export const resolveBrowserPanelPreloadPath = () => (
+  isDev ? path.join(__dirname, 'browser-panel-preload.cjs') : path.join(app.getAppPath(), 'browser-panel-preload.cjs')
+);
+
 // Arguments the preload reads from process.argv. They are fixed at window
 // creation: the main window is created before the backend resolves, so it
 // carries empty runtime values and receives them through the init script.
@@ -447,6 +450,9 @@ export const buildMainWindowOptions = ({ bounds, backgroundColor, additionalArgu
     titleBarStyle: usesCustomTitleBar ? 'hidden' : 'default',
     titleBarOverlay: false,
     trafficLightPosition: process.platform === 'darwin' ? macTrafficLightPosition() : undefined,
+    // macOS otherwise spends the first click on an inactive window activating
+    // it, so a button pressed while coming from another app needs two clicks.
+    acceptFirstMouse: true,
     webPreferences: {
       additionalArguments,
       preload: resolvePreloadPath(),

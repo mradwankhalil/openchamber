@@ -13,7 +13,7 @@ import { Icon } from '@/components/icon/Icon';
 import { SessionActivityIndicator } from '@/components/session/SessionActivityIndicator';
 import { useWaitingBlink } from '@/hooks/useDurationTicker';
 import { useSessionUIStore } from '@/sync/session-ui-store';
-import { useSessionUnseenCount } from '@/sync/notification-store';
+import { useSessionUnread } from '@/sync/session-unread';
 import {
   findSwitcherItemAncestorIds,
   useSwitcherItems,
@@ -231,18 +231,15 @@ function SwitcherRow({ session, depth, variant, secondaryMeta, hasChildren, isEx
   const { t } = useI18n();
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
-  const notifyOnSubtasks = useUIStore((state) => state.notifyOnSubtasks);
 
-  const unseenCount = useSessionUnseenCount(session.id);
+  const isUnread = useSessionUnread(session.id);
 
   const isActive = currentSessionId === session.id;
   const sessionTitle = session.title?.trim() || t('sessions.sidebar.session.untitled');
-  const isSubtask = Boolean((session as Session & { parentID?: string | null }).parentID);
-  const needsAttention = unseenCount > 0 && (!isSubtask || notifyOnSubtasks);
   const turnActivity = useSessionTurnActivity(session.id);
   const isStreaming = turnActivity !== null;
   const runningBlink = useWaitingBlink(isStreaming);
-  const showUnreadDot = !isStreaming && needsAttention && !isActive;
+  const showUnreadDot = !isStreaming && isUnread && !isActive;
 
   const timestamp = getSessionActivityTime(session) || Date.now();
   const timeLabel = formatSessionCompactDateLabel(timestamp);

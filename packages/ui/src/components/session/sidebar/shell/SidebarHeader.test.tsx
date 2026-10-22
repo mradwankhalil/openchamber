@@ -154,6 +154,7 @@ describe('SidebarHeader', () => {
   test('a page button opens its page, shows it pressed, and closes it on the next click', async () => {
     const initial = useUIStore.getState();
     try {
+      useUIStore.getState().setOverviewFeatureAvailable(true);
       await act(async () => root.render(
         <I18nProvider>
           <TooltipProvider>
@@ -166,6 +167,7 @@ describe('SidebarHeader', () => {
         ['Archive', () => useUIStore.getState().isArchivePageOpen],
         ['Scheduled tasks', () => useUIStore.getState().isScheduledTasksDialogOpen],
         ['Issues and PRs', () => useUIStore.getState().isSourceBoardOpen],
+        ['Overview', () => useUIStore.getState().isOverviewOpen],
       ] as const) {
         expect(button(label).getAttribute('aria-pressed')).toBe('false');
         await act(async () => button(label).click());
@@ -175,6 +177,26 @@ describe('SidebarHeader', () => {
         expect(isOpen()).toBe(false);
         expect(button(label).getAttribute('aria-pressed')).toBe('false');
       }
+    } finally {
+      useUIStore.setState(initial);
+    }
+  });
+
+  test('without the overview feature there is no overview button', async () => {
+    const initial = useUIStore.getState();
+    try {
+      useUIStore.getState().setOverviewFeatureAvailable(false);
+      await act(async () => root.render(
+        <I18nProvider>
+          <TooltipProvider>
+            <SidebarHeader {...baseProps} />
+          </TooltipProvider>
+        </I18nProvider>,
+      ));
+      expect(document.querySelector('[aria-label="Overview"]')).toBeNull();
+      expect(document.querySelector('[aria-label="Issues and PRs"]')).not.toBeNull();
+      useUIStore.getState().setOverviewOpen(true);
+      expect(useUIStore.getState().isOverviewOpen).toBe(false);
     } finally {
       useUIStore.setState(initial);
     }

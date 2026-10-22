@@ -10,9 +10,16 @@
 // failure or "not connected" is never replayed. Anything that changes a
 // provider (a POST to its routes: mutations, sign-in, account switch) clears
 // that provider's answers, and so does an agent turn finishing, since the
-// agent may have opened or changed something. `POST <prefix>/read-cache/refresh`
-// clears them on request: the board's refresh button, for a change made on the
-// provider's own site.
+// agent may have opened or changed something. Both are reported through
+// `onChange(provider)`, so the live state the server follows is read again too.
+//
+// `POST <prefix>/read-cache/refresh` forgets answers on request, for a change
+// made on the provider's own site, as narrowly as the refresh asks:
+// `?scope=item&owner=&repo=&number=` (the preview's refresh button) forgets
+// what was read about that one item and reports it through
+// `onItemRefresh(provider, item)`; `?scope=lists` (the board's list refresh)
+// forgets the lists and the statuses read for them. Without a scope every
+// answer of the provider goes, as for a change.
 
 const SECOND = 1000;
 const MAX_ENTRIES = 300;
@@ -38,7 +45,46 @@ const CACHED_READS = new Map([
   ['/pulls/context', 15 * SECOND],
 ]);
 
+// Reads sent as a POST because their request is too large for a query; they
+// change nothing, so they neither clear answers nor count as a change.
+const POST_READS = new Set(['/references/across']);
+
+// Reads that list items, rather than read one: a list refresh forgets these.
+const LIST_READS = new Set(['/references', '/references/status', '/issues/list', '/pulls/list']);
+
 const routeOf = (path) => ROUTES.find((route) => path.startsWith(`${route.prefix}/`)) ?? null;
+
+const lower = (value) => String(value ?? '').toLowerCase();
+
+/** The one item a scoped refresh names, or null when the query names none. */
+const refreshedItem = (searchParams) => {
+  const number = Number(searchParams.get('number'));
+  if (!Number.isSafeInteger(number) || number < 1) return null;
+  return { owner: searchParams.get('owner') ?? '', repo: searchParams.get('repo') ?? '', number };
+};
+
+/**
+ * Whether a kept answer was read about `item`: its own reads (detail,
+ * comments, context, get) by number and project, a status read that asked
+ * for it, and a search that looked it up by its link or number (the Tracker
+ * reads a tab's item that way). A read without a project matches by number;
+ * forgetting one answer too many only costs a read.
+ */
+const answerIsAbout = (subpath, params, item) => {
+  const sameProject = (owner, repo) => !owner || !item.owner || (lower(owner) === lower(item.owner) && lower(repo) === lower(item.repo));
+  if (subpath === '/references/status') {
+    const wanted = `${lower(item.owner)}/${lower(item.repo)}#${item.number}`;
+    return lower(params.get('pulls')).split(',').includes(wanted);
+  }
+  if (subpath === '/references') {
+    const query = lower(params.get('query')).trim();
+    if (!query) return false;
+    if (query === `#${item.number}` || query === String(item.number)) return true;
+    const link = query.match(/\/([^/]+)\/([^/]+)\/(?:-\/)?(?:pull|pulls|issues|merge_requests)\/(\d+)/);
+    return Boolean(link) && Number(link[3]) === item.number && sameProject(link[1], link[2]);
+  }
+  return Number(params.get('number')) === item.number && sameProject(params.get('owner'), params.get('repo'));
+};
 
 const requestKey = (req, provider) => {
   const url = new URL(req.originalUrl, 'http://localhost');
@@ -48,15 +94,23 @@ const requestKey = (req, provider) => {
 
 const isConnectedAnswer = (body) => !(Object.prototype.toString.call(body) === '[object Object]' && body.connected === false);
 
-export function createProviderReadCache({ now = Date.now } = {}) {
+export function createProviderReadCache({ now = Date.now, onChange = () => {}, onItemRefresh = () => {} } = {}) {
   const entries = new Map();
   const inFlight = new Map();
 
-  const clear = (provider) => {
-    for (const key of entries.keys()) if (!provider || key.startsWith(`${provider}|`)) entries.delete(key);
+  /** Forgets the provider's answers `matches(subpath, params)` picks; all of them without it. */
+  const clear = (provider, matches = null) => {
+    const picked = (key) => {
+      if (provider && !key.startsWith(`${provider}|`)) return false;
+      if (!matches) return true;
+      const route = ROUTES.find((candidate) => candidate.provider === key.slice(0, key.indexOf('|')));
+      const url = new URL(key.slice(key.indexOf('|') + 1), 'http://localhost');
+      return Boolean(route) && matches(url.pathname.slice(route.prefix.length), url.searchParams);
+    };
+    for (const key of entries.keys()) if (picked(key)) entries.delete(key);
     // Requests already running may carry the old state; they still answer
     // their own callers, but their result is not kept.
-    for (const [key, flight] of inFlight) if (!provider || key.startsWith(`${provider}|`)) flight.stale = true;
+    for (const [key, flight] of inFlight) if (picked(key)) flight.stale = true;
   };
 
   const remember = (key, body, ttlMs) => {
@@ -71,16 +125,36 @@ export function createProviderReadCache({ now = Date.now } = {}) {
   const middleware = (req, res, next) => {
     const route = routeOf(req.path);
     if (!route) return next();
-    if (req.method === 'POST' && req.path === `${route.prefix}/read-cache/refresh`) {
+    const subpath = req.path.slice(route.prefix.length);
+    if (req.method === 'POST' && subpath === '/read-cache/refresh') {
+      const { searchParams } = new URL(req.originalUrl, 'http://localhost');
+      const scope = searchParams.get('scope');
+      if (scope === 'item') {
+        const item = refreshedItem(searchParams);
+        if (!item) return res.status(400).json({ error: 'number is required to refresh one item' });
+        clear(route.provider, (path, params) => answerIsAbout(path, params, item));
+        onItemRefresh(route.provider, item);
+        return res.json({ ok: true });
+      }
+      if (scope === 'lists') {
+        clear(route.provider, (path) => LIST_READS.has(path));
+        return res.json({ ok: true });
+      }
       clear(route.provider);
+      onChange(route.provider);
       return res.json({ ok: true });
     }
+    if (req.method === 'POST' && POST_READS.has(subpath)) return next();
     if (req.method !== 'GET') {
       // A change to this provider makes every kept answer of it suspect.
-      res.on('finish', () => { if (res.statusCode < 400) clear(route.provider); });
+      res.on('finish', () => {
+        if (res.statusCode >= 400) return;
+        clear(route.provider);
+        onChange(route.provider);
+      });
       return next();
     }
-    const ttlMs = CACHED_READS.get(req.path.slice(route.prefix.length));
+    const ttlMs = CACHED_READS.get(subpath);
     if (!ttlMs) return next();
     const key = requestKey(req, route.provider);
     const cached = entries.get(key);

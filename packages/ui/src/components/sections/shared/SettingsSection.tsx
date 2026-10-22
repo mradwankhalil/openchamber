@@ -577,6 +577,67 @@ interface SettingsChipGroupProps<T extends string> {
 }
 
 /**
+ * An option's explanation, shown at once on hover: it is how the choice is
+ * read, not a hint after the fact. A disabled option, whose tooltip usually
+ * says why, also opens it on tap, since a tap does nothing else there and
+ * touch has no hover; a tap elsewhere closes it.
+ */
+const ChipTooltip: React.FC<{
+  disabled?: boolean;
+  content: React.ReactNode;
+  children: React.ReactElement;
+}> = ({ disabled, content, children }) => {
+  const [open, setOpen] = React.useState(false);
+  const triggerRef = React.useRef<HTMLSpanElement | null>(null);
+  const popupRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    if (!open || !disabled) return;
+    // A press inside the popup is on its link (Set up access, say), which must still get the click.
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) return;
+      if (triggerRef.current?.contains(event.target) || popupRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePress, true);
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePress, true);
+  }, [disabled, open]);
+
+  const popup = (
+    <TooltipContent side="top" sideOffset={6} className="max-w-xs">
+      <div ref={popupRef}>{content}</div>
+    </TooltipContent>
+  );
+  if (!disabled) {
+    return (
+      <Tooltip delayDuration={0}>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        {popup}
+      </Tooltip>
+    );
+  }
+  return (
+    <Tooltip delayDuration={0} open={open} onOpenChange={setOpen}>
+      {/* A disabled button gets no pointer events, so the tooltip hangs on a
+          wrapper. Base UI closes a tooltip when its trigger is pressed, so
+          that handler is skipped, as in SettingsInfoHint. */}
+      <TooltipTrigger
+        asChild
+        onPointerDown={(event) => event.preventBaseUIHandler()}
+        // Opens, never toggles: with a mouse the hover has already opened it.
+        onClick={(event) => {
+          event.preventBaseUIHandler();
+          setOpen(true);
+        }}
+      >
+        <span ref={triggerRef} className="inline-flex" tabIndex={0}>{children}</span>
+      </TooltipTrigger>
+      {popup}
+    </Tooltip>
+  );
+};
+
+/**
  * Compact segmented enum picker, drawn like the active-pill tab strip: the
  * options sit in a recessed track and the chosen one is raised out of it.
  * The track is as tall as the other settings controls (32px), so a row with
@@ -623,16 +684,9 @@ export function SettingsChipGroup<T extends string>({
         );
         if (!option.tooltip) return chip;
         return (
-          <Tooltip key={option.value}>
-            {/* A disabled button gets no hover events, so its tooltip (usually
-                the reason it is disabled) hangs on a wrapper instead. */}
-            <TooltipTrigger asChild>
-              {option.disabled ? <span className="inline-flex" tabIndex={0}>{chip}</span> : chip}
-            </TooltipTrigger>
-            <TooltipContent side="top" sideOffset={6} className="max-w-xs">
-              {option.tooltip}
-            </TooltipContent>
-          </Tooltip>
+          <ChipTooltip key={option.value} disabled={option.disabled} content={option.tooltip}>
+            {chip}
+          </ChipTooltip>
         );
       })}
     </div>

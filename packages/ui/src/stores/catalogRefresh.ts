@@ -12,6 +12,7 @@
  */
 
 import type { CatalogKind } from "@/lib/opencode/events";
+import { notifyCredentialChanged } from "@/lib/opencode/integration-catalog";
 import { getConfigDirectory, invalidateAgentsLoadCache, useAgentsStore } from "@/stores/useAgentsStore";
 import { invalidateCommandsLoadCache, useCommandsStore } from "@/stores/useCommandsStore";
 import { invalidateSkillsLoadCache, useSkillsStore } from "@/stores/useSkillsStore";
@@ -150,9 +151,15 @@ export function catalogRefreshTasks(
     case "model":
       return [refreshProviders];
     // A web search key is a credential too, and a switch of provider accounts
-    // changes which account the usage trackers report on.
+    // changes which account the usage trackers report on and which one an open
+    // provider page marks active.
     case "credential":
-      return [refreshProvidersAfterCredentialChange, refreshWebSearchIfLoaded, refreshUsageAfterCredentialChange];
+      return [
+        refreshProvidersAfterCredentialChange,
+        refreshWebSearchIfLoaded,
+        refreshUsageAfterCredentialChange,
+        async () => notifyCredentialChanged(),
+      ];
     // A config file can carry any of them (a provider declared in
     // opencode.json included), and OpenChamber's own plugin injection lives
     // in one, so the whole set is re-read.

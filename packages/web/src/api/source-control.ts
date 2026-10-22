@@ -9,6 +9,7 @@ import type {
   ChangeRequestCommit,
   ChangeRequestContext,
   ChangeRequestVerdict,
+  PullRequestStack,
   ChangeRequestFile,
   ChangeRequestReviewComment,
   ChangeRequestStatus,
@@ -57,6 +58,7 @@ import type {
   SourceControlCreateMutationTarget,
   SourceControlExistingMutationTarget,
   SourceControlExpectedMutationTarget,
+  SourceControlCreateMutationResult,
   SourceControlMergeMutationResult,
   SourceControlMutationContext,
   SourceControlMutationReceipt,
@@ -79,7 +81,7 @@ import type {
 import { runtimeFetch } from '@openchamber/ui/lib/runtime-fetch';
 import type { RuntimeFetchOptions } from '@openchamber/ui/lib/runtime-fetch';
 import { isSafeRepositoryEndpoint, parseBindingResponse, resolveBindingReadiness } from '../../server/lib/source-control/binding-contract.js';
-import { fetchGitHubPullStatuses, fetchGitHubReferenceDetail, fetchGitHubReferences } from './github-references';
+import { fetchGitHubPullStatuses, fetchGitHubReferenceDetail, fetchGitHubReferences, fetchGitHubReferencesAcross } from './github-references';
 
 interface ErrorResponse {
   error?: string;
@@ -131,7 +133,7 @@ interface AuthStatusDTO extends GitHubAuthStatus {
 }
 
 type DisconnectedSourceControlAuthStatus = Extract<SourceControlAuthStatus, { status: 'disconnected' }>;
-type GitLabAuthStatusDTO = SourceControlAuthStatus | {
+type ProviderAuthStatusDTO = SourceControlAuthStatus | {
   connected: false;
   status?: undefined;
   accounts?: SourceControlAuthAccount[];
@@ -184,6 +186,8 @@ interface MutationReceiptDTO extends ErrorResponse {
 interface MutationResultDTO {
   merged?: boolean;
   message?: string;
+  outcome?: string;
+  stacked?: boolean;
   ready?: boolean;
   commented?: boolean;
   state?: string;
@@ -213,6 +217,9 @@ interface WebSourceControlAPIOptions {
 
 const GITHUB_IDENTITY: SourceControlIdentity = { provider: 'github', instance: 'github.com' };
 
+/** GitHub Enterprise: any GitHub-like host that is not github.com. Its server runs a GitLab-shaped auth contract. */
+const isGitHubEnterprise = (identity: SourceControlIdentity): boolean => identity.provider === 'github' && identity.instance !== 'github.com';
+
 const normalizeIdentity = (identity: SourceControlIdentity): SourceControlIdentity => {
   if (identity.provider === 'gitlab') {
     const raw = identity.instance.trim();
@@ -234,15 +241,17 @@ const normalizeIdentity = (identity: SourceControlIdentity): SourceControlIdenti
   let host = value;
   if (value.includes('://')) {
     try {
-      host = new URL(value).hostname.toLowerCase().replace(/\.$/, '');
+      const url = new URL(value);
+      if (url.protocol !== 'https:' || url.username || url.password || url.port || url.search || url.hash
+        || (url.pathname && url.pathname !== '/')) {
+        throw new Error(`Invalid GitHub instance: ${identity.instance}`);
+      }
+      host = url.hostname.toLowerCase().replace(/\.$/, '');
     } catch {
-      throw new Error(`Invalid source control instance: ${identity.instance}`);
+      throw new Error(`Invalid GitHub instance: ${identity.instance}`);
     }
   }
-  if (host !== 'github.com') {
-    throw new Error(`GitHub instance "${identity.instance}" is not supported; only github.com is available`);
-  }
-  return GITHUB_IDENTITY;
+  return host === 'github.com' ? GITHUB_IDENTITY : { provider: 'github', instance: host };
 };
 
 const providerPath = (identity: SourceControlIdentity, path: string): string => `/api/source-control/${identity.provider}${path}`;
@@ -481,7 +490,7 @@ const mutationTargetMatches = (
   && (context.target.headSha === undefined || target.headSha === context.target.headSha);
 
 const providerAccountMatches = (identity: SourceControlIdentity, providerAccountId: string): boolean => {
-  if (identity.provider === 'github') return /^github\.com#\d+$/.test(providerAccountId);
+  if (identity.provider === 'github') return /^[^#]+#\d+$/.test(providerAccountId);
   return providerAccountId.startsWith(`${identity.instance}#`)
     && /^\d+$/.test(providerAccountId.slice(identity.instance.length + 1));
 };
@@ -539,13 +548,30 @@ const parseEmptyMutationResult = (result: MutationResultDTO): SourceControlEmpty
   return {};
 };
 
+const MERGE_OUTCOMES = ['queued', 'merging'] as const;
+const mergeOutcomeOf = (value: string): SourceControlMergeMutationResult['outcome'] | null => (
+  MERGE_OUTCOMES.find((outcome) => outcome === value) ?? null
+);
+
+const parseCreateMutationResult = (result: MutationResultDTO): SourceControlCreateMutationResult => {
+  if (!hasExactKeys(result, result.stacked === undefined ? [] : ['stacked'])
+    || (result.stacked !== undefined && !isBooleanValue(result.stacked))) {
+    throw new Error('Source control response contained an invalid create result');
+  }
+  return result.stacked === undefined ? {} : { stacked: result.stacked };
+};
+
 const parseMergeMutationResult = (result: MutationResultDTO): SourceControlMergeMutationResult => {
-  const keys = result.message === undefined ? ['merged'] : ['merged', 'message'];
+  const keys = ['merged', ...(result.message === undefined ? [] : ['message']), ...(result.outcome === undefined ? [] : ['outcome'])];
+  const outcome = result.outcome === undefined ? undefined : mergeOutcomeOf(result.outcome);
   if (!hasExactKeys(result, keys) || !isBooleanValue(result.merged)
-    || (result.message !== undefined && !isStringValue(result.message))) {
+    || (result.message !== undefined && !isStringValue(result.message)) || outcome === null) {
     throw new Error('Source control response contained an invalid merge result');
   }
-  return result.message === undefined ? { merged: result.merged } : { merged: result.merged, message: result.message };
+  const parsed: SourceControlMergeMutationResult = { merged: result.merged };
+  if (result.message !== undefined) parsed.message = result.message;
+  if (outcome !== undefined) parsed.outcome = outcome;
+  return parsed;
 };
 
 const parseReviewMutationResult = (result: MutationResultDTO): SourceControlReviewMutationResult => {
@@ -1122,6 +1148,37 @@ const parseSourceCommit = (commit: ChangeRequestCommit): ChangeRequestCommit => 
   return { sha: commit.sha, headline: commit.headline, authorName: commit.authorName, committedAt: commit.committedAt, url: commit.url };
 };
 
+const STACK_LAYER_STATES = ['open', 'closed', 'merged'] as const;
+
+/** A merge request chain as the server read it; its layers are bottom first. */
+const parseSourceStack = (stack: PullRequestStack): PullRequestStack => {
+  if (!stack || !isNonEmptyString(stack.base) || !Array.isArray(stack.layers)
+    || (stack.number !== null && !Number.isSafeInteger(stack.number))) {
+    throw new Error('Source control response contained an invalid merge request chain');
+  }
+  return {
+    number: stack.number,
+    base: stack.base,
+    layers: stack.layers.map((layer) => {
+      const state = STACK_LAYER_STATES.find((candidate) => candidate === layer?.state);
+      if (!layer || !Number.isSafeInteger(layer.number) || !isStringValue(layer.title) || !isHttpUrl(layer.url)
+        || !state || !isBooleanValue(layer.draft) || !isNonEmptyString(layer.head)) {
+        throw new Error('Source control response contained an invalid merge request chain');
+      }
+      return { number: layer.number, title: layer.title, url: layer.url, state, draft: layer.draft, head: layer.head };
+    }),
+  };
+};
+
+/** The stack a context names; one that does not hold together is unknown, never a failed read of the rest. */
+const parseOptionalStack = (stack: PullRequestStack): PullRequestStack | undefined => {
+  try {
+    return parseSourceStack(stack);
+  } catch {
+    return undefined;
+  }
+};
+
 const parseSourceVerdict = (verdict: ChangeRequestVerdict, identity: SourceControlIdentity): ChangeRequestVerdict => {
   if (!verdict || (verdict.state !== 'approved' && verdict.state !== 'changes_requested') || !isNonEmptyString(verdict.url)
     || (verdict.createdAt !== null && !isNonEmptyString(verdict.createdAt))) {
@@ -1336,7 +1393,7 @@ const parseGitHubAuthAccounts = (
   };
 });
 
-const parseGitLabAuthStatus = (payload: GitLabAuthStatusDTO, identity: SourceControlIdentity): SourceControlAuthStatus => {
+const parseProviderAuthStatus = (payload: ProviderAuthStatusDTO, identity: SourceControlIdentity): SourceControlAuthStatus => {
   if (!payload.connected) {
     if (!payload.status) {
       const result: Extract<SourceControlAuthStatus, { status: 'disconnected' }> = {
@@ -1480,8 +1537,8 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
     },
     authStatus: async (identity) => {
       const normalized = normalizeIdentity(identity);
-      if (normalized.provider === 'gitlab') {
-        return parseGitLabAuthStatus(await request<GitLabAuthStatusDTO & ErrorResponse>(fetch, normalized, '/auth/status'), normalized);
+      if (normalized.provider === 'gitlab' || isGitHubEnterprise(normalized)) {
+        return parseProviderAuthStatus(await request<ProviderAuthStatusDTO & ErrorResponse>(fetch, normalized, '/auth/status'), normalized);
       }
       return mapAuthStatus(await request<AuthStatusDTO & ErrorResponse>(fetch, normalized, '/auth/status'), normalized);
     },
@@ -1531,8 +1588,8 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
     authSetToken: async (identity, token) => {
       const normalized = normalizeIdentity(identity);
       await post<{ connected: boolean; user?: GitHubUserSummary; error?: string }>(fetch, normalized, '/auth/token', { token });
-      if (normalized.provider === 'gitlab') {
-        return parseGitLabAuthStatus(await request<GitLabAuthStatusDTO & ErrorResponse>(fetch, normalized, '/auth/status'), normalized);
+      if (normalized.provider === 'gitlab' || isGitHubEnterprise(normalized)) {
+        return parseProviderAuthStatus(await request<ProviderAuthStatusDTO & ErrorResponse>(fetch, normalized, '/auth/status'), normalized);
       }
       return mapAuthStatus(await request<GitHubAuthStatus & ErrorResponse>(fetch, normalized, '/auth/status'), normalized);
     },
@@ -1549,14 +1606,14 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
     },
     authActivate: async (identity, accountId) => {
       const normalized = normalizeIdentity(identity);
-      if (normalized.provider === 'gitlab') {
-        return parseGitLabAuthStatus(await post<GitLabAuthStatusDTO & ErrorResponse>(fetch, normalized, '/auth/activate', { accountId }), normalized);
+      if (normalized.provider === 'gitlab' || isGitHubEnterprise(normalized)) {
+        return parseProviderAuthStatus(await post<ProviderAuthStatusDTO & ErrorResponse>(fetch, normalized, '/auth/activate', { accountId }), normalized);
       }
       return mapAuthStatus(await post<GitHubAuthStatus & ErrorResponse>(fetch, normalized, '/auth/activate', { accountId }), normalized);
     },
     authSetCliDisabled: async (identity, disabled) => {
       const normalized = normalizeIdentity(identity);
-      const payload = await post<{ disabled?: boolean; error?: string }>(fetch, normalized, normalized.provider === 'gitlab' ? '/auth/cli' : '/auth/gh-cli', { disabled });
+      const payload = await post<{ disabled?: boolean; error?: string }>(fetch, normalized, normalized.provider === 'gitlab' || isGitHubEnterprise(normalized) ? '/auth/cli' : '/auth/gh-cli', { disabled });
       return { disabled: Boolean(payload.disabled) };
     },
 
@@ -1585,7 +1642,7 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
       if (payload.remote) body.remote = payload.remote;
       if (payload.headRemote) body.headRemote = payload.headRemote;
       const result = await post<MutationReceiptDTO>(fetch, identity, '/pr/create', body);
-      return parseMutationReceipt(result, payload, identity, parseEmptyMutationResult);
+      return parseMutationReceipt(result, payload, identity, parseCreateMutationResult);
     },
     changeRequestUpdate: async (payload: UpdateChangeRequestInput) => {
       const identity = normalizeIdentity(payload);
@@ -1678,8 +1735,11 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
       });
       return parseMutationReceipt(result, payload, identity, parseEmptyMutationResult);
     },
-    refreshProviderReads: async (identity) => {
-      await request<ErrorResponse>(fetch, identity, '/read-cache/refresh', { method: 'POST' });
+    refreshProviderReads: async (identity, scope) => {
+      const query = 'item' in scope
+        ? new URLSearchParams({ scope: 'item', owner: scope.item.owner, repo: scope.item.repo, number: String(scope.item.number) })
+        : new URLSearchParams({ scope: 'lists' });
+      await request<ErrorResponse>(fetch, identity, '/read-cache/refresh', { method: 'POST' }, query);
     },
     referenceLabels: async (context, project) => parseLabelChoices(await readRepositoryChoices(fetch, context, project, '/references/labels')),
     referenceReviewers: async (context, project) => parseReviewerChoices(await readRepositoryChoices(fetch, context, project, '/references/reviewers')),
@@ -1741,6 +1801,11 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
           context.verdicts = (payload.verdicts ?? []).map((verdict) => parseSourceVerdict(verdict, normalized));
           if (payload.reviewers) context.reviewers = payload.reviewers.map((user) => parseSourceUser(user, normalized));
         }
+        if (payload.stack === null) context.stack = null;
+        else if (payload.stack !== undefined) {
+          const stack = parseOptionalStack(payload.stack);
+          if (stack) context.stack = stack;
+        }
         return context;
       }
       const payload = await request<GitHubPullRequestContextResult & ErrorResponse>(fetch, normalized, '/pulls/context', {}, query);
@@ -1763,6 +1828,9 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
       if (payload.fetchedAt !== undefined) result.fetchedAt = payload.fetchedAt;
       if (payload.diff) result.diff = payload.diff;
       if (payload.checks) result.ci = parseSourceCI(mapChecks(payload.checks, payload.checkRuns), GITHUB_IDENTITY);
+      // Sent only for a layer of a stack.
+      const stack = payload.stack ? parseOptionalStack(payload.stack) : undefined;
+      if (stack) result.stack = stack;
       return result;
     },
 
@@ -1861,6 +1929,7 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
       return parseBranches(payload);
     },
     githubReferences: (context, referenceOptions) => fetchGitHubReferences(fetch, context, referenceOptions),
+    githubReferencesAcross: (contexts, referenceOptions) => fetchGitHubReferencesAcross(fetch, contexts, referenceOptions),
     githubReferenceDetail: (context, item) => fetchGitHubReferenceDetail(fetch, context, item),
     githubPullStatuses: (context, pulls) => fetchGitHubPullStatuses(fetch, context, pulls),
   };

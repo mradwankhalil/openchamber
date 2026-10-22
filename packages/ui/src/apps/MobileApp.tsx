@@ -76,8 +76,10 @@ import { MobileFullscreenSurface } from './MobileFullscreenSurface';
 import { UsageStatsView } from '@/components/views/usage/UsageStatsView';
 import { ArchiveSessionsView } from '@/components/views/ArchiveView';
 import { MobileSourceBoard } from '@/components/sourceBoard/SourceBoardView';
+import { OverviewPage } from '@/components/overview/OverviewView';
 import { ScheduledTasksView, type ScheduledTasksLeaveReason } from '@/components/session/ScheduledTasksDialog';
-import { MobileWorkspaceDrawer, type MobileWorkspaceTab } from './MobileWorkspaceDrawer';
+import { MobileWorkspaceDrawer } from './MobileWorkspaceDrawer';
+import { shownMobileWorkspaceTabs, type MobileWorkspaceTab } from '@/lib/mobileWorkspaceTabs';
 import { DedicatedMobileAppProvider, type MobileAppActions } from './mobileAppContext';
 import { autoConnectLastInstance, getAutoConnectTargetLabel, logMobileConnectEvent, reprobeActiveConnection, suppressAutoConnectUntilManualConnect, type AutoConnectOutcome } from './mobileConnections';
 import { isCapacitorMobileApp, useNativeAndroidBackButton, useNativeMobileChrome, useNativeMobileLifecycle } from './mobileNativeChrome';
@@ -131,7 +133,7 @@ const NATIVE_RESUME_SYNC_EVENT_THROTTLE_MS = 1_000;
     footer. Exactly one can be open at a time — opening another replaces it,
     closing returns to the chat. The sessions drawer and the workspace drawer
     (Changes / Files / Terminal / Notes / MCP) are separate layers. */
-type MobileSurface = 'archive' | 'board' | 'instances' | 'scheduled' | 'settings' | 'update' | 'usage';
+type MobileSurface = 'archive' | 'board' | 'overview' | 'instances' | 'scheduled' | 'settings' | 'update' | 'usage';
 
 const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onActiveConnectionDeleted }) => {
   const { t, direction } = useI18n();
@@ -155,6 +157,15 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
   // open/close so the right-edge swipe reopens where the user left off.
   const [workspaceOpen, setWorkspaceOpen] = React.useState(false);
   const [workspaceTab, setWorkspaceTab] = React.useState<MobileWorkspaceTab>('changes');
+  // Opening the drawer itself lands on the last tab, unless the user has since
+  // hidden it in Settings; then on their first tab. A trigger that asks for a
+  // tab (a changed file in the chat) sets it on its own and opens it hidden or not.
+  const openWorkspace = React.useCallback(() => {
+    const { mobileWorkspaceTabOrder, mobileWorkspaceHiddenTabs } = useUIStore.getState();
+    const shown = shownMobileWorkspaceTabs(mobileWorkspaceTabOrder, mobileWorkspaceHiddenTabs);
+    setWorkspaceTab((current) => (shown.includes(current) ? current : shown[0]));
+    setWorkspaceOpen(true);
+  }, []);
   // A plan opened from the workspace drawer's Notes tab, shown as a fullscreen
   // layer on top of it (back returns to the notes).
   const [openPlan, setOpenPlan] = React.useState<{ id: string; title: string; projectRef: ProjectRef } | null>(null);
@@ -352,7 +363,7 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
     if (isTabletLayout) setSidebarOpen(true);
     else setSessionsSheetOpen(true);
   };
-  const openWorkspaceFromEdge = () => setWorkspaceOpen(true);
+  const openWorkspaceFromEdge = () => openWorkspace();
   useEdgeSwipe(chatMainRef, {
     onLeftEdgeSwipe: direction === 'rtl' ? openWorkspaceFromEdge : openSessionsFromEdge,
     onRightEdgeSwipe: direction === 'rtl' ? openSessionsFromEdge : openWorkspaceFromEdge,
@@ -411,6 +422,7 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
 
   // App-level footer of the sessions list — the same on a phone drawer and a
   // tablet sidebar: connected instance, pending web update, settings.
+  const overviewAvailable = useUIStore((state) => state.overviewFeatureAvailable);
   const sessionsFooter = React.useMemo(
     () => ({
       instanceLabel: showCapacitorOnlyFeatures ? getAutoConnectTargetLabel() : null,
@@ -419,10 +431,11 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
       onOpenUsage: () => openSurface('usage'),
       onOpenScheduled: () => openSurface('scheduled'),
       onOpenArchive: () => openSurface('archive'),
+      onOpenOverview: overviewAvailable ? () => openSurface('overview') : undefined,
       onOpenSourceBoard: () => openSurface('board'),
       onOpenUpdate: showUpdateItem ? () => openSurface('update') : undefined,
     }),
-    [openSettingsSurface, openSurface, showCapacitorOnlyFeatures, showUpdateItem],
+    [openSettingsSurface, openSurface, overviewAvailable, showCapacitorOnlyFeatures, showUpdateItem],
   );
 
   // A started run or a loop file to edit replaces the page: back to the chat,
@@ -438,6 +451,13 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
     closeSurface();
     setSessionsSheetOpen(false);
   }, [closeSurface]);
+
+  // A session opened from the overview replaces the page: back to the chat.
+  const leaveOverview = React.useCallback(() => {
+    closeSurface();
+    setSessionsSheetOpen(false);
+    if (isTabletLayout && !roomyForPanels) setSidebarOpen(false);
+  }, [closeSurface, isTabletLayout, roomyForPanels]);
 
   // An opened archived session replaces the page: back to the chat, the same
   // way picking a session from the list gives the space back.
@@ -557,7 +577,7 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
         <div className="flex h-full min-w-0 flex-1 flex-col" data-page-scroll-lock="true">
           <MobileHeader
             onOpenSessions={() => (isTabletLayout ? toggleSidebar() : setSessionsSheetOpen(true))}
-            onOpenWorkspace={() => setWorkspaceOpen(true)}
+            onOpenWorkspace={openWorkspace}
             compactTitle={isTabletLayout}
           />
           <main ref={chatMainRef} className="relative min-h-0 flex-1 overflow-hidden" data-page-scroll-lock="true">
@@ -738,6 +758,21 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
           >
             <ErrorBoundary>
               <MobileSourceBoard onLeave={leaveSourceBoard} onClose={closeSurface} />
+            </ErrorBoundary>
+          </MobileFullscreenSurface>
+        ) : null}
+
+        {activeSurface === 'overview' && overviewAvailable ? (
+          <MobileFullscreenSurface
+            open
+            variant={surfaceVariant}
+            dialogAlign="app"
+            onClose={closeSurface}
+            ariaLabel={t('overview.title')}
+            title={t('overview.title')}
+          >
+            <ErrorBoundary>
+              <OverviewPage layout="mobile" onLeave={leaveOverview} />
             </ErrorBoundary>
           </MobileFullscreenSurface>
         ) : null}
@@ -1365,7 +1400,7 @@ function MobileAppContent({ apis }: MobileAppProps) {
                   <h1 className="typography-h3 text-foreground">{t('sessionAuth.error.networkTitle')}</h1>
                   {/* Native copy — the browser-oriented sessionAuth description
                       (Desktop Network Access etc.) reads as noise here. */}
-                  <p className="typography-body text-muted-foreground">{t('mobile.connect.recovery.description')}</p>
+                  <p className="typography-markdown text-muted-foreground">{t('mobile.connect.recovery.description')}</p>
                 </div>
                 <Button
                   type="button"
@@ -1429,7 +1464,7 @@ function MobileAppContent({ apis }: MobileAppProps) {
       <main className="flex min-h-dvh items-center justify-center bg-background px-6 text-center text-foreground">
         <div className="max-w-sm space-y-3">
           <h1 className="typography-h3 text-foreground">{t('sessionAuth.error.networkTitle')}</h1>
-          <p className="typography-body text-muted-foreground">{t('sessionAuth.error.networkDescription')}</p>
+          <p className="typography-markdown text-muted-foreground">{t('sessionAuth.error.networkDescription')}</p>
         </div>
       </main>
     );

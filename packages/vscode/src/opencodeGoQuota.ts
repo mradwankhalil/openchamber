@@ -15,6 +15,10 @@ const CONSOLE_BILLING_STATUS_URL = 'https://opencode.ai/console/api/billing/stat
 const MICRO_CENTS_PER_DOLLAR = 100_000_000;
 const CONSOLE_PRODUCTS = new Set(['go', 'go-plus']);
 const NO_CONSOLE_SUBSCRIPTION = 'No active OpenCode Go subscription on the selected Console account';
+// Console keys expire and nothing can renew them, while a Console sign-in is
+// renewed by OpenCode and serves OpenCode Go too. Providers offers that sign-in
+// as the "OpenCode Console account" row on the OpenCode card.
+export const OPENCODE_GO_KEY_EXPIRED = 'OpenCode Go key expired. Connect an OpenCode Console account on the OpenCode card in Providers.';
 
 // The Console and legacy Go endpoints report amounts as decimal strings (the
 // Console uses integer micro-cents), so both schemas decode them once at the
@@ -71,6 +75,10 @@ const apiKeyStatusSchema = z.object({
   usage: z.record(z.string(), apiKeyWindowSchema).optional(),
 });
 type OpenCodeGoApiKeyStatus = z.infer<typeof apiKeyStatusSchema>;
+// The usage API answers an expired key with 401 and
+// `{ error: { code: 'api_key_expired' } }`; any other 401 stays a plain
+// authentication failure.
+const apiKeyErrorSchema = z.object({ error: z.object({ code: z.literal('api_key_expired') }) });
 
 const parseApiKeyUsage = (payload: OpenCodeGoApiKeyStatus) => {
   const windows: Record<string, OpenCodeGoWindow> = {};
@@ -126,6 +134,7 @@ const fetchApiKeyUsage = async (credential: OpenCodeGoApiKeyCredential) => {
   // that workspace has no Go subscription, so for a Console key a 403 is an
   // absent subscription rather than a bad key.
   if (response.status === 403 && credential.consoleKey) throw new Error(NO_CONSOLE_SUBSCRIPTION);
+  if (response.status === 401 && apiKeyErrorSchema.safeParse(await response.json().catch(() => null)).success) throw new Error(OPENCODE_GO_KEY_EXPIRED);
   if (response.status === 401 || response.status === 403 || (response.status >= 300 && response.status < 400)) throw new Error('OpenCode Go authentication failed');
   if (!response.ok) throw new Error(`OpenCode Go usage API returned HTTP ${response.status}`);
   const parsed = apiKeyStatusSchema.safeParse(await response.json().catch(() => null));

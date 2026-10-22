@@ -158,7 +158,7 @@ const getSvgAspectRatio = (svg: SVGElement): number | null => {
         // Ignore getBBox failures and fall back to SVG attrs/viewBox.
     }
 
-    const viewBox = svg.getAttribute('viewBox');
+    const viewBox = svg.getAttribute('data-oc-mermaid-original-viewbox') ?? svg.getAttribute('viewBox');
     if (viewBox) {
         const parts = viewBox.trim().split(/\s+/).map(Number);
         if (parts.length === 4) {
@@ -760,16 +760,19 @@ const MermaidPreviewDialog: React.FC<{
             return;
         }
 
+        let measuredSvg: SVGElement | null = null;
         const measureAspectRatio = () => {
             const svg = mermaidPreviewRef.current?.querySelector('svg');
             if (!svg) {
                 return false;
             }
+            if (svg === measuredSvg) return true;
 
             const aspectRatio = getSvgAspectRatio(svg as SVGElement);
             if (!aspectRatio || !Number.isFinite(aspectRatio) || aspectRatio <= 0) {
                 return false;
             }
+            measuredSvg = svg;
 
             setDiagramAspectRatio((previous) => {
                 if (previous && Math.abs(previous - aspectRatio) < 0.001) {
@@ -809,7 +812,8 @@ const MermaidPreviewDialog: React.FC<{
         });
 
         if (mermaidPreviewRef.current) {
-            observer.observe(mermaidPreviewRef.current, { childList: true, subtree: true, attributes: true });
+            // A new SVG needs sizing; pointer-driven viewBox changes do not.
+            observer.observe(mermaidPreviewRef.current, { childList: true, subtree: true });
         }
 
         return () => {

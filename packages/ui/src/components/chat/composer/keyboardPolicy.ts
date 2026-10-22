@@ -6,11 +6,13 @@ export interface EnterKeyPolicyInput {
     shiftKey: boolean;
     ctrlKey: boolean;
     metaKey: boolean;
+    /** Mobile return-key send (enterkeyhint="send"); desktop ignores it. */
+    returnKeySends?: boolean;
 }
 
 export const shouldSubmitEnter = (input: EnterKeyPolicyInput): boolean => {
     const isCtrlEnter = input.ctrlKey || input.metaKey;
-    if (input.isMobile) return isCtrlEnter;
+    if (input.isMobile) return isCtrlEnter || (input.returnKeySends === true && !input.shiftKey);
     if (input.isDesktopExpanded) return isCtrlEnter;
 
     const enterSendsByDefault = !input.isMobile;

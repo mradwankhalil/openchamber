@@ -50,6 +50,20 @@ describe('skill picker', () => {
         expect(at('line\n$pl|')).toEqual({ kind: 'skill', query: 'pl' });
     });
 
+    test('the sigils a CJK IME produces open it too', () => {
+        expect(at('¥rev|')).toEqual({ kind: 'skill', query: 'rev' });
+        expect(at('￥rev|')).toEqual({ kind: 'skill', query: 'rev' });
+        expect(at('＄rev|')).toEqual({ kind: 'skill', query: 'rev' });
+    });
+
+    test('an IME sigil after whitespace opens it', () => {
+        expect(at('please run ¥explo|')).toEqual({ kind: 'skill', query: 'explo' });
+    });
+
+    test('the nearest sigil wins across spellings', () => {
+        expect(at('$a ¥c|')).toEqual({ kind: 'skill', query: 'c' });
+    });
+
     test('a dollar inside a word does not open it', () => {
         expect(at('US$5|')).toBeNull();
     });

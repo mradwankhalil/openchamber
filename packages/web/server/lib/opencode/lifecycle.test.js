@@ -203,7 +203,7 @@ describe('OpenCode lifecycle', () => {
   it('records an authoritative ready terminal event for external startup', async () => {
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+      json: async () => ({ version: '2.1.2', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
     }));
     const runtime = createRuntime({
       env: {
@@ -235,7 +235,7 @@ describe('OpenCode lifecycle', () => {
   it('recovers an external OPENCODE_HOST connection using its configured endpoint', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+      json: async () => ({ version: '2.1.2', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
     }));
     globalThis.fetch = fetchMock;
     const runtime = createRuntime({}, {
@@ -318,7 +318,7 @@ describe('OpenCode lifecycle', () => {
     await fs.mkdir(otherProject);
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+      json: async () => ({ version: '2.1.2', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
     }));
     globalThis.fetch = fetchMock;
     const runtime = createRuntime({
@@ -356,7 +356,7 @@ describe('OpenCode lifecycle', () => {
     await fs.mkdir(stale);
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+      json: async () => ({ version: '2.1.2', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
     }));
     const runtime = createRuntime({
       env: {
@@ -397,7 +397,7 @@ describe('OpenCode lifecycle', () => {
     let warmup = [];
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+      json: async () => ({ version: '2.1.2', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
     }));
     const runtime = createRuntime({
       env: {
@@ -427,6 +427,43 @@ describe('OpenCode lifecycle', () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
+  // The UI stops a chat's location once the user leaves it. A read that went
+  // to the chat used last at startup would start it again, every quota poll.
+  it('scopes reads without a directory to the directory the user works in now', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-current-'));
+    const leftChat = path.join(root, 'left-chat');
+    const current = path.join(root, 'current');
+    await fs.mkdir(leftChat);
+    await fs.mkdir(current);
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: '2.1.2', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+    }));
+    const runtime = createRuntime({
+      env: {
+        ENV_CONFIGURED_OPENCODE_PORT: 45678,
+        ENV_CONFIGURED_OPENCODE_HOST: null,
+        ENV_EFFECTIVE_PORT: 45678,
+        ENV_CONFIGURED_OPENCODE_HOSTNAME: '127.0.0.1',
+        ENV_SKIP_OPENCODE_START: true,
+      },
+      reapManagedOrphanedProcesses: vi.fn(async () => ({ reaped: 0 })),
+      getWarmupDirectories: vi.fn(async () => [leftChat]),
+    });
+
+    await runtime.bootstrapOpenCodeAtStartup();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runtime.getDefaultOpenCodeDirectory()).toBe(leftChat);
+
+    runtime.noteCurrentDirectory(current);
+    expect(runtime.getDefaultOpenCodeDirectory()).toBe(current);
+
+    // A directory that is not there is never sent.
+    runtime.noteCurrentDirectory(path.join(root, 'missing'));
+    expect(runtime.getDefaultOpenCodeDirectory()).toBe(current);
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
   it('advances to a currently-valid warmup directory when the cached default goes stale', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-replace-'));
     const stale = path.join(root, 'gone');
@@ -435,7 +472,7 @@ describe('OpenCode lifecycle', () => {
     await fs.mkdir(surviving);
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+      json: async () => ({ version: '2.1.2', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
     }));
     // The warm pass offered both; only the first was cached as the default.
     const runtime = createRuntime({
@@ -470,7 +507,7 @@ describe('OpenCode lifecycle', () => {
     let current = stale;
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+      json: async () => ({ version: '2.1.2', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
     }));
     const runtime = createRuntime({
       env: {
@@ -509,7 +546,7 @@ describe('OpenCode lifecycle', () => {
     await fs.mkdir(locked);
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+      json: async () => ({ version: '2.1.2', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
     }));
     const runtime = createRuntime({
       env: {
@@ -546,7 +583,7 @@ describe('OpenCode lifecycle', () => {
     globalThis.fetch = vi.fn(async (url, init) => {
       requested.push([String(url), init?.headers?.['x-opencode-directory'] ?? null]);
       if (String(url).endsWith('/api/info')) {
-        return { ok: true, json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }) };
+        return { ok: true, json: async () => ({ version: '2.1.2', pid: 1, urls: [], paths: { tmp: '/tmp' } }) };
       }
       return { ok: true, json: async () => ({ data: [{ id: 'build' }] }) };
     });
@@ -1362,7 +1399,7 @@ it('shares the managed CLI preflight with desktop while startup is pending', asy
   await checking;
   const desktopVerdict = runtime.getManagedOpenCodePreflight();
   expect(runtime.testState.isOpenCodeReady).toBe(false);
-  finish('2.0.20');
+  finish('2.1.2');
   expect(await desktopVerdict).toBe(true);
   expect(checks).toBe(1);
   const server = await starting;

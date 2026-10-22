@@ -25,7 +25,7 @@ import * as sessionActions from '@/sync/session-actions';
 import { buildLinkedIssue } from '@/lib/linkedIssues';
 import { normalizePath } from '@/lib/pathNormalization';
 import { getSourceControlAuthKey, getSourceControlReadContextAuthState, useSourceControlAuthStore } from '@/stores/useSourceControlAuthStore';
-import { getSourceControlStatusKey, useBranchTrackedPulls, useGitHubPrStatusStore, type SourceControlStatus } from '@/stores/useGitHubPrStatusStore';
+import { getFreshestSourceControlStatusForBranch, getSourceControlStatusKey, useBranchTrackedPulls, useGitHubPrStatusStore, type SourceControlStatus } from '@/stores/useGitHubPrStatusStore';
 import { useTrackedItems } from '@/lib/trackedItems/interest';
 import type {
   CreateChangeRequestInput,
@@ -189,6 +189,8 @@ type PullRequestDraftSnapshot = {
   draft: boolean;
   additionalContext: string;
   targetBaseBranch?: string;
+  /** The base was picked by hand; a base found for the branch later never replaces it. */
+  targetBaseBranchChosen?: boolean;
 };
 
 const pullRequestDraftSnapshots = new Map<string, PullRequestDraftSnapshot>();
@@ -283,6 +285,9 @@ export const PullRequestSection: React.FC<{
   const [body, setBody] = React.useState(() => initialSnapshot?.body ?? '');
   const [draft, setDraft] = React.useState(() => initialSnapshot?.draft ?? readCreateAsDraft());
   const [additionalContext, setAdditionalContext] = React.useState(() => initialSnapshot?.additionalContext ?? '');
+  // Until someone picks a base, it follows the one found for the branch, which
+  // can arrive after the form opened (the layer below it in a stack).
+  const [targetBaseBranchChosen, setTargetBaseBranchChosen] = React.useState(() => initialSnapshot?.targetBaseBranchChosen === true);
   const [targetBaseBranch, setTargetBaseBranch] = React.useState(() => {
     const fromSnapshot = typeof initialSnapshot?.targetBaseBranch === 'string'
       ? normalizeBranchRef(initialSnapshot.targetBaseBranch)
@@ -292,6 +297,11 @@ export const PullRequestSection: React.FC<{
     }
     return normalizeBranchRef(baseBranch);
   });
+
+  const chooseTargetBaseBranch = React.useCallback((value: string) => {
+    setTargetBaseBranchChosen(true);
+    setTargetBaseBranch(value);
+  }, []);
 
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [isCreating, setIsCreating] = React.useState(false);
@@ -313,6 +323,16 @@ export const PullRequestSection: React.FC<{
   }, [beginActiveSourceControlContextsLoad, binding.contexts, binding.scope.runtimeKey, commitActiveSourceControlContexts, directory, releaseActiveSourceControlContexts, sourceControlAuthEntries, sourceControlContextsOwnerId]);
   const readContexts = binding.contexts;
   const readContext = readContexts[0] ?? null;
+  // The open pull request whose branch the new one targets: the new one is
+  // the next layer of that one's stack. Known when its branch's status was read.
+  const parentChangeRequest = useGitHubPrStatusStore((state) => {
+    if (!readContext || !targetBaseBranch) return null;
+    const parentStatus = getFreshestSourceControlStatusForBranch(state.entries, readContext, targetBaseBranch);
+    // The default branch is the trunk, never a layer, even with a release PR out of it.
+    if (!parentStatus || parentStatus.defaultBranch === targetBaseBranch) return null;
+    const parent = parentStatus.changeRequest ?? parentStatus.pr ?? null;
+    return parent?.state === 'open' ? parent : null;
+  });
   const hostAuthChecked = useSourceControlAuthStore((state) => repositoryHost
     ? state.entries[getSourceControlAuthKey(repositoryHost)]?.hasChecked === true
     : false);
@@ -563,12 +583,19 @@ export const PullRequestSection: React.FC<{
     const startedAt = Date.now();
     try {
       await refresh({ force: true });
+      // The sidebar's badge for this PR reads the server's followed item, which
+      // a status refresh does not touch; ask the server to re-read it too, as
+      // the preview's refresh does. Runtimes without the route just skip it.
+      if (pr && status?.repo && statusIdentity) {
+        const item = { owner: status.repo.owner, repo: status.repo.repo, number: pr.number };
+        await sourceControl.refreshProviderReads(statusIdentity, { item }).catch(() => undefined);
+      }
     } finally {
       const remaining = PR_MANUAL_REFRESH_MIN_SPIN_MS - (Date.now() - startedAt);
       if (remaining > 0) await new Promise((resolve) => window.setTimeout(resolve, remaining));
       if (manualRefreshMountedRef.current) setIsManualRefreshing(false);
     }
-  }, [isManualRefreshing, refresh]);
+  }, [isManualRefreshing, pr, refresh, sourceControl, status?.repo, statusIdentity]);
 
   React.useEffect(() => {
     if (!readContext || !prStatusKey) return;
@@ -583,7 +610,9 @@ export const PullRequestSection: React.FC<{
     setTitle(snapshot?.title ?? branchToTitle(branch));
     setBody(snapshot?.body ?? '');
     setDraft(snapshot?.draft ?? readCreateAsDraft());
-    setTargetBaseBranch(snapshot?.targetBaseBranch ? normalizeBranchRef(snapshot.targetBaseBranch) : normalizeBranchRef(baseBranch));
+    const chosen = snapshot?.targetBaseBranchChosen === true && Boolean(snapshot.targetBaseBranch);
+    setTargetBaseBranchChosen(chosen);
+    setTargetBaseBranch(chosen && snapshot?.targetBaseBranch ? normalizeBranchRef(snapshot.targetBaseBranch) : normalizeBranchRef(baseBranch));
   }, [baseBranch, branch, snapshotKey]);
 
   React.useEffect(() => {
@@ -639,8 +668,9 @@ export const PullRequestSection: React.FC<{
       draft,
       additionalContext,
       targetBaseBranch,
+      targetBaseBranchChosen,
     });
-  }, [snapshotKey, title, body, draft, additionalContext, targetBaseBranch, directory, branch]);
+  }, [snapshotKey, title, body, draft, additionalContext, targetBaseBranch, targetBaseBranchChosen, directory, branch]);
 
   React.useEffect(() => {
     return () => {
@@ -789,7 +819,11 @@ export const PullRequestSection: React.FC<{
       mutationSettled = true;
       finishMutation(signature, idempotencyKey, false);
       if (!isMutationScopeCurrent(capturedRuntimeKey, capturedStatusKey)) return;
-      toast.success(t('gitView.pr.toast.prCreated'));
+      if (receipt.result.stacked === false) {
+        toast.warning(t('stacks.toast.createdNotStacked'), { description: t('stacks.toast.createdNotStackedDescription', { base: trimmedBase }) });
+      } else {
+        toast.success(t(receipt.result.stacked ? 'stacks.toast.createdStacked' : 'gitView.pr.toast.prCreated'));
+      }
       await refresh({ force: true });
       if (!isMutationScopeCurrent(capturedRuntimeKey, capturedStatusKey)) return;
       // The receipt names the number; the refreshed status has its address.
@@ -1082,7 +1116,7 @@ export const PullRequestSection: React.FC<{
                     <span className="min-w-0 shrink truncate typography-meta text-muted-foreground">{detectedUpstream.owner}/{detectedUpstream.name}</span>
                   ) : null}
                   {availableBaseBranches.length > 0 ? (
-                    <Select value={targetBaseBranch} onValueChange={setTargetBaseBranch}>
+                    <Select value={targetBaseBranch} onValueChange={chooseTargetBaseBranch}>
                       <SelectTrigger className="w-auto min-w-0" aria-label={t('gitView.pr.field.baseBranch')}>
                         <SelectValue placeholder={t('gitView.pr.placeholder.selectBaseBranch')} />
                       </SelectTrigger>
@@ -1095,7 +1129,7 @@ export const PullRequestSection: React.FC<{
                   ) : (
                     <Input
                       value={targetBaseBranch}
-                      onChange={(e) => setTargetBaseBranch(e.target.value)}
+                      onChange={(e) => chooseTargetBaseBranch(e.target.value)}
                       placeholder={t('gitView.pr.placeholder.main')}
                       aria-label={t('gitView.pr.field.baseBranch')}
                       className="h-7 w-32"
@@ -1117,6 +1151,12 @@ export const PullRequestSection: React.FC<{
                     {refreshButton}
                   </div>
                 </div>
+                {parentChangeRequest ? (
+                  <div className="flex min-w-0 items-center gap-1.5 typography-meta text-muted-foreground">
+                    <Icon name="stack" className="size-3.5 shrink-0" />
+                    <span className="truncate">{t('stacks.create.stacksOn', { reference: formatChangeRequestReference(readContext?.provider, parentChangeRequest.number) })}</span>
+                  </div>
+                ) : null}
 
                 <label className="space-y-1">
                   <div className="typography-micro text-muted-foreground">{t('gitView.pr.field.title')}</div>

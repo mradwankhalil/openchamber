@@ -28,7 +28,6 @@ type SessionTreeItemRenderProps = Context & Pick<SessionNodeItemProps,
   | 'expandedParents'
   | 'hasSessionSearchQuery'
   | 'normalizedSessionSearchQuery'
-  | 'notifyOnSubtasks'
   | 'editingId'
   | 'editingRowKey'
   | 'editTitle'
@@ -80,7 +79,6 @@ function SessionTreeItemComponent({
   expandedParents,
   hasSessionSearchQuery,
   normalizedSessionSearchQuery,
-  notifyOnSubtasks,
   editingId,
   editingRowKey,
   setEditingId,
@@ -160,7 +158,6 @@ function SessionTreeItemComponent({
       expandedParents={expandedParents}
       hasSessionSearchQuery={hasSessionSearchQuery}
       normalizedSessionSearchQuery={normalizedSessionSearchQuery}
-      notifyOnSubtasks={notifyOnSubtasks}
       editingId={editingId}
       editingRowKey={editingRowKey}
       setEditingId={setEditingId}
@@ -207,7 +204,6 @@ function SessionTreeItemComponent({
           expandedParents={expandedParents}
           hasSessionSearchQuery={hasSessionSearchQuery}
           normalizedSessionSearchQuery={normalizedSessionSearchQuery}
-          notifyOnSubtasks={notifyOnSubtasks}
           editingId={editingId}
           editingRowKey={editingRowKey}
           setEditingId={setEditingId}
@@ -276,7 +272,7 @@ const areSessionTreeItemPropsEqual = (prev: SessionTreeItemProps, next: SessionT
   const scalarKeys = [
     'depth', 'groupDirectory', 'projectId', 'folderOwnerKey', 'selectionScopeKey', 'archivedBucket',
     'renderContext', 'rowKey', 'dragKey', 'renderChildren',
-    'hasSessionSearchQuery', 'normalizedSessionSearchQuery', 'notifyOnSubtasks',
+    'hasSessionSearchQuery', 'normalizedSessionSearchQuery',
     'editingId', 'editingRowKey', 'editTitle', 'openSidebarMenuKey',
     'mobileVariant', 'alwaysShowActions', 'allowReselect',
     'pinnedSessionIds', 'expandedParents', 'deleteSessionConfirm',

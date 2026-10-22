@@ -500,6 +500,14 @@ export const createWebLinearAPI = (): LinearAPI => ({
     return result;
   },
 
+  async refreshListReads(): Promise<void> {
+    const response = await runtimeFetch('/api/linear/read-cache/refresh?scope=lists', {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error(readErrorMessage(await readLinearJson(response), response.statusText || 'Failed to refresh Linear lists'));
+  },
+
   async issueGet(id: string): Promise<LinearIssueGetResult> {
     const params = new URLSearchParams({ id });
     const response = await runtimeFetch(`/api/linear/issues/get?${params.toString()}`, {

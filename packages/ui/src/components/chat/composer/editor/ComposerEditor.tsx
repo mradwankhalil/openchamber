@@ -28,7 +28,6 @@ import {
     EditorView,
     drawSelection,
     keymap,
-    placeholder as placeholderExtension,
     type KeyBinding,
 } from '@codemirror/view';
 
@@ -104,12 +103,22 @@ export interface ComposerEditorProps {
     editable?: boolean;
     spellCheck?: boolean;
     /**
+     * Show the mobile keyboard's return key as a send action
+     * (`enterkeyhint="send"`), which also enables IME voice swipe-up send.
+     */
+    returnKeySends?: boolean;
+    /**
      * The content element's autocorrect keyword. See `autocorrect.ts` for the
      * case-sensitive CodeMirror workaround.
      */
     autoCorrect?: ComposerAutoCorrect;
     autoCapitalize?: 'none' | 'sentences';
-    /** Retain the untouched key policy before a mobile user opts in. */
+    /**
+     * Restore the real Shift onto the deferred Enter. Callers gate it on
+     * whether Shift can be trusted: iOS autocapitalization reports a
+     * phantom Shift at sentence starts, which return-key send must treat
+     * as Send rather than newline.
+     */
     preserveDeferredEnterShift?: boolean;
     /** Fill the available height instead of growing with the content. */
     fillContainer?: boolean;
@@ -173,11 +182,44 @@ function isDeferredSyntheticEvent(event: KeyboardEvent): boolean {
  */
 const editableCompartment = new Compartment();
 const placeholderCompartment = new Compartment();
+const enterKeyHintCompartment = new Compartment();
+
+/**
+ * The return-key hint lives in a compartment so a settings flip applies
+ * immediately: iOS picks the keycap when the keyboard opens, and a provider
+ * that only re-evaluates on the next editor update would lag one keystroke
+ * behind the setting.
+ */
+const enterKeyHintExtension = (send: boolean): Extension =>
+    send ? EditorView.contentAttributes.of({ enterkeyhint: 'send' }) : [];
+
+/**
+ * CSS placeholder, not CodeMirror's `placeholder()` widget: a widget at
+ * position 0 wraps the caret in a zero-width buffer image and a
+ * `contenteditable=false` span, and IMEs that probe the text context before
+ * committing — iOS smart-spacing keyboards among them — fail that probe on an
+ * empty document, so the first character never arrives. The pseudo-element
+ * driven by these attributes is invisible to the probe.
+ */
+const composerEmptyClass = EditorView.contentAttributes.of((view) =>
+    view.state.doc.length === 0 ? { class: 'cm-composer-empty' } : null);
+
+function placeholderContentAttributes(text: string) {
+    return EditorView.contentAttributes.of({
+        'aria-placeholder': text,
+        // `content: attr(...)` reads the pseudo-element's own element, so the
+        // text reaches `.cm-line::before` through a custom property instead.
+        // JSON.stringify quotes it as a CSS string.
+        style: `--composer-placeholder: ${JSON.stringify(text)}`,
+    });
+}
 
 /** Marks the transaction that writes a changed `value` prop into the editor. */
 const valuePropWrite = Annotation.define<true>();
 
-export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEditorProps>(
+// Memoized: the view is built once and reads its handlers through a ref, so a
+// parent render with equal props has nothing to tell it.
+export const ComposerEditor = React.memo(React.forwardRef<ComposerEditorHandle, ComposerEditorProps>(
     function ComposerEditor(props, ref) {
         const {
             value,
@@ -185,6 +227,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
             placeholder,
             editable = true,
             spellCheck = false,
+            returnKeySends = false,
             autoCorrect = 'off',
             autoCapitalize = 'none',
             fillContainer = false,
@@ -296,8 +339,12 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
                         editableCompartment.of(
                             EditorView.editable.of(handlersRef.current.editable ?? true),
                         ),
+                        composerEmptyClass,
+                        enterKeyHintCompartment.of(
+                            enterKeyHintExtension(handlersRef.current.returnKeySends === true),
+                        ),
                         placeholderCompartment.of(
-                            placeholderExtension(handlersRef.current.placeholder ?? ''),
+                            placeholderContentAttributes(handlersRef.current.placeholder ?? ''),
                         ),
                         composerEditorTheme,
                         EditorView.updateListener.of((update) => {
@@ -436,9 +483,17 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
 
         React.useEffect(() => {
             viewRef.current?.dispatch({
-                effects: placeholderCompartment.reconfigure(placeholderExtension(placeholder ?? '')),
+                effects: placeholderCompartment.reconfigure(
+                    placeholderContentAttributes(placeholder ?? ''),
+                ),
             });
         }, [placeholder]);
+
+        React.useEffect(() => {
+            viewRef.current?.dispatch({
+                effects: enterKeyHintCompartment.reconfigure(enterKeyHintExtension(returnKeySends === true)),
+            });
+        }, [returnKeySends]);
 
         // Grow with the content up to `maxLines`, then scroll. The limit is
         // measured from the rendered line height rather than assumed, so it
@@ -624,7 +679,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
             />
         );
     },
-);
+));
 
 function readSelection(state: EditorState): ComposerSelection {
     const range = state.selection.main;

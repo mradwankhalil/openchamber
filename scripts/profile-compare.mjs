@@ -82,6 +82,11 @@ const SCENARIOS = {
   code: { kind: "session", args: () => ["--model", "perf/code-300cps"] },
   unicode: { kind: "session", args: () => ["--model", "perf/unicode-300cps"] },
   agent: { kind: "session", args: () => ["--model", "perf/agent-40tools-300cps"] },
+  // A chat someone works in: agentic history grown with the page open (a
+  // seeded session opens with only its last turns in memory), on a CPU slowed
+  // four times, where what scales with history shows as dropped frames.
+  grow: { kind: "session", args: () => ["--grow", "100", "--grow-model", "perf/agent-20reads-20000cps", "--model", "perf/agent-20reads-300cps", "--cpu-throttle", "4"] },
+  "grow-short": { kind: "session", args: () => ["--grow", "10", "--grow-model", "perf/agent-20reads-20000cps", "--model", "perf/agent-20reads-300cps", "--cpu-throttle", "4"] },
   long: { kind: "session", seed: true, args: (seed) => ["--session", seed.long, "--model", "perf/stream-300cps"] },
   quiet: { kind: "session", seed: true, args: (seed) => ["--session", seed.long, "--quiet", "20"] },
   cpu: { kind: "session", uninstrumented: true, args: () => ["--model", "perf/stream-300cps", "--process-cpu-only", "--headed"] },
@@ -224,7 +229,8 @@ const prepareSide = async (side, source, options) => {
   const dist = distFor(worktree, options.build)
   const reusable = stamp?.hash === source.hash && existsSync(worktree)
   const builtFor = stamp?.builds?.[options.build]
-  const needsBuild = !reusable || builtFor !== source.hash || !existsSync(join(dist, "index.html"))
+  const assets = join(dist, "assets")
+  const needsBuild = !reusable || builtFor !== source.hash || !existsSync(join(dist, "index.html")) || (options.build === "prod" && (!existsSync(assets) || !readdirSync(assets).some((file) => file.endsWith(".js.map"))))
   if (options.dryRun) {
     console.log(`${side}: ${source.label} @ ${source.commit.slice(0, 9)}${source.patch ? ` + ${source.patch.length} bytes of diff + ${source.untracked.length} untracked files` : ""} (source ${source.hash})`)
     console.log(`  worktree ${worktree}: ${reusable ? "reuse" : existsSync(worktree) ? "recreate" : "create"}; ${options.build} build: ${needsBuild ? "build" : "up to date"} -> ${dist}`)
@@ -252,7 +258,7 @@ const prepareSide = async (side, source, options) => {
   const web = join(worktree, "packages/web")
   const env = isolatedEnv({ NODE_OPTIONS: "--max-old-space-size=6144" })
   if (options.build === "prod") {
-    await runOrThrow(`${side}: production build`, "bun", ["run", "build"], { cwd: web, env, log: join(logs, `${side}-build-prod.log`) })
+    await runOrThrow(`${side}: production build`, "bun", ["run", "build", "--sourcemap", "hidden"], { cwd: web, env, log: join(logs, `${side}-build-prod.log`) })
   } else {
     // An older commit predates the diagnostic config; it is a build tool, not app code.
     if (!existsSync(join(web, "vite.diag.config.ts"))) copyFileSync(join(REPO_ROOT, "packages/web/vite.diag.config.ts"), join(web, "vite.diag.config.ts"))

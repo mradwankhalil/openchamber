@@ -224,12 +224,14 @@ export const applyGlobalSessionStatusEvents = (directory: string, payloads: read
     // The turn timer keeps running through a background-subagent or background-command pause.
     if (!hasBackgroundWork(sessionId, currentActiveIds())) {
       timingMutations.push({ type: 'observe', sessionId, phase: 'settled' });
+    } else {
+      timingMutations.push({ type: 'hold', sessionId });
     }
   };
 
   for (const payload of payloads) {
     if (payload.type === 'session.status') {
-      const { sessionID, status } = payload.properties;
+      const { sessionID, status, turnStart } = payload.properties;
       if (!sessionID) continue;
       const type = normalizeStatusType(status.type);
       // A status event only records that the session is running again; the
@@ -245,7 +247,7 @@ export const applyGlobalSessionStatusEvents = (directory: string, payloads: read
         if (!current) draftActiveIds().add(sessionID);
       }
       orderingMutations.push({ type: 'observe', sessionId: sessionID, phase: 'active' });
-      timingMutations.push({ type: 'observe', sessionId: sessionID, phase: 'active' });
+      timingMutations.push({ type: 'observe', sessionId: sessionID, phase: 'active', turnStart });
       continue;
     }
 
@@ -322,9 +324,15 @@ export const applyGlobalSessionStatusSnapshot = (
   // authoritatively covers the caller's session list plus every id it reports
   // itself, and only the handful of sessions actually being timed need an
   // answer. Reuses the sets already built above, so this allocates nothing.
+  const turnSessionIds = withBackgroundWork(activeSessionIds);
+  const heldSessionIds = new Set<string>();
+  for (const sessionId of turnSessionIds) {
+    if (!activeSessionIds.has(sessionId)) heldSessionIds.add(sessionId);
+  }
   reconcileSessionActivityTiming(
-    withBackgroundWork(activeSessionIds),
+    turnSessionIds,
     (sessionId) => known.has(sessionId) || sessionId in raw,
+    heldSessionIds,
   );
   useGlobalSessionStatusStore.setState((state) => {
     let changed = false;

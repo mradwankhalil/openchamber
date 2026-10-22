@@ -21,10 +21,58 @@
 // the page.
 
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 
 import { checkContextSchema, isGraphqlRateLimitError, parseSummaryRefs, summarizeCheckContexts } from './pr-summaries.js';
 
 const REFERENCE_PAGE_SIZE = 30;
+const ACROSS_REPO_CHUNK_SIZE = 40;
+const ACROSS_CONCURRENCY = 4;
+
+const acrossContextSchema = z.strictObject({
+  directory: z.string().trim().min(1),
+  repositoryId: z.string().min(1),
+  provider: z.literal('github'),
+  instance: z.string().min(1),
+  accountId: z.string().min(1),
+  bindingRevision: z.number().int().nonnegative(),
+  primaryRemote: z.string().min(1),
+});
+const acrossRequestSchema = z.strictObject({
+  contexts: z.array(acrossContextSchema),
+  kind: z.enum(['issue', 'pull']),
+  state: z.enum(['open', 'closed', 'merged', 'all']).optional(),
+  people: z.enum(['any', 'assigned', 'created', 'reviewRequested']).optional(),
+  query: z.string().optional(),
+  // The first page sends no cursor as null, like the single-repository list.
+  cursor: z.string().max(100_000).nullable().optional(),
+});
+
+const invalidAcrossCursor = () => Object.assign(new Error('Invalid references cursor'), { status: 400, code: 'INVALID_REFERENCES_CURSOR' });
+
+/** Validate the JSON read request before any folder or credential access. */
+export function readReferencesAcrossRequest(body) {
+  const parsed = acrossRequestSchema.safeParse(body);
+  if (!parsed.success) return null;
+  const folders = new Map();
+  for (const context of parsed.data.contexts) {
+    if (!folders.has(context.directory)) folders.set(context.directory, context);
+  }
+  return folders.size > 100 ? null : { ...parsed.data, contexts: [...folders.values()], directories: parsed.data.contexts.map((context) => context.directory) };
+}
+
+/** Bounded fan-out for folder resolution and provider search. */
+export async function mapReferencesAcross(entries, operation) {
+  const results = new Array(entries.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(ACROSS_CONCURRENCY, entries.length) }, async () => {
+    while (next < entries.length) {
+      const index = next++;
+      results[index] = await operation(entries[index], index);
+    }
+  }));
+  return results;
+}
 // The preview shows the description; the attach path reads the full one.
 const BODY_PREVIEW_MAX = 20_000;
 // Keys match the filter schema below.
@@ -277,6 +325,77 @@ const detailSchema = z.object({
   }).nullable(),
 });
 
+// A stack is rarely taller than a handful of layers; GitHub pages the rest.
+const STACK_LAYER_LIMIT = 50;
+
+// Asked beside the detail rather than inside it: a host whose schema has no
+// stacks (an older GitHub Enterprise Server) fails this query alone.
+const STACK_QUERY = `
+query PullStack($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    issueOrPullRequest(number: $number) {
+      __typename
+      ... on PullRequest {
+        stack {
+          number
+          baseRefName
+          entries(first: ${STACK_LAYER_LIMIT}) {
+            nodes { position pullRequest { number title url state isDraft headRefName } }
+          }
+        }
+      }
+    }
+  }
+}
+`;
+
+const stackSchema = z.object({
+  repository: z.object({
+    issueOrPullRequest: z.object({
+      __typename: z.string(),
+      stack: z.object({
+        number: z.number().int(),
+        baseRefName: z.string(),
+        entries: z.object({
+          nodes: z.array(z.object({
+            position: z.number().int(),
+            pullRequest: z.object({
+              number: z.number().int(),
+              title: z.string(),
+              url: z.string(),
+              state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
+              isDraft: z.boolean(),
+              headRefName: z.string(),
+            }).nullable(),
+          })),
+        }),
+      }).nullable().optional(),
+    }).nullable(),
+  }).nullable(),
+});
+
+/**
+ * The stack a PR is a layer of, bottom layer first, or null when it is in
+ * none (an issue is in none either).
+ */
+export async function fetchPullStack({ octokit, owner, repo, number }) {
+  const parsed = stackSchema.parse(await octokit.graphql(STACK_QUERY, { owner, repo, number }));
+  const stack = parsed.repository?.issueOrPullRequest?.stack;
+  if (!stack) return null;
+  const layers = stack.entries.nodes
+    .filter((entry) => entry.pullRequest !== null)
+    .sort((left, right) => left.position - right.position)
+    .map(({ pullRequest }) => ({
+      number: pullRequest.number,
+      title: pullRequest.title,
+      url: pullRequest.url,
+      state: PULL_STATES[pullRequest.state],
+      draft: pullRequest.isDraft,
+      head: pullRequest.headRefName,
+    }));
+  return { number: stack.number, base: stack.baseRefName, layers };
+}
+
 const referenceNodeSchema = z.discriminatedUnion('__typename', [issueNodeSchema, pullNodeSchema]);
 
 const REVIEW_DECISIONS = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes_requested', REVIEW_REQUIRED: 'review_required' };
@@ -359,7 +478,13 @@ const byCreatedAt = (left, right) => (Date.parse(left.createdAt ?? '') || 0) - (
  * Null when the repo has no such number.
  */
 export async function fetchReferenceDetail({ octokit, owner, repo, number }) {
-  const parsed = detailSchema.parse(await octokit.graphql(DETAIL_QUERY, { owner, repo, number }));
+  // The stack is read beside the detail; a host that cannot answer it leaves
+  // the PR's stack unknown (absent), which is not the same as in none (null).
+  const [response, stack] = await Promise.all([
+    octokit.graphql(DETAIL_QUERY, { owner, repo, number }),
+    fetchPullStack({ octokit, owner, repo, number }).catch(() => undefined),
+  ]);
+  const parsed = detailSchema.parse(response);
   const item = parsed.repository?.issueOrPullRequest;
   if (!item) return null;
   const comments = item.comments.nodes.map((comment) => ({
@@ -407,7 +532,7 @@ export async function fetchReferenceDetail({ octokit, owner, repo, number }) {
     });
   }
   comments.sort(byCreatedAt);
-  return {
+  const detail = {
     number: item.number,
     comments,
     commentTotal: item.comments.totalCount,
@@ -438,6 +563,8 @@ export async function fetchReferenceDetail({ octokit, owner, repo, number }) {
       commitTotal: item.commits.totalCount,
     },
   };
+  if (stack !== undefined) detail.pull.stack = stack;
+  return detail;
 }
 
 // One request per listed page of PRs.
@@ -445,16 +572,25 @@ const PULL_STATUS_LIMIT = REFERENCE_PAGE_SIZE;
 
 /**
  * The PRs a status request names, `owner/repo#number` joined by commas, as
- * summary refs. Null when the list is empty, malformed or longer than a page.
+ * summary refs. A ref may carry `@host` when it lives on a GitHub Enterprise
+ * instance; a missing (or `github.com`) host is the default. Null when the list
+ * is empty, malformed or longer than a page.
  */
 export function readPullStatusRefs(value) {
   const entries = String(value ?? '').split(',').map((entry) => entry.trim()).filter(Boolean);
   if (entries.length === 0 || entries.length > PULL_STATUS_LIMIT) return null;
   const refs = [];
   for (const entry of entries) {
-    const match = entry.match(/^([^/#\s]+)\/([^/#\s]+)#(\d+)$/);
+    const match = entry.match(/^([^/#\s]+)\/([^/#\s]+)#(\d+)(?:@([^#@\s]+))?$/);
     if (!match) return null;
-    refs.push({ owner: match[1], repo: match[2], number: Number(match[3]) });
+    const ref = { owner: match[1], repo: match[2], number: Number(match[3]) };
+    // A host the ref names, normalized. github.com is the default either way, so
+    // it is left off; only a real enterprise host is carried.
+    const host = match[4]?.trim().toLowerCase();
+    if (host && host !== 'github.com') {
+      ref.host = host;
+    }
+    refs.push(ref);
   }
   return parseSummaryRefs(refs);
 }
@@ -589,5 +725,117 @@ export async function searchGitHubReferences({ octokit, repos, kind, state, peop
     cursor: search.pageInfo.endCursor,
     hasMore: search.pageInfo.hasNextPage,
     total: search.issueCount,
+  };
+}
+
+const acrossCursorSchema = z.strictObject({
+  version: z.literal(2),
+  scope: z.string().regex(/^[a-f0-9]{64}$/),
+  searches: z.array(z.strictObject({
+    // The GitHub page the search resumes on, and how many of its items were already shown.
+    cursor: z.string().min(1).max(10_000).nullable(),
+    offset: z.number().int().min(0).max(REFERENCE_PAGE_SIZE),
+    done: z.boolean(),
+    total: z.number().int().nonnegative(),
+  })).max(300),
+});
+
+const updatedAtOf = (item) => Date.parse(item.updatedAt ?? '') || 0;
+
+function readAcrossCursor(cursor, scope, searchCount) {
+  try {
+    if (!/^[A-Za-z0-9_-]+$/.test(cursor) || cursor.length > 100_000) throw invalidAcrossCursor();
+    const decoded = Buffer.from(cursor, 'base64url');
+    if (decoded.toString('base64url') !== cursor) throw invalidAcrossCursor();
+    const parsed = acrossCursorSchema.parse(JSON.parse(decoded.toString('utf8')));
+    if (parsed.scope !== scope || parsed.searches.length !== searchCount || parsed.searches.every((position) => position.done)) {
+      throw invalidAcrossCursor();
+    }
+    return parsed.searches;
+  } catch {
+    throw invalidAcrossCursor();
+  }
+}
+
+/**
+ * Search each exact-account group in chunks, then merge them newest first.
+ * A failed group is reported through onGroupError and contributes no items.
+ *
+ * Every page is newest first across all searches, later pages included: an
+ * item is shown only once no unfinished search can still hold a newer one,
+ * that is, when it is at least as new as the oldest item read from every
+ * search with more pages. The rest wait for a later page, which reads the
+ * same GitHub page again and skips what was shown (`offset`). The composite
+ * cursor, even for one search, pins the query and the ordered
+ * account/repository authority, so a page is never read against another set.
+ */
+export async function searchGitHubReferencesAcross({ groups, kind, state, people, text, cursor, onGroupError }) {
+  const searches = groups.flatMap((group, groupIndex) => {
+    const chunks = [];
+    for (let offset = 0; offset < group.repos.length; offset += ACROSS_REPO_CHUNK_SIZE) {
+      chunks.push({ group, groupIndex, repos: group.repos.slice(offset, offset + ACROSS_REPO_CHUNK_SIZE) });
+    }
+    return chunks;
+  });
+  const lookup = parseReferenceLookup(text, []);
+  if (lookup && cursor) throw invalidAcrossCursor();
+  const scope = createHash('sha256').update(JSON.stringify({
+    kind, state, people, text,
+    searches: searches.map(({ group, repos }) => ({ accountId: group.accountId, authority: group.authority,
+      repos: repos.map((repo) => ({ key: repoKey(repo.owner, repo.repo), directory: repo.directory })) })),
+  })).digest('hex');
+  const positions = cursor
+    ? readAcrossCursor(cursor, scope, searches.length)
+    : searches.map(() => ({ cursor: null, offset: 0, done: false, total: 0 }));
+  const pages = await mapReferencesAcross(searches, async ({ group, repos }, index) => {
+    const position = positions[index];
+    if (position.done) return { done: true, items: [], total: position.total };
+    try {
+      const page = await searchGitHubReferences({ octokit: group.octokit, repos, kind, state, people, text, cursor: position.cursor });
+      if (page.hasMore && !page.cursor) throw new Error('GitHub returned an invalid search cursor');
+      const items = page.items.slice(position.offset).map((item) => ({ ...item,
+        directory: repos.find((repo) => repoKey(repo.owner, repo.repo) === repoKey(item.sourceRepo.owner, item.sourceRepo.repo)).directory,
+      }));
+      return { done: false, items, hasMore: page.hasMore, endCursor: page.cursor, total: page.total };
+    } catch (error) {
+      return { error };
+    }
+  });
+  const failedGroups = new Set();
+  for (let index = 0; index < pages.length; index++) {
+    if (!pages[index].error || failedGroups.has(searches[index].groupIndex)) continue;
+    failedGroups.add(searches[index].groupIndex);
+    await onGroupError(searches[index].group, pages[index].error);
+  }
+  const live = pages.map((page, index) => (failedGroups.has(searches[index].groupIndex) || page.done ? null : page));
+  // Anything a search with more pages has not read yet is older than the last item it read.
+  const bound = Math.max(-Infinity, ...live
+    .filter((page) => page?.hasMore && page.items.length > 0)
+    .map((page) => updatedAtOf(page.items[page.items.length - 1])));
+  let shown = live.map((page) => {
+    if (!page) return 0;
+    const count = page.items.findIndex((item) => updatedAtOf(item) < bound);
+    return count === -1 ? page.items.length : count;
+  });
+  // A query with its own `sort:` is not newest first; show what was read rather than stall.
+  if (shown.every((count) => count === 0)) shown = live.map((page) => page?.items.length ?? 0);
+  const items = live.flatMap((page, index) => page?.items.slice(0, shown[index]) ?? []);
+  if (searches.length > 1 || lookup) items.sort((left, right) => updatedAtOf(right) - updatedAtOf(left));
+  const nextPositions = pages.map((page, index) => {
+    if (failedGroups.has(searches[index].groupIndex)) return { cursor: null, offset: 0, done: true, total: 0 };
+    if (page.done) return positions[index];
+    if (shown[index] < page.items.length) {
+      return { cursor: positions[index].cursor, offset: positions[index].offset + shown[index], done: false, total: page.total };
+    }
+    return page.hasMore
+      ? { cursor: page.endCursor, offset: 0, done: false, total: page.total }
+      : { cursor: null, offset: 0, done: true, total: page.total };
+  });
+  const hasMore = !lookup && nextPositions.some((position) => !position.done);
+  return {
+    items,
+    total: nextPositions.reduce((total, position) => total + position.total, 0),
+    hasMore,
+    cursor: hasMore ? Buffer.from(JSON.stringify({ version: 2, scope, searches: nextPositions })).toString('base64url') : null,
   };
 }

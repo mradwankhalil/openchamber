@@ -42,7 +42,6 @@ import { formatQuotaValueLabel, formatQuotaResetLabel, formatWindowLabel, QUOTA_
 import { useQuotaAutoRefresh, useQuotaStore } from '@/stores/useQuotaStore';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { formatTimeForPreference } from '@/lib/timeFormat';
-import { useOnDemandComponent } from '@/hooks/useOnDemandComponent';
 import type { Session } from '@/lib/opencode/model';
 import type { UsageWindow } from '@/types';
 import type { SessionContextUsage } from '@/stores/types/sessionTypes';
@@ -50,8 +49,6 @@ import { useUIStore, type TimeFormatPreference } from '@/stores/useUIStore';
 import { useSessionListSync } from '@/components/session/sidebar/list/useSessionListSync';
 import { RunOverview } from '@/components/multirun/RunOverview';
 import { RunAutoFusion } from '@/lib/multirun/autoFusion';
-
-const loadSettingsView = () => import('@/components/views/SettingsView').then(m => m.SettingsView);
 
 const formatTime = (timestamp: number | null, timeFormatPreference: TimeFormatPreference) => {
   if (!timestamp) return '-';
@@ -62,8 +59,6 @@ const formatTime = (timestamp: number | null, timeFormatPreference: TimeFormatPr
   }
 };
 
-// Width threshold for mobile vs desktop layout in settings
-const MOBILE_WIDTH_THRESHOLD = 550;
 // Sessions sidebar width in expanded layout
 const SESSIONS_SIDEBAR_WIDTH = 280;
 // Keep enough room for the chat after adding the persistent sessions sidebar.
@@ -71,7 +66,7 @@ const EXPANDED_LAYOUT_THRESHOLD = SESSIONS_SIDEBAR_WIDTH + 520;
 const SESSIONS_SIDEBAR_MIN_WIDTH = Math.round(SESSIONS_SIDEBAR_WIDTH * 0.7);
 const SESSIONS_SIDEBAR_MAX_WIDTH = 520;
 
-type VSCodeView = 'sessions' | 'chat' | 'settings';
+type VSCodeView = 'sessions' | 'chat';
 
 export const VSCodeLayout: React.FC = () => {
   const { t } = useI18n();
@@ -116,10 +111,6 @@ export const VSCodeLayout: React.FC = () => {
   }, []);
 
   const [currentView, setCurrentView] = React.useState<VSCodeView>(() => (bootDraftOpen ? 'chat' : 'sessions'));
-  // Mirror currentView so the navigate event handler (registered once) can read the live value.
-  const currentViewRef = React.useRef(currentView);
-  // Snapshot of the view the user was on before opening Settings, so close restores it.
-  const viewBeforeSettingsRef = React.useRef<VSCodeView | null>(null);
   const [containerWidth, setContainerWidth] = React.useState<number>(0);
   const [expandedSidebarWidth, setExpandedSidebarWidth] = React.useState<number>(SESSIONS_SIDEBAR_WIDTH);
   const [isResizingExpandedSidebar, setIsResizingExpandedSidebar] = React.useState(false);
@@ -196,11 +187,6 @@ export const VSCodeLayout: React.FC = () => {
       setCurrentView('chat');
     }
   }, [currentSessionId]);
-
-  // Keep currentViewRef in sync so the stable navigate handler reads the live view.
-  React.useEffect(() => {
-    currentViewRef.current = currentView;
-  }, [currentView]);
 
   React.useEffect(() => {
     const vscodeApi = runtimeApis.vscode;
@@ -380,12 +366,7 @@ export const VSCodeLayout: React.FC = () => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ view?: string }>).detail;
       const view = detail?.view;
-      if (view === 'settings') {
-        if (currentViewRef.current !== 'settings') {
-          viewBeforeSettingsRef.current = currentViewRef.current;
-        }
-        setCurrentView('settings');
-      } else if (view === 'chat') {
+      if (view === 'chat') {
         setCurrentView('chat');
       } else if (view === 'sessions') {
         setCurrentView('sessions');
@@ -482,7 +463,7 @@ export const VSCodeLayout: React.FC = () => {
     void useSessionUIStore.getState().setCurrentSession(initialSessionId);
   }, [bootstrapWorkspaceFolder, connectionStatus, hasInitializedOnce, initialParallelComposer, initialSessionExists, initialSessionId, openNewSessionDraft, viewMode]);
 
-  // Track container width for responsive settings layout
+  // Track container width for the expanded sessions/chat layout.
   React.useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -500,16 +481,7 @@ export const VSCodeLayout: React.FC = () => {
     return () => observer.disconnect();
   }, []);
 
-  const usesMobileLayout = containerWidth > 0 && containerWidth < MOBILE_WIDTH_THRESHOLD;
   const usesExpandedLayout = containerWidth >= EXPANDED_LAYOUT_THRESHOLD;
-
-  const closeSettings = () => {
-    const previousView = viewBeforeSettingsRef.current;
-    viewBeforeSettingsRef.current = null;
-    setCurrentView(previousView ?? (usesExpandedLayout ? 'chat' : 'sessions'));
-  };
-  // A failed load returns to the previous view so the next open tries again.
-  const SettingsView = useOnDemandComponent(currentView === 'settings', loadSettingsView, closeSettings);
 
   const clampExpandedSidebarWidth = React.useCallback((value: number) => {
     return Math.min(SESSIONS_SIDEBAR_MAX_WIDTH, Math.max(SESSIONS_SIDEBAR_MIN_WIDTH, value));
@@ -584,14 +556,6 @@ export const VSCodeLayout: React.FC = () => {
             <ErrorBoundary><RunOverview /></ErrorBoundary>
           </div>
         </div>
-      ) : currentView === 'settings' ? (
-        // Settings view
-        SettingsView ? (
-          <SettingsView
-            onClose={closeSettings}
-            forceMobile={usesMobileLayout}
-          />
-        ) : null
       ) : usesExpandedLayout ? (
         // Expanded layout: sessions sidebar + chat side by side
         <div className="flex h-full">

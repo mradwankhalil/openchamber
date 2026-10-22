@@ -3,6 +3,7 @@ import { LegendList, type LegendListRef } from '@legendapp/list/react';
 
 import ChatMessage from './ChatMessage';
 import { TimelineNotice } from './message/TimelineNotice';
+import { readSessionNotice } from '@/lib/opencode/session-notices';
 import { useRunningSubagentRuns, withRunningSubagentRuns } from './lib/runningSubagentRuns';
 import { isSkippedTimelineMessage, isBackgroundReportEntry, isTimelineNoticeRole } from './lib/timelineRoles';
 import { earlierAssistantText } from './lib/turns/earlierAssistantText';
@@ -12,7 +13,7 @@ import { LiveTurnActivity } from './components/LiveTurnActivity';
 import { getTurnsWithLaterAssistant, hasLiveActivity } from './lib/turns/liveActivity';
 import type { ChatMessageEntry, TurnRecord, TurnGroupingContext } from './lib/turns/types';
 import { useTurnRecords } from './hooks/useTurnRecords';
-import { buildHistoryEntries, type TimelineEntry } from './lib/turns/timelineEntries';
+import { buildHistoryEntries, findFirstVisibleMessageId, type TimelineEntry } from './lib/turns/timelineEntries';
 import { applyRetryOverlay } from './lib/turns/applyRetryOverlay';
 import { buildLiveStreamingEntry } from './lib/turns/streamingTailEntry';
 import { FULL_MESSAGE_WINDOW, TurnMessageWindowContext, createTurnMessageWindowStore } from './lib/turns/turnMessageWindow';
@@ -189,6 +190,7 @@ interface MessageRowProps {
     onUserAnimationConsumed?: (messageId: string) => void;
     scrollToBottom?: () => void;
     reviewTransferDirection?: ReviewTransferDirection | null;
+    isFirstRow?: boolean;
 }
 
 const MessageRow = React.memo<MessageRowProps>(({ 
@@ -202,12 +204,16 @@ const MessageRow = React.memo<MessageRowProps>(({
     onUserAnimationConsumed,
     scrollToBottom,
     reviewTransferDirection,
+    isFirstRow,
 }) => {
     // Roles that are not a conversation turn render as their own timeline row
     // (or as nothing); only user and assistant go through ChatMessage.
     const role = message.info.role;
+    if (readSessionNotice(message.info)) return <TimelineNotice message={message.info} />;
     if (isSkippedTimelineMessage(message.info)) return null;
-    if (isTimelineNoticeRole(role) || isBackgroundReportEntry(message.info)) return <TimelineNotice message={message.info} />;
+    if (isTimelineNoticeRole(role) || isBackgroundReportEntry(message.info)) {
+        return <TimelineNotice message={message.info} isFirstRow={isFirstRow} />;
+    }
 
     return (
         <ChatMessage
@@ -236,7 +242,8 @@ const MessageRow = React.memo<MessageRowProps>(({
         && prev.assistantHeaderMessageId === next.assistantHeaderMessageId
         && prev.isInActiveTurn === next.isInActiveTurn
         && prev.activeStreamingPhase === next.activeStreamingPhase
-        && prev.reviewTransferDirection === next.reviewTransferDirection;
+        && prev.reviewTransferDirection === next.reviewTransferDirection
+        && prev.isFirstRow === next.isFirstRow;
 });
 
 MessageRow.displayName = 'MessageRow';
@@ -442,6 +449,7 @@ TurnBlock.displayName = 'TurnBlock';
 interface UngroupedMessageRowProps {
     message: ChatMessageEntry;
     nextMessage?: ChatMessageEntry;
+    isFirstRow?: boolean;
     scrollToBottom?: () => void;
     shouldAnimateUserMessage: (message: ChatMessageEntry) => boolean;
     onUserAnimationConsumed: (messageId: string) => void;
@@ -453,6 +461,7 @@ interface UngroupedMessageRowProps {
 const UngroupedMessageRow = React.memo(({
     message,
     nextMessage,
+    isFirstRow,
     scrollToBottom,
     shouldAnimateUserMessage,
     onUserAnimationConsumed,
@@ -470,6 +479,7 @@ const UngroupedMessageRow = React.memo(({
             isInActiveTurn={Boolean(activeStreamingMessageId) && message.info.id === activeStreamingMessageId}
             activeStreamingPhase={message.info.id === activeStreamingMessageId ? activeStreamingPhase : null}
             reviewTransferDirection={reviewTransferDirection}
+            isFirstRow={isFirstRow}
         />
     );
 });
@@ -521,6 +531,7 @@ const MessageListEntry = React.memo(({
             <UngroupedMessageRow
                 message={entry.message}
                 nextMessage={entry.nextMessage}
+                isFirstRow={entry.isFirstRow}
                 scrollToBottom={scrollToBottom}
                 shouldAnimateUserMessage={shouldAnimateUserMessage}
                 onUserAnimationConsumed={onUserAnimationConsumed}
@@ -934,6 +945,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
             key: `msg:${lastMessage.info.id}`,
             message: lastMessage,
             nextMessage: undefined,
+            isFirstRow: findFirstVisibleMessageId(displayMessages) === lastMessage.info.id,
         } satisfies RenderEntry;
     }, [displayMessages, projection.lastTurnId, projection.ungroupedMessageIds, streamingTurn]);
 
@@ -1119,6 +1131,12 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         return container.querySelector(`[data-message-id="${messageId}"]`);
     }, [resolveScrollContainer]);
 
+    // A message the head of its turn's window cuts into is mounted from a
+    // later row on: its element's top is not the message's start.
+    const isMessageCut = React.useCallback((messageId: string): boolean => (
+        Boolean(resolveScrollContainer()?.querySelector(`[data-turn-message-cut="${messageId}"]`))
+    ), [resolveScrollContainer]);
+
     // Accepts any index the list renders, the trailing streaming entry
     // included — it lives at historyEntries.length and is a legitimate
     // navigation target (the timeline rail's last item).
@@ -1217,10 +1235,10 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
             return 'moved';
         }
 
-        const element = findMessageElement(anchor.messageId);
+        const element = isMessageCut(anchor.messageId) ? null : findMessageElement(anchor.messageId);
         if (!element) {
-            // Not mounted: bring its row in from the estimate; the next step
-            // measures the real position.
+            // Not mounted, or mounted from a later row: bring its row in from
+            // the estimate; the next step measures the real position.
             mountWindowedMessage(anchor.messageId);
             return scrollHistoryIndexIntoView(index) ? 'moved' : 'missing';
         }
@@ -1235,7 +1253,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         // A message near either end of the timeline cannot reach the offset:
         // the scroll is clamped, and where it stopped is as close as it gets.
         return Math.abs(container.scrollTop - before) < 0.5 ? 'aligned' : 'moved';
-    }, [findMessageElement, messageIndexMap, mountWindowedMessage, resolveScrollContainer, revealFoldedMessage, scrollHistoryIndexIntoView]);
+    }, [findMessageElement, isMessageCut, messageIndexMap, mountWindowedMessage, resolveScrollContainer, revealFoldedMessage, scrollHistoryIndexIntoView]);
 
     // Installed during layout so a parent's layout effect (session entry
     // restore) already reaches this list, not the one it replaced.
@@ -1278,7 +1296,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                     return false;
                 }
 
-                if (!findMessageElement(messageId)) mountWindowedMessage(messageId);
+                if (!findMessageElement(messageId) || isMessageCut(messageId)) mountWindowedMessage(messageId);
                 const didScroll = scrollMessageElementIntoView(messageId, behavior)
                     || scrollHistoryIndexIntoView(index);
                 if (didScroll && behavior !== 'smooth') {
@@ -1367,7 +1385,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         return () => {
             objectRef.current = null;
         };
-    }, [alignViewportAnchor, findMessageElement, messageIndexMap, mountWindowedMessage, resolveScrollContainer, scrollHistoryIndexIntoView, scrollMessageElementIntoView, settleNavigationTarget, turnIndexMap, ref]);
+    }, [alignViewportAnchor, findMessageElement, isMessageCut, messageIndexMap, mountWindowedMessage, resolveScrollContainer, scrollHistoryIndexIntoView, scrollMessageElementIntoView, settleNavigationTarget, turnIndexMap, ref]);
 
     const rowContext = React.useMemo(() => ({
         scrollToBottom: stableScrollToBottom,

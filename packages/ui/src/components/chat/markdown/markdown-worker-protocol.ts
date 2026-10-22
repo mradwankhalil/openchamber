@@ -1,8 +1,8 @@
-// Message protocol for the markdown Shiki Web Worker.
+// Message protocol for the shared Shiki Web Worker used by non-Markdown code views.
 //
-// The worker tokenizes a complete code block off the main thread and returns
-// ready-to-splice Shiki HTML. The theme is dependency-free and imported inside
-// the worker directly, so it is not sent over postMessage.
+// The worker returns whole-block HTML, per-line HTML or themed token runs.
+// Its CSS-variable theme is imported directly. CodeMirror supplies arbitrary
+// theme definitions with its token requests.
 
 // A single styled run inside a line: [length, color, fontStyleBits].
 // `color` is '' for default-foreground runs; fontStyleBits is Shiki's FontStyle
@@ -15,10 +15,6 @@ export type MarkdownWorkerRequest =
   // extends one highlighted before is tokenized from where that one ended;
   // `fullPass` asks for a fresh pass over the whole block instead.
   | { type: 'highlight'; id: number; code: string; lang: string; fullPass?: boolean }
-  // Highlight a still-streaming block and return only its lines from
-  // `fromLine` on: the client already holds the HTML of the lines before it.
-  // `id` doubles as the request's sequence number.
-  | { type: 'highlightFrom'; id: number; code: string; lang: string; fromLine: number }
   // Highlight a whole block but return per-line inner HTML (one entry per line),
   // so per-line layouts (diffs, gutters, virtualization) tokenize in ONE call
   // instead of one worker round-trip per line.
@@ -31,9 +27,6 @@ export type MarkdownWorkerRequest =
 
 export type MarkdownWorkerResponse =
   | { type: 'highlight'; id: number; html: string }
-  // `lines` holds every line of the block from `fromLine` on, the last one
-  // included; `open` and `close` are the `<pre><code>` wrapper around them.
-  | { type: 'highlightFrom'; id: number; fromLine: number; open: string; close: string; lines: string[] }
   | { type: 'highlightLines'; id: number; lines: string[] }
   | { type: 'highlightTokens'; id: number; lines: MarkdownTokenRun[][] }
   | { type: 'error'; id: number; message: string };

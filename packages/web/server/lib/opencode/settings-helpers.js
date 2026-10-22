@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { createRequire } from 'node:module';
 
 import { isAgentMemoryFeatureAvailable } from '../agent-memory/feature-flag.js';
+import { isOverviewFeatureAvailable } from '../overview/feature-flag.js';
 import { isPermissionMode } from '../permission-auto-accept/modes.js';
+import { asNonEmptyString } from '../shared/guards.js';
 import { idleStopSchema } from '../spaces/idle-stop.js';
 import { sshHostSchema } from '../spaces/places/ssh-host.js';
 
@@ -90,6 +92,7 @@ export const createSettingsHelpers = (dependencies) => {
   const TERMINAL_SHELL_VALUES = new Set(['auto', 'bash', 'zsh', 'sh', 'fish', 'pwsh', 'powershell', 'cmd', 'dash', 'ksh', 'nu']);
   const SIDEBAR_PROJECT_DISPLAY_MODE_VALUES = new Set(['all', 'single']);
   const SIDEBAR_VIEW_MODE_VALUES = new Set(['projects', 'timeline']);
+  const SIDEBAR_LIST_SESSION_GROUPING_VALUES = new Set(['project', 'time']);
   // The interface languages (`LOCALES` in packages/ui/src/lib/i18n/runtime.ts);
   // settings-helpers.test.js fails when the two lists drift apart.
   const UI_LOCALE_VALUES = new Set(['en', 'de', 'fr', 'nl', 'zh-CN', 'zh-TW', 'uk', 'es', 'pt-BR', 'ko', 'pl', 'ja', 'tr', 'ar', 'he']);
@@ -351,6 +354,9 @@ export const createSettingsHelpers = (dependencies) => {
     if (SIDEBAR_VIEW_MODE_VALUES.has(candidate.sidebarViewMode)) {
       result.sidebarViewMode = candidate.sidebarViewMode;
     }
+    if (SIDEBAR_LIST_SESSION_GROUPING_VALUES.has(candidate.sidebarListSessionGrouping)) {
+      result.sidebarListSessionGrouping = candidate.sidebarListSessionGrouping;
+    }
     if (SIDEBAR_PROJECT_SORT_ORDER_VALUES.has(candidate.sidebarProjectSortOrder)) {
       result.sidebarProjectSortOrder = candidate.sidebarProjectSortOrder;
     }
@@ -467,6 +473,9 @@ export const createSettingsHelpers = (dependencies) => {
     if (candidate.openLinksInBrowserPanel === true || candidate.openLinksInBrowserPanel === false) {
       result.openLinksInBrowserPanel = candidate.openLinksInBrowserPanel;
     }
+    if (Number.isInteger(candidate.liveBrowserTabLimit) && candidate.liveBrowserTabLimit >= 1 && candidate.liveBrowserTabLimit <= 20) {
+      result.liveBrowserTabLimit = candidate.liveBrowserTabLimit;
+    }
     if (candidate.openTrackerLinksOnBoard === true || candidate.openTrackerLinksOnBoard === false) {
       result.openTrackerLinksOnBoard = candidate.openTrackerLinksOnBoard;
     }
@@ -484,6 +493,9 @@ export const createSettingsHelpers = (dependencies) => {
     }
     if (typeof candidate.allowPromptingSubagentSessions === 'boolean') {
       result.allowPromptingSubagentSessions = candidate.allowPromptingSubagentSessions;
+    }
+    if (candidate.savePastedImagesAsFiles === true || candidate.savePastedImagesAsFiles === false) {
+      result.savePastedImagesAsFiles = candidate.savePastedImagesAsFiles;
     }
     if (typeof candidate.showOpenCodeRestartConfirm === 'boolean') {
       result.showOpenCodeRestartConfirm = candidate.showOpenCodeRestartConfirm;
@@ -671,9 +683,22 @@ export const createSettingsHelpers = (dependencies) => {
       const trimmed = candidate.smallModelOverride.trim();
       result.smallModelOverride = trimmed.length > 0 ? trimmed : undefined;
     }
+    if (candidate.smallModelVariant !== undefined) {
+      result.smallModelVariant = asNonEmptyString(candidate.smallModelVariant) ?? undefined;
+    }
     if (typeof candidate.walkthroughModelOverride === 'string') {
       const trimmed = candidate.walkthroughModelOverride.trim();
       result.walkthroughModelOverride = trimmed.length > 0 ? trimmed : undefined;
+    }
+    if (candidate.walkthroughModelVariant !== undefined) {
+      result.walkthroughModelVariant = asNonEmptyString(candidate.walkthroughModelVariant) ?? undefined;
+    }
+    for (const key of ['fallbackModel', 'fallbackVariant']) {
+      const value = z.string().trim().safeParse(candidate[key]);
+      if (value.success) result[key] = value.data.length > 0 ? value.data : undefined;
+    }
+    if (Array.isArray(candidate.accountSwitchProviders)) {
+      result.accountSwitchProviders = normalizeStringArray(candidate.accountSwitchProviders);
     }
     if (typeof candidate.defaultGitIdentityId === 'string') {
       const trimmed = candidate.defaultGitIdentityId.trim();
@@ -718,6 +743,9 @@ export const createSettingsHelpers = (dependencies) => {
     if (candidate.enterToSendConfigured === true || candidate.enterToSendConfigured === false) {
       result.enterToSendConfigured = candidate.enterToSendConfigured;
     }
+    if (candidate.mobileReturnKeySends === true || candidate.mobileReturnKeySends === false) {
+      result.mobileReturnKeySends = candidate.mobileReturnKeySends;
+    }
     if (typeof candidate.showOpenCodeUpdateNotifications === 'boolean') {
       result.showOpenCodeUpdateNotifications = candidate.showOpenCodeUpdateNotifications;
     }
@@ -729,6 +757,9 @@ export const createSettingsHelpers = (dependencies) => {
     }
     if (typeof candidate.agentControlToolEnabled === 'boolean') {
       result.agentControlToolEnabled = candidate.agentControlToolEnabled;
+    }
+    if (candidate.agentScheduleToolEnabled === true || candidate.agentScheduleToolEnabled === false) {
+      result.agentScheduleToolEnabled = candidate.agentScheduleToolEnabled;
     }
     if (typeof candidate.agentMemoryToolEnabled === 'boolean') {
       result.agentMemoryToolEnabled = candidate.agentMemoryToolEnabled;
@@ -808,6 +839,9 @@ export const createSettingsHelpers = (dependencies) => {
     }
     if (typeof candidate.collapsibleUserMessages === 'boolean') {
       result.collapsibleUserMessages = candidate.collapsibleUserMessages;
+    }
+    if (candidate.stickyUserHeader === true || candidate.stickyUserHeader === false) {
+      result.stickyUserHeader = candidate.stickyUserHeader;
     }
     if (typeof candidate.promptNavigatorEnabled === 'boolean') {
       result.promptNavigatorEnabled = candidate.promptNavigatorEnabled;
@@ -1159,6 +1193,8 @@ export const createSettingsHelpers = (dependencies) => {
       // Tells the client whether agent memory exists in this build at all, so
       // its settings row and panel tab can be absent rather than merely off.
       agentMemoryFeatureAvailable: isAgentMemoryFeatureAvailable(),
+      // The overview page ships dark until `OPENCHAMBER_OVERVIEW_ENABLED` is set.
+      overviewFeatureAvailable: isOverviewFeatureAvailable(),
       // Jev routing needs the OpenChamber server, so it is present here and
       // absent wherever this payload does not come from one (VS Code).
       routingFeatureAvailable: true,

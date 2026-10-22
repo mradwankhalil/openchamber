@@ -10,11 +10,16 @@ import { pluginPanelI18n } from './plugin-panel.i18n';
 import { surfacePanelI18n } from './surface-panel.i18n';
 import { fileArtifactsI18n } from './file-artifacts.i18n';
 import { fileContentSearchI18n } from './file-content-search.i18n';
+import { fileEditorAidsI18n } from './file-editor-aids.i18n';
 import { htmlRenderI18n } from './html-render.i18n';
+import { sessionNoticesI18n } from './session-notices.i18n';
 import { usageStatsI18n } from './usage-stats.i18n';
 import { webSearchI18n } from './websearch.i18n';
+import { sessionWarmingI18n } from './session-warming.i18n';
+import { overviewI18n } from './overview.i18n';
 import { isolatedSpacesI18n } from './isolated-spaces.i18n';
 import { sourceBoardI18n } from './source-board.i18n';
+import { stacksI18n } from './stacks.i18n';
 import { projectActionsI18n } from './project-actions.i18n';
 import { gitIdentityEditorI18n } from './git-identity-editor.i18n';
 import { environmentI18n } from './environment.i18n';
@@ -22,6 +27,7 @@ import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
 import { integrationsCatalogI18n } from './integrations-catalog.i18n';
+import { diffFindI18n } from './diff-find.i18n';
 
 export const dict: Record<I18nKey, string> = {
   "opencodeCompatibility.bundled": "OpenCode 随 OpenChamber 一起提供。请更新 OpenChamber 以获取 OpenCode v2。",
@@ -141,11 +147,16 @@ export const dict: Record<I18nKey, string> = {
   ...surfacePanelI18n['zh-CN'],
   ...fileArtifactsI18n['zh-CN'],
   ...fileContentSearchI18n['zh-CN'],
+  ...fileEditorAidsI18n['zh-CN'],
   ...htmlRenderI18n['zh-CN'],
+  ...sessionNoticesI18n['zh-CN'],
   ...usageStatsI18n['zh-CN'],
   ...webSearchI18n['zh-CN'],
+  ...sessionWarmingI18n['zh-CN'],
+  ...overviewI18n['zh-CN'],
   ...isolatedSpacesI18n['zh-CN'],
   ...sourceBoardI18n['zh-CN'],
+  ...stacksI18n['zh-CN'],
   ...projectActionsI18n['zh-CN'],
   ...gitIdentityEditorI18n['zh-CN'],
   ...environmentI18n['zh-CN'],
@@ -153,6 +164,7 @@ export const dict: Record<I18nKey, string> = {
   ...mcpGridI18n['zh-CN'],
   ...pluginsGridI18n['zh-CN'],
   ...integrationsCatalogI18n['zh-CN'],
+  ...diffFindI18n['zh-CN'],
   'terminalView.actions.attachSelection': '附加所选输出',
   'terminalView.actions.copySelection': '复制所选输出',
   'terminalView.toast.selectionCopied': '已复制输出',
@@ -160,6 +172,7 @@ export const dict: Record<I18nKey, string> = {
   'terminalView.actions.copy': '复制',
   'terminalView.actions.paste': '粘贴',
   'terminalView.toast.pasteFailed': '无法读取剪贴板。请使用粘贴快捷键。',
+  'terminalView.toast.pasteFailedTouch': '无法读取剪贴板。',
   'terminalView.actions.restart': '重启终端',
   'chat.message.terminalContext': '{terminal}，第 {start}-{end} 行',
   'chat.message.context.codeComment': '对 {file} 第 {start}-{end} 行的评论',
@@ -611,6 +624,10 @@ export const dict: Record<I18nKey, string> = {
   'sessions.archivePage.allDirectories': '所有目录',
   'sessions.sidebar.header.projectDisplay.label': '显示项目',
   'sessions.sidebar.header.projectDisplay.all': '所有项目',
+  'sessions.sidebar.header.listGrouping.label': '会话',
+  'sessions.sidebar.header.listGrouping.project': '按项目',
+  'sessions.sidebar.header.listGrouping.time': '按时间',
+  'sessions.sidebar.activity.projectsTitle': '项目',
   'sessions.sidebar.header.projectDisplay.single': '单个项目',
   'sessions.sidebar.project.selectAria': '选择项目，当前为 {project}',
   'sessions.sidebar.project.actions.manageWorktrees': '管理工作树',
@@ -695,6 +712,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.work.markDone': '标记为完成',
   'sessions.sidebar.session.work.doneSuggested': '看起来已完成',
   'sessions.sidebar.session.work.updateFailed': '无法更新会话',
+  'sessions.sidebar.session.work.folderDeleted': '此会话的文件夹已被删除',
   'sessions.sidebar.session.pin.pinFailed': '无法置顶会话',
   'sessions.sidebar.session.pin.unpinFailed': '无法取消置顶会话',
   'chat.work.doneHint.text': '这项工作看起来已完成。',
@@ -1190,6 +1208,7 @@ export const dict: Record<I18nKey, string> = {
   'gitView.sync.syncCounts': '{behind}↓ {ahead}↑',
   'gitView.branch.actionsUnavailable': '当前仓库状态下分支操作不可用',
   'gitView.conflict.noDetailsAvailable': '没有可用的冲突详情',
+  'magicPrompts.toast.loadFailed': '无法加载魔法提示词。未发送任何内容。',
   'gitView.empty.notGitRepository': '当前目录不是 Git 仓库',
   'gitView.empty.notGitRepositoryDescription': '请在此目录初始化 Git，或打开一个 Git 仓库。',
   'gitView.empty.selectSessionOrDirectory': '请选择会话或目录以查看 Git 状态',
@@ -1447,6 +1466,11 @@ export const dict: Record<I18nKey, string> = {
   'walkthrough.toc.moreFiles': '其他文件：{count}',
   'walkthrough.toc.uncovered': '未涵盖：{count}',
   'walkthrough.toc.resize': '调整目录栏宽度',
+  'walkthrough.toc.jumpAria': '跳转到步骤',
+  'walkthrough.options.title': '导读选项',
+  'walkthrough.options.moreAria': '更多导读选项',
+  'walkthrough.options.model': '模型',
+  'walkthrough.options.language': '语言',
   'walkthrough.importance.critical': '关键改动',
   'walkthrough.importance.criticalHint': '这一步带动了其余改动，值得仔细阅读。它不是在你的代码中发现的问题。',
   'walkthrough.importance.context': '背景',
@@ -1713,6 +1737,7 @@ export const dict: Record<I18nKey, string> = {
   'filesView.error.switchToEditMode': '请切换到编辑模式修复问题。',
   'filesView.error.readFileFailed': '读取文件失败',
   'filesView.editor.htmlPreviewTitle': 'HTML 预览',
+  'filesView.editor.htmlAnnotate.intro': '这是来自 HTML 文件预览的标注选区。',
   'filesView.diagram.closeDiagramView': '关闭图表视图',
   'filesView.diagram.saveDiagram': '保存图表',
   'filesView.excalidraw.installHint': '安装 Excalidraw 扩展即可在此文件中绘图。',
@@ -1742,7 +1767,7 @@ export const dict: Record<I18nKey, string> = {
   'contextSidebar.breakdown.user': '用户',
   'contextSidebar.breakdown.assistant': '助手',
   'contextSidebar.breakdown.toolCalls': '工具调用',
-  'contextSidebar.breakdown.other': '其他',
+  'contextSidebar.breakdown.other': '系统与工具',
   'contextSidebar.stats.messages': '消息',
   'contextSidebar.stats.user': '用户',
   'contextSidebar.stats.assistant': '助手',
@@ -1848,6 +1873,9 @@ export const dict: Record<I18nKey, string> = {
   'diffView.whitespace.hidden': '已隐藏空白更改',
   'diffView.layout.switchToUnified': '切换到统一视图',
   'diffView.layout.switchToSideBySide': '切换到并排视图',
+  'diffView.layout.sideBySide': '并排视图',
+  'diffView.actions.wrapLines': '自动换行',
+  'diffView.actions.moreActions': '更多操作',
   'diffView.whitespace.shown': '正在显示空白更改',
   'diffView.actions.openFileInEditorAtChange': '在编辑器中打开此文件并定位变更',
   'diffView.actions.openFileAtFirstChangedLine': '在首个变更行打开此文件',
@@ -2260,6 +2288,9 @@ export const dict: Record<I18nKey, string> = {
   'session.newWorktree.toast.worktreeCreatedDescription': '{target} - 正在后台初始化',
   'session.newWorktree.toast.fetchSourceFailed': '无法从远程获取 — 已基于本地状态创建',
   'session.newWorktree.toast.fetchSourceAccess': '无法获取：需要在“配置仓库”中处理此仓库的访问权限。已基于本地状态创建。',
+  'session.newWorktree.toast.startFolderMissing': '此 worktree 中没有“{folder}”文件夹，因此 OpenCode 在 worktree 根目录启动。',
+  'session.newWorktree.toast.startFolderUnverified': '无法检查“{folder}”文件夹，因此 OpenCode 在 worktree 根目录启动。',
+  'session.newWorktree.toast.startFolderUnknown': '无法确定此项目打开的是仓库中的哪个文件夹，因此 OpenCode 在 worktree 根目录启动。',
   'session.newWorktree.toast.branchBackup': '{branch} 现在与远程一致。之前的提交保留在 {backup} 中。',
   'session.githubIntegration.tabs.pullRequests': '拉取请求',
   'session.githubIntegration.validation.branchAlreadyCheckedOut': '该分支已在某个工作树中检出',
@@ -2393,6 +2424,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.queuedMessage.edit': '编辑',
   'chat.queuedMessage.send': '发送',
   'chat.queuedMessage.removeAria': '从队列移除',
+  'chat.queuedMessage.goal': '发送时启动目标',
   'chat.queuedMessage.reorderAria': '拖动以重新排序',
   'chat.queuedMessage.toast.queueFailed': '无法将消息加入队列，已放回输入框。',
   'chat.queuedMessage.toast.takeFailed': '无法加载队列中的消息，请重试。',
@@ -2580,6 +2612,11 @@ export const dict: Record<I18nKey, string> = {
   'chat.chatInput.toast.attachFileFailed': '附加文件失败',
   'chat.chatInput.toast.attachNamedFailed': '附加 {name} 失败',
   'chat.chatInput.toast.unsupportedAttachmentModalities': '{model} 不支持 {files} 所需的 {modalities} 输入。你仍可发送消息，但这些附件可能会被忽略。',
+  'chat.chatInput.toast.imagesSaving': '正在保存 {files}…',
+  'chat.chatInput.toast.imagesSavedForTextModel': '{model} 无法读取图像。已将 {files} 保存到 {folder}。',
+  'chat.chatInput.toast.imageSaveFailed': '无法保存 {files}。已改为附加。',
+  'chat.chatInput.toast.imagesSaved': '已将 {files} 保存到 {folder}。',
+  'chat.chatInput.toast.imageCopySaveFailed': '无法保存 {files}。',
   'chat.chatInput.toast.someFilesSkipped': '部分文件被跳过：\n{summary}',
   'chat.chatInput.toast.vscodePickFailed': '在 VS Code 中选择文件失败',
   'chat.chatInput.toast.openSessionFirst': '请先打开一个会话',
@@ -2713,6 +2750,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.modelControls.clearSearch': '清除搜索',
   'chat.modelControls.current': '当前',
   'chat.modelControls.thinking': '思考',
+  'chat.modelControls.inheritedVariantTooltip': '思考：{variant}，此模型的默认值',
   'chat.modelControls.default': '默认',
   'chat.modelControls.selectAgent': '选择智能体',
   'chat.modelControls.costPerMillion': '成本（$/100万 tokens）',
@@ -2721,6 +2759,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.modelControls.noAgentSelected': '未选择智能体。',
   'chat.modelControls.resetToDefault': '重置为默认',
   'chat.modelControls.searchModels': '搜索模型',
+  'chat.modelControls.modelListAria': '模型',
   'chat.modelControls.searchAgents': '搜索智能体',
   'chat.modelControls.noModelsFound': '未找到模型',
   'chat.modelControls.favorites': '收藏',
@@ -3455,6 +3494,7 @@ export const dict: Record<I18nKey, string> = {
   'quota.window.daily': '每日',
   'quota.window.monthly': '每月',
   'quota.window.credits': '点数额度',
+  'quota.window.keyLimit': '密钥限额',
   'quota.window.creditsBalance': '额度余额',
   'quota.window.monthlyCredits': '每月积分',
   'quota.window.purchasedCredits': '已购买积分',
@@ -3814,6 +3854,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.moveChatToProject.failed': '无法移动聊天',
   'chat.worktreeSetup.running': '正在设置 worktree：正在运行项目的设置命令…',
   'desktopHostSwitcher.startup.fellBackToLocal': '未能建立连接，因此 OpenChamber 以 Local 启动。待其可访问后，请在实例切换器中连接。',
+  'desktopSafeStart.title': 'OpenChamber 多次崩溃',
+  'desktopSafeStart.description': '面板已关闭，文件夹已折叠。',
   'chat.chatInput.contextPreview.saveEdit': '保存评论',
   'chat.chatInput.contextPreview.cancelEdit': '取消编辑',
   'sessions.scheduledTasks.dialog.actions.openSession': '打开会话',
@@ -3822,4 +3864,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.scheduledTasks.dialog.toast.alreadyRunning': '此任务已有一次运行在进行中',
   'sessions.scheduledTasks.dialog.toast.alreadyQueued': '此任务已在队列中等待，有空位时就会运行',
   'chat.modelControls.agentFavoriteAdd': '加入收藏。有收藏时，Tab 只在收藏之间切换',
+  'notifications.error.bodyFallback': '发生错误',
+  'notifications.question.bodyFallback': '智能体正在等待你的回复',
+  'notifications.permission.bodyFallback': '智能体正在等待你的批准',
+  'notifications.permission.title': '需要权限',
 };

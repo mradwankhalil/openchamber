@@ -1,5 +1,6 @@
 import { isIMECompositionEvent } from '@/lib/ime';
 import React from 'react';
+import { z } from 'zod';
 
 import { toast } from '@/components/ui';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
@@ -44,6 +45,7 @@ import {
   buildClickScript,
   buildInspectScript,
   buildScrollScript,
+  buildSelectScript,
   buildSnapshotScript,
   buildTypeScript,
 } from '@/lib/browser/pageActions';
@@ -64,7 +66,13 @@ import { isStageShown, useWebviewFocusGuard, type HoldPageFocus } from './useWeb
 
 export type BrowserPaneProps = {
   initialUrl: string;
+  /** The folder whose panel holds the tab: its address is kept there, and a comment goes to its chat. */
   directory: string;
+  /**
+   * The folder the page is browsed for: the same folder, or the space a draft waiting for one
+   * shows. Its pages, history and dev servers are that folder's.
+   */
+  siteDirectory: string;
   tabID: string;
   /** The session whose agent opened this tab; null for the user's own tab. */
   ownerSessionId: string | null;
@@ -112,6 +120,13 @@ const browserPartitionOf = (directory: string): string => {
   const spaceId = spaceIdOfDirectory(directory);
   return spaceId ? `openchamber-space-preview:${spaceId}` : BROWSER_PARTITION;
 };
+/** Sent by the desktop shell when a panel page asks for a new tab (`main.mjs`). */
+const BROWSER_OPEN_TAB_EVENT = 'openchamber:browser-panel-open-tab';
+const browserTabRequestSchema = z.object({
+  webContentsId: z.number(),
+  url: z.string().min(1),
+  background: z.boolean(),
+});
 /** Kept small: this rides along with every snapshot. */
 const CONSOLE_PROBLEM_LIMIT = 20;
 const GATEWAY_RETRY_DELAY_MS = 600;
@@ -148,7 +163,7 @@ const revealStageForCapture = (stage: HTMLElement | null): (() => void) => {
   return () => { stage.style.cssText = previousStyle; };
 };
 
-const WebviewBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory, tabID, ownerSessionId, visible }) => {
+const WebviewBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory: tabsDirectory, siteDirectory: directory, tabID, ownerSessionId, visible }) => {
   const { t } = useI18n();
   const { currentTheme } = useThemeSystem();
   const webviewRef = React.useRef<WebviewElement | null>(null);
@@ -201,7 +216,7 @@ const WebviewBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory, tab
    * Set while the tab's first load comes from saved state rather than from
    * someone opening it now. That load is not waited out; the next one is.
    */
-  const tabDirectory = normalizeContextPanelDirectoryKey(directory);
+  const tabDirectory = normalizeContextPanelDirectoryKey(tabsDirectory);
   const restoredLoadRef = React.useRef(Boolean(startUrl) && !wasBrowserTabOpenedWithAddress(tabDirectory, tabID));
   const restoredSettleRef = React.useRef<BrowserNavStatus | null>(null);
   React.useEffect(() => {
@@ -213,9 +228,9 @@ const WebviewBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory, tab
   const openedAtRef = React.useRef(Date.now());
 
   const persistUrl = React.useCallback((url: string) => {
-    if (!url || url === BLANK_URL || !directory || !tabID) return;
-    setContextPanelTabTargetPath(directory, tabID, url);
-  }, [directory, tabID, setContextPanelTabTargetPath]);
+    if (!url || url === BLANK_URL || !tabsDirectory || !tabID) return;
+    setContextPanelTabTargetPath(tabsDirectory, tabID, url);
+  }, [tabsDirectory, tabID, setContextPanelTabTargetPath]);
 
   const navigation = useWebviewNavigation(webviewElement, {
     initialUrl: startUrl,
@@ -241,7 +256,7 @@ const WebviewBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory, tab
       .catch(() => { if (active) setTunnelFailedUrl(startUrl || 'http://localhost/'); });
     return () => { active = false; };
   }, [directory, startUrl]);
-  const attachAnnotation = useAnnotationAttach(directory);
+  const attachAnnotation = useAnnotationAttach(tabsDirectory);
   const overlayLabels = useAnnotationOverlayLabels();
   const isLoading = navigation.status.kind === 'loading';
 
@@ -544,6 +559,12 @@ const WebviewBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory, tab
             value: String(parameters.value ?? ''),
             submit: parameters.submit === true,
           });
+        case 'browser.select':
+          return buildSelectScript({
+            selector: String(parameters.selector ?? ''),
+            label: typeof parameters.label === 'string' ? parameters.label : undefined,
+            value: typeof parameters.value === 'string' ? parameters.value : undefined,
+          });
         case 'browser.inspect':
           return buildInspectScript({ selector: String(parameters.selector ?? '') });
         case 'browser.scroll':
@@ -599,7 +620,7 @@ const WebviewBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory, tab
     }
     // A click or a submit commonly starts a navigation; let it land so the
     // agent's next snapshot sees the page the action produced.
-    if (action === 'browser.click' || (action === 'browser.type' && parameters.submit === true)) {
+    if (action === 'browser.click' || action === 'browser.select' || (action === 'browser.type' && parameters.submit === true)) {
       await new Promise((resolve) => setTimeout(resolve, 150));
       await waitForIdle();
     }
@@ -738,17 +759,26 @@ const WebviewBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory, tab
     };
   }, [directory, loadUrl, webviewElement]);
 
-  // Popups open in place; a detached window would escape the panel entirely.
+  // A link the page opens in a new tab (target=_blank, a modified click) gets a
+  // tab of its own beside this one; the desktop shell names the page it came from.
   React.useEffect(() => {
     if (!webviewElement) return;
-    const onNewWindow = (event: Event) => {
-      const detail = (event as CustomEvent<{ url?: string }>).detail;
-      event.preventDefault();
-      if (detail?.url) loadUrl(detail.url);
+    const onOpenTab = (event: Event) => {
+      if (!(event instanceof CustomEvent)) return;
+      const request = browserTabRequestSchema.safeParse(event.detail);
+      if (!request.success) return;
+      let ownId = -1;
+      try {
+        ownId = webviewElement.getWebContentsId();
+      } catch {
+        return;
+      }
+      if (request.data.webContentsId !== ownId) return;
+      useUIStore.getState().openContextBrowser(tabDirectory, request.data.url, { reveal: !request.data.background });
     };
-    webviewElement.addEventListener('new-window', onNewWindow);
-    return () => webviewElement.removeEventListener('new-window', onNewWindow);
-  }, [loadUrl, webviewElement]);
+    window.addEventListener(BROWSER_OPEN_TAB_EVENT, onOpenTab);
+    return () => window.removeEventListener(BROWSER_OPEN_TAB_EVENT, onOpenTab);
+  }, [tabDirectory, webviewElement]);
 
   const applyZoom = React.useCallback((level: number) => {
     const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, level));
@@ -1039,7 +1069,7 @@ const WebviewBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory, tab
  * opaque to us here: no navigation events, no annotation, no console. The
  * toolbar reflects that instead of offering controls that would silently fail.
  */
-const IframeBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory, tabID, visible }) => {
+const IframeBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory: tabsDirectory, siteDirectory: directory, tabID, visible }) => {
   const { t } = useI18n();
   const setContextPanelTabTargetPath = useUIStore((state) => state.setContextPanelTabTargetPath);
   const normalized = normalizeBrowserUrl(initialUrl);
@@ -1056,13 +1086,13 @@ const IframeBrowser: React.FC<BrowserPaneProps> = ({ initialUrl, directory, tabI
   // Nothing here waits for a dev server, so a tab opened with an address only
   // needs the mark dropped, keeping the session-only set from growing.
   React.useEffect(() => {
-    forgetBrowserTabOpenedWithAddress(normalizeContextPanelDirectoryKey(directory), tabID);
-  }, [directory, tabID]);
+    forgetBrowserTabOpenedWithAddress(normalizeContextPanelDirectoryKey(tabsDirectory), tabID);
+  }, [tabsDirectory, tabID]);
 
   const persistUrl = React.useCallback((url: string) => {
-    if (!url || url === BLANK_URL || !directory || !tabID) return;
-    setContextPanelTabTargetPath(directory, tabID, url);
-  }, [directory, tabID, setContextPanelTabTargetPath]);
+    if (!url || url === BLANK_URL || !tabsDirectory || !tabID) return;
+    setContextPanelTabTargetPath(tabsDirectory, tabID, url);
+  }, [tabsDirectory, tabID, setContextPanelTabTargetPath]);
 
   const visitedAddresses = useBrowserHistoryStore(selectBrowserHistory(directory));
   const recordHistoryVisit = useBrowserHistoryStore((state) => state.recordVisit);

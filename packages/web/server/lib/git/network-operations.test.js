@@ -2803,7 +2803,9 @@ process.exit(safe ? 0 : 1);
     expect(setupValue.calls[0].args.slice(-6)).toEqual([
       'fetch', '--no-tags', '--no-recurse-submodules', '--', ENDPOINT, 'refs/heads/feature:refs/openchamber/network/git_operation_one',
     ]);
-    expect(setupValue.calls.find((call) => call.args.includes('rebase')).args.slice(-4)).toEqual(['rebase', '--no-verify', '--no-autostash', SHA]);
+    // Only the commits made since the remote copy was last seen are replayed.
+    expect(setupValue.calls.find((call) => call.args.includes('rebase')).args.slice(-7))
+      .toEqual(['rebase', '--no-verify', '--no-autostash', '--fork-point', '--onto', SHA, 'refs/remotes/publish/feature']);
     // The managed credential is revoked before integration; the tracking ref
     // must still move with the credential-free context.
     expect(setupValue.calls.map((call) => call.args.slice(-3)))
@@ -2876,7 +2878,8 @@ process.exit(safe ? 0 : 1);
     expect(setupValue.calls[0].args.slice(-6)).toEqual([
       'fetch', '--no-tags', '--no-recurse-submodules', '--', fetchEndpoint, '+refs/heads/main:refs/remotes/upstream/main',
     ]);
-    expect(setupValue.calls.find((call) => call.args.includes('rebase')).args.slice(-4)).toEqual(['rebase', '--no-verify', '--no-autostash', SHA]);
+    expect(setupValue.calls.find((call) => call.args.includes('rebase')).args.slice(-7))
+      .toEqual(['rebase', '--no-verify', '--no-autostash', '--fork-point', '--onto', SHA, 'refs/remotes/upstream/main']);
     expect(setupValue.calls.at(-2).args.slice(-4)).toEqual(['push', '--', pushEndpoint, `${SHA}:refs/heads/published`]);
     expect(setupValue.calls.at(-1).args.slice(-3)).toEqual(['update-ref', 'refs/remotes/origin/published', SHA]);
   });

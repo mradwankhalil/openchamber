@@ -19,6 +19,7 @@ import {
     getFileMentionAutocompleteQuery,
     type FileMentionAutocompleteInputSource,
 } from '../../fileMentionAutocompleteState';
+import { lastPrefixSigilIndex, type TokenPrefix } from './prefixTokens';
 
 export type AutocompleteKind = 'command' | 'skill' | 'snippet' | 'mention';
 
@@ -66,16 +67,17 @@ function matchCommandPalette(value: string, cursorPosition: number): Autocomplet
 
 /**
  * A `$skill` or `#snippet` still being typed: the nearest sigil before the
- * caret, at a word boundary, with no separator between it and the caret.
+ * caret, at a word boundary, with no separator between it and the caret. The
+ * skill sigil matches every spelling a CJK IME produces for the same key.
  */
 function matchInlineToken(
     value: string,
     cursorPosition: number,
-    sigil: '$' | '#',
+    prefix: TokenPrefix,
     kind: AutocompleteKind,
 ): AutocompleteTrigger | null {
     const textBeforeCursor = value.substring(0, cursorPosition);
-    const sigilIndex = textBeforeCursor.lastIndexOf(sigil);
+    const sigilIndex = lastPrefixSigilIndex(textBeforeCursor, prefix);
     if (sigilIndex === -1) return null;
     if (!isWordBoundaryBefore(textBeforeCursor, sigilIndex)) return null;
 

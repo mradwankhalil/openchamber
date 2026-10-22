@@ -2,7 +2,7 @@
 import * as gitHttp from './gitApiHttp';
 import { mapWithConcurrency } from './concurrency';
 import { opencodeClient } from './opencode/client';
-import { renderMagicPrompt } from './magicPrompts';
+import { loadMagicPrompts } from './magicPrompts';
 import { requestSmallModel } from './smallModelRequest';
 import { materializeOpenDraftSession, useSessionUIStore } from '@/sync/session-ui-store';
 import { useSelectionStore } from '@/sync/selection-store';
@@ -78,6 +78,13 @@ export async function getGitStatus(directory: string, options?: { mode?: 'light'
 export async function resolveGitPrimaryRoot(directory: string): Promise<string> {
   const result = await gitHttp.resolveGitPrimaryRoot(directory);
   return result.root;
+}
+
+/** Where `directory` sits inside its repository's checkout; `''` at the root. Rejects when unknown. */
+export async function resolveGitRepositoryPrefix(directory: string): Promise<string> {
+  const runtime = getRuntimeGit();
+  if (runtime?.resolveRepositoryPrefix) return runtime.resolveRepositoryPrefix(directory);
+  return gitHttp.resolveGitRepositoryPrefix(directory);
 }
 
 export async function resolveGitTopLevel(directory: string): Promise<string> {
@@ -268,8 +275,9 @@ export async function generateCommitMessage(
   });
 
   const recentCommits = await collectRecentCommitSubjects(directory);
-  const visiblePrompt = await renderMagicPrompt('git.commit.generate.visible');
-  const hiddenPrompt = await renderMagicPrompt('git.commit.generate.instructions', {
+  const prompts = await loadMagicPrompts(directory);
+  const visiblePrompt = prompts.render('git.commit.generate.visible');
+  const hiddenPrompt = prompts.render('git.commit.generate.instructions', {
     selected_files: files.map((file) => `- ${file}`).join('\n'),
     recent_commits: recentCommits,
   });
@@ -457,10 +465,11 @@ export async function generatePullRequestDescription(
     changedFiles: changedFiles.length,
   });
 
-  const visiblePrompt = await renderMagicPrompt('git.pr.generate.visible', {
+  const prompts = await loadMagicPrompts(directory);
+  const visiblePrompt = prompts.render('git.pr.generate.visible', {
     change_request: payload.changeRequestProvider === 'gitlab' ? 'GitLab merge request' : 'GitHub pull request',
   });
-  const hiddenPrompt = await renderMagicPrompt('git.pr.generate.instructions', {
+  const hiddenPrompt = prompts.render('git.pr.generate.instructions', {
     base_branch: payload.base,
     head_branch: payload.head,
     commits: commits.map((commit) => {
@@ -948,6 +957,21 @@ export async function resetToCommit(
   const runtime = getRuntimeGit();
   if (runtime) return runtimeStatusMutation(directory, runtime.resetToCommit(directory, hash, mode, force));
   return gitHttp.resetToCommit(directory, hash, mode, force);
+}
+
+/**
+ * Whether `directory` exists inside the checkout at `worktreeRoot` once both
+ * are canonicalized, so a symlink out of the checkout reports `insideWorktreeRoot: false`.
+ */
+export async function validateWorktreeDirectory(directory: string, worktreeRoot: string): Promise<{
+  valid: boolean;
+  insideWorktreeRoot: boolean;
+  resolvedWorktreeRoot: string | null;
+  resolvedCwd: string | null;
+}> {
+  const runtime = getRuntimeGit();
+  if (runtime?.validateWorktreeDirectory) return runtime.validateWorktreeDirectory(directory, worktreeRoot);
+  return gitHttp.validateWorktreeDirectory(directory, worktreeRoot);
 }
 
 export async function getConflictDetails(directory: string): Promise<import('./api/types').MergeConflictDetails> {

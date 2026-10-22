@@ -4,6 +4,8 @@ import path from 'node:path';
 import { OpenChamberControlError } from '../openchamber-control/error.js';
 import { discoverLoopFiles, loopFingerprint, parseLoopDefinition, setLoopFileEnabled } from './loops.js';
 
+const samePath = (a, b) => a && b && path.resolve(a) === path.resolve(b);
+
 // Same scope rule the scheduler applies: a file under the project's own
 // `.agents/loops` is a repository loop, even where it is also the user folder.
 const isRepositoryLoop = (projectPath, loopFile) => discoverLoopFiles(projectPath)
@@ -16,6 +18,9 @@ export const createScheduledTaskService = (dependencies) => {
     projectConfigRuntime,
     scheduledTasksRuntime,
     chatsScope = null,
+    // Git helper that maps a linked worktree back to the checkout it came from;
+    // see resolveProjectID.
+    resolvePrimaryWorktreeRoot = null,
   } = dependencies;
 
   const listProjects = async () => {
@@ -48,10 +53,27 @@ export const createScheduledTaskService = (dependencies) => {
     if (!requestedDirectory) throw new OpenChamberControlError('projectId or directory is required', 400);
     const resolvedDirectory = path.resolve(requestedDirectory);
     const projects = await listProjects();
-    const project = projects.find((entry) => path.resolve(entry.path) === resolvedDirectory);
+    const project = projects.find((entry) => samePath(entry.path, resolvedDirectory));
     if (project) return project.id;
-    // An agent working in a chat schedules into the chats scope.
+    // A session in a linked worktree of a registered project schedules for
+    // that project: the worktree itself is almost never registered, and the
+    // project root checkout is what its record stores. A directory inside the
+    // chats scope wins first, so chats paths are never run through git.
     if (chatsScope?.contains(resolvedDirectory)) return chatsScope.id;
+    if (resolvePrimaryWorktreeRoot) {
+      try {
+        const primaryRoot = asNonEmptyString((await resolvePrimaryWorktreeRoot(resolvedDirectory))?.root);
+        if (primaryRoot && !samePath(primaryRoot, resolvedDirectory)) {
+          const owner = projects.find((entry) => samePath(entry.path, primaryRoot));
+          if (owner) return owner.id;
+        }
+      } catch {
+        // A throwing resolver call: fall through to the unchanged 404.
+        // resolvePrimaryWorktreeRoot itself reports the directory for a
+        // non-checkout or unavailable git, and the samePath guard above
+        // skips those, so only an unexpected throw reaches this catch.
+      }
+    }
     throw new OpenChamberControlError(`Project not found for directory: ${resolvedDirectory}`, 404);
   };
 

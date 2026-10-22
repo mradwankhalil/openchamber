@@ -24,9 +24,10 @@ credentials, the provider dispatch and the token refresh. Routes live under
   while it starts, and caching it hid every provider from the pickers.
 - `index.js` — `generateSmallModelText()`, `describeSmallModel()`,
   `listAuthenticatedProviders(directory?)`.
-- `routes.js` — `GET /api/small-model` (resolution preview) and
-  `POST /api/small-model/generate` (`{ prompt, system?, maxOutputTokens?,
-  model?, directory? }` → `{ text, providerID, modelID, source }`).
+- `routes.js` — `GET /api/small-model` (resolution preview, including the
+  thinking variant) and `POST /api/small-model/generate` (`{ prompt, system?,
+  maxOutputTokens?, model?, directory? }` → `{ text, providerID, modelID,
+  source }`).
 - `runtime-providers.js` — compatibility re-export so `server/index.js` keeps
   resolving its import. Delete it once that import points at `client.js`.
 
@@ -56,17 +57,21 @@ login `generateSmallModelText` throws `404`. What happens next is per feature:
 
 Five things are decided here, in order:
 
-1. An explicit `model` on the request (`provider/model`) — `source: 'request'`.
+1. An explicit `model` on the request (`provider/model`), with the thinking
+   level the caller names beside it (`variant` for `generateSmallModelText`,
+   `overrideVariant` for `describeSmallModel`) — `source: 'request'`.
 2. OpenChamber's settings override (Settings → Sessions → Small Model): when
-   `smallModelUseDefault` is `false`, `smallModelOverride` wins —
+   `smallModelUseDefault` is `false`, `smallModelOverride` wins and
+   `smallModelVariant` names the thinking level beside it —
    `source: 'settings'`.
 3. The small model configured for OpenCode itself — `source: 'config'`. OpenCode
    2 has no `small_model` key of its own: it migrates the v1 `small_model` onto
    its hidden `title` agent, whose native form is `agents.title.model`, and
    its session titles run on that model before any family scan.
-   `getConfiguredSmallModelRef` reads it from `GET /api/agent/title` in the
-   caller's directory, so OpenCode's own merge of global, project and
-   `OPENCODE_CONFIG` layers decides it; nothing here parses config files.
+   `getConfiguredSmallModelRef` reads the model and its variant from
+   `GET /api/agent/title` in the caller's directory, so OpenCode's own merge of
+   global, project and `OPENCODE_CONFIG` layers decides it; nothing here parses
+   config files.
    Read on every call, never cached: OpenCode watches its config, so an edit
    applies without a restart. A cold location can answer 404 for a few
    seconds while its agents load; that call falls through to step 4 and the
@@ -109,6 +114,23 @@ their provider. Content goes only to the provider the user works with, the
 model they picked, the small model they set for OpenCode, or the default they
 configured.
 
+## Thinking variants
+
+The settings override and OpenCode's `title` agent can each name a thinking
+variant. It travels as the model's `variant` on `/api/experimental/generate`.
+The variant is kept when the catalog does not know the model, because a
+discovery gap is not evidence against the choice. When the catalog knows the
+model, the variant must be listed; a missing or malformed variant list counts as
+no levels. A variant the model does not list is dropped and the call runs at the
+model default, the same rule session defaults apply
+(`../openchamber-sessions/routes.js`, `resolveVariant`).
+
+`smallModelVariant` is a sibling of `smallModelOverride`. A
+`provider/model#variant` string would look like part of the model id to a build
+that predates the field, so rollback would break instead of falling back to the
+model default. The pair also matches `defaultModel` and `defaultVariant`, and
+lets the Settings UI clear the effort when the model changes.
+
 Claude Code (`claude-code`, from the opencode-claude plugin) is a provider
 like any other: its generate path runs a clean one-shot turn with no tools and
 no session, so `claude-code/haiku` (family `claude-haiku`) is picked in the
@@ -142,9 +164,18 @@ what generation will do. It may be a **function** of
 as the resolved model allows — they cannot name a number before knowing which
 model they got. The resolved value comes back as `outputTokens`.
 
-`timeoutMs` overrides the 60s default; `signal` aborts a request that is no
-longer wanted. The timeout covers generation, retry waits and structured-output
-retries together.
+Without `timeoutMs`, the deadline derives from the prompt the module actually
+sends: 60 s base plus 40 ms per estimated token (~4 chars/token, the input-clamp
+heuristic), capped at 900 s — the walkthrough ceiling. An explicit `timeoutMs`
+still wins (the walkthrough passes its own per-hunk budget); `signal` aborts a
+request that is no longer wanted. The timeout covers generation, retry waits and
+structured-output retries together. The deadline is a hang guard, not a
+pace-setter: prefill dominates, and issue #5017 measured local-model prefill at
+94-187 tok/s on 4 GB-VRAM hardware (~10.6 ms/token worst observed), so 40 ms/token
+is ~4x headroom that also absorbs the answer decode and one structured-output
+retry. A blown deadline (not caller cancellation) throws `504` with
+`code: 'generation-timeout'`, naming the model and the budget; the route maps it
+to that message instead of the generic "choose another model" text.
 
 OpenCode 2 can reject an explicit model before its cold catalog finishes loading;
 plugin-provided models (Claude Code) stay unavailable for 20-40 s after OpenCode
@@ -194,10 +225,10 @@ resolution; it now means "callable".
 
 ## describeSmallModel
 
-Reports which model would be used without calling it: `providerID`, `modelID`,
-`source`, plus `inputCharBudget`, `contextTokens`, `contextKnown`,
-`outputTokens`, `outputTokenLimit`, `structuredOutput`, `hasLogin` and
-`localEndpoint`.
+Reports which model and thinking variant would be used without calling it:
+`providerID`, `modelID`, optional `variant`, `source`, plus `inputCharBudget`,
+`contextTokens`, `contextKnown`, `outputTokens`, `outputTokenLimit`,
+`structuredOutput`, `hasLogin` and `localEndpoint`.
 
 `localEndpoint` is `true` when the model's `settings.baseURL` (as OpenCode
 reports it on `GET /api/model`) points at loopback, a private or CGNAT

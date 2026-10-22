@@ -994,6 +994,41 @@ describe('terminal runtime', () => {
     }
   }, 15_000);
 
+  it('keeps raw overflow output unchanged and reconnects with safe history after exit', async () => {
+    const server = http.createServer();
+    const harness = createHarness({ server });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    let client;
+    try {
+      await harness.routes.post.get('/api/terminal/create')({ body: { sessionId: 'overflow', cwd: '/repo' } }, createResponse());
+      client = await openTerminalSocket(`ws://127.0.0.1:${server.address().port}/api/terminal/ws`);
+      client.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'overflow' }));
+      await client.next('snapshot');
+      const first = 'before\u001b]0;';
+      const chunks = ['x'.repeat(16 * 1024), 'hidden\u001b', '\\after\u001b[31mred\u001b[0m\u001b]11;?'];
+      harness.processes[0].emitData(first);
+      for (const chunk of chunks) harness.processes[0].emitData(chunk);
+      harness.processes[0].emitExit(7);
+      expect(await client.next('output')).toMatchObject({ q: 1, d: first, r: 'before' });
+      expect(await client.next('output')).toMatchObject({ q: 2, d: chunks.join(''), r: 'after\u001b[31mred\u001b[0m' });
+      expect(await client.next('exit')).toMatchObject({ q: 3, exitCode: 7 });
+
+      client.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'overflow' }));
+      expect(await client.next('snapshot')).toMatchObject({ q: 3, status: 'exited', history: 'beforeafter\u001b[31mred\u001b[0m' });
+      await harness.routes.post.get('/api/terminal/:sessionId/restart')({ params: { sessionId: 'overflow' }, body: {} }, createResponse());
+      expect(await client.next('restarted')).toMatchObject({ history: '' });
+      harness.processes[0].emitData('stale\u0007');
+      harness.processes[1].emitData('new output');
+      expect(await client.next('output')).toMatchObject({ d: 'new output' });
+      client.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'overflow' }));
+      expect(await client.next('snapshot')).toMatchObject({ status: 'running', history: 'new output' });
+    } finally {
+      client?.socket.terminate();
+      await harness.runtime.shutdown();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
   it('disconnects a slow terminal socket and replays the bounded history on reconnect', async () => {
     const app = createHttpTestApp();
     const server = http.createServer(app);

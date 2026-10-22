@@ -82,7 +82,7 @@ export const useEffectiveDirectory = (): string | undefined => {
     const newSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
     const currentSessionDirectory = useSessionDirectory(currentSessionId);
     const worktreeAttachment = useSessionWorktreeStore((s) => currentSessionId ? s.getAttachment(currentSessionId) : undefined);
-    const worktreeMap = useSessionUIStore((s) => s.worktreeMetadata);
+    const worktreePath = useSessionUIStore((s) => currentSessionId ? s.worktreeMetadata.get(currentSessionId)?.path : undefined);
     const fallbackDirectory = useDirectoryStore((s) => s.currentDirectory);
     const chatsRoot = useChatsRoot();
 
@@ -91,7 +91,7 @@ export const useEffectiveDirectory = (): string | undefined => {
         newSessionDraft,
         currentSessionDirectory,
         worktreeAttachment,
-        worktreePath: currentSessionId ? worktreeMap.get(currentSessionId)?.path : undefined,
+        worktreePath,
         fallbackDirectory,
         chatsRoot,
     });

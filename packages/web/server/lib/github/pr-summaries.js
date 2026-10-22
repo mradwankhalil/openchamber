@@ -28,6 +28,7 @@ const SUMMARY_FIELDS = `
   mergeable
   mergeStateStatus
   headRefOid
+  baseRefName
   commits(last: 1) {
     nodes {
       commit {
@@ -67,6 +68,8 @@ const summaryRefsSchema = z.array(z.object({
   owner: githubName,
   repo: githubName,
   number: z.number().int().positive(),
+  // Optional host: which instance the ref lives on. Missing means github.com.
+  host: z.string().trim().max(255).optional(),
 })).max(MAX_SUMMARY_REFS);
 
 /**
@@ -80,7 +83,10 @@ export function parseSummaryRefs(value) {
   }
   const refs = new Map();
   for (const ref of parsed.data) {
-    refs.set(`${ref.owner.toLowerCase()}/${ref.repo.toLowerCase()}#${ref.number}`, ref);
+    // The same owner/repo/number can exist on github.com and an enterprise
+    // instance; host keeps those apart.
+    const host = (ref.host ?? '').trim().toLowerCase() || 'github.com';
+    refs.set(`${host}::${ref.owner.toLowerCase()}/${ref.repo.toLowerCase()}#${ref.number}`, ref);
   }
   return [...refs.values()];
 }
@@ -110,6 +116,7 @@ const prNodeSchema = z.object({
   mergeable: z.string().nullable(),
   mergeStateStatus: z.string().nullable(),
   headRefOid: z.string(),
+  baseRefName: z.string(),
   commits: z.object({
     nodes: z.array(z.object({
       commit: z.object({
@@ -199,6 +206,9 @@ function toSummary(ref, value) {
     draft: node.isDraft,
     title: node.title,
     headSha: node.headRefOid,
+    // Followed so a PR retargeted on GitHub (its lower stack layer merged)
+    // compares against its new base without waiting for a full read.
+    base: node.baseRefName,
     mergeable: toMergeable(node.mergeable),
     mergeableState: node.mergeStateStatus ? node.mergeStateStatus.toLowerCase() : null,
     // A closed/merged PR's checks are not actionable; the REST status route

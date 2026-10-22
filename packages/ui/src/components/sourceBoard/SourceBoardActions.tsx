@@ -15,18 +15,18 @@ import { readLinearIssueDetail } from '@/components/references/referenceSources'
 import { resolveComposerReferences } from '@/components/references/resolveComposerReferences';
 import { readMergeMethod, rememberMergeMethod, type MergeMethod } from '@/components/views/git/mergeMethodPreference';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
-import type { GitHubPullReference, SourceControlReadContext } from '@/lib/api/types';
+import type { GitHubPullReference, PullRequestStack, PullRequestStackLayer, SourceControlReadContext } from '@/lib/api/types';
 import type { PullRequestSource } from '@/lib/diff/pullRequestDiff';
 import { useI18n } from '@/lib/i18n';
-import { normalizePath } from '@/lib/pathNormalization';
 import { cn } from '@/lib/utils';
 import type { SetStateInput, SourceControlCapabilities } from '@/lib/source-control/types';
 import { formatChangeRequestReference } from '@/lib/source-control/identity';
 import { usePullRequestSelectionStore } from '@/stores/usePullRequestSelectionStore';
-import { normalizeContextPanelDirectoryKey, useUIStore } from '@/stores/useUIStore';
+import { useUIStore } from '@/stores/useUIStore';
 import { useWalkthroughStore } from '@/stores/useWalkthroughStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSession } from '@/sync/sync-context';
+import { resolvePullLinkTarget } from './boardRepository';
 import { newMutationKey } from './mutationKey';
 
 /** A project the board acts in: its id and root folder. */
@@ -43,6 +43,18 @@ const MERGE_METHOD_KEYS = {
     squash: 'sourceBoard.merge.method.squash',
     rebase: 'sourceBoard.merge.method.rebase',
 } as const;
+
+/** The open layers below `number` in its stack, bottom first. */
+const openLayersBelow = (stack: PullRequestStack, number: number): PullRequestStackLayer[] => {
+    const index = stack.layers.findIndex((layer) => layer.number === number);
+    return index <= 0 ? [] : stack.layers.slice(0, index).filter((layer) => layer.state === 'open');
+};
+
+/** A branch can be stacked on when it lives in the PR's own repository; a fork's cannot. */
+const isStackable = (pull: GitHubPullReference): boolean => (
+    !pull.headRepo
+    || (pull.headRepo.owner.toLowerCase() === pull.sourceRepo.owner.toLowerCase() && pull.headRepo.repo.toLowerCase() === pull.sourceRepo.repo.toLowerCase())
+);
 
 /** What a session started from the item gets: the item itself, as a composer chip. */
 const selectionOf = (item: ReferencePickerItem): ReferencePickerSelection => (
@@ -96,7 +108,17 @@ export const SourceBoardActions: React.FC<{
     startIn?: React.ReactNode;
     /** The phone shell's page closes once a session starts; the desktop page closes on its own. */
     onLeave?: () => void;
-}> = ({ item, project, context, onStartWorktree, onChanged, startIn, onLeave }) => {
+    /** False for an item of a repository under the project's root: a worktree needs the project itself to be one. */
+    worktreeAvailable: boolean;
+    /** The previewed PR's stack, once its detail says; a merge lands the open layers below it too. */
+    stack?: PullRequestStack | null;
+    /**
+     * Starts a new branch on top of the previewed PR's, in a worktree: the next
+     * layer of a stack. In the attach menu where the surface starts work there,
+     * else a button of its own.
+     */
+    onStartOnTop?: (pull: GitHubPullReference) => void;
+}> = ({ item, project, context, onStartWorktree, onChanged, startIn, onLeave, worktreeAvailable, stack = null, onStartOnTop }) => {
     const { t } = useI18n();
     const { sourceControl, linear } = useRuntimeAPIs();
     const confirmation = useConfirmDialog();
@@ -152,12 +174,24 @@ export const SourceBoardActions: React.FC<{
         rememberMergeMethod(method);
     };
     const reference = pull ? formatChangeRequestReference(pull.provider ?? 'github', pull.number) : '';
+    const referenceOf = (number: number) => formatChangeRequestReference(pull?.provider ?? 'github', number);
+    // GitHub merges a stacked PR together with the open layers below it, bottom first.
+    const mergesBelow = openPull && stack?.number != null ? openLayersBelow(stack, openPull.number) : [];
+
+    const stackOnTop = onStartOnTop && openPull && isStackable(openPull) ? () => onStartOnTop(openPull) : null;
+    const stackOnTopLabel = t('stacks.actions.newOnTop');
 
     const merge = async () => {
         if (!openPull || !context || !mergeMethod) return;
+        const methodNote = t(MERGE_METHOD_KEYS[mergeMethod], { base: openPull.base });
+        const stackNote = mergesBelow.length === 0
+            ? null
+            : mergesBelow.length === 1
+                ? t('stacks.merge.alsoBelow.one', { reference: referenceOf(mergesBelow[0].number) })
+                : t('stacks.merge.alsoBelow.other', { count: mergesBelow.length, references: mergesBelow.map((layer) => referenceOf(layer.number)).join(', ') });
         const approved = await confirmation.confirm({
             title: t(context.provider === 'gitlab' ? 'sourceBoard.merge.confirmTitle.gitlab' : 'sourceBoard.merge.confirmTitle.github', { reference }),
-            message: t(MERGE_METHOD_KEYS[mergeMethod], { base: openPull.base }),
+            message: stackNote ? `${stackNote}\n\n${methodNote}` : methodNote,
             action: t('sourceBoard.actions.merge'),
         });
         if (!approved) return;
@@ -169,8 +203,20 @@ export const SourceBoardActions: React.FC<{
                 target: { project: { owner: openPull.sourceRepo.owner, name: openPull.sourceRepo.repo }, number: openPull.number, head: openPull.head, base: openPull.base, headSha: openPull.headSha },
                 method: mergeMethod,
             });
-            if (receipt.result.merged) toast.success(t('sourceBoard.toast.merged', { reference }));
-            else toast.message(t('sourceBoard.toast.notMerged', { reference }), { description: receipt.result.message });
+            const { merged, outcome, message } = receipt.result;
+            if (merged) {
+                toast.success(mergesBelow.length === 0
+                    ? t('sourceBoard.toast.merged', { reference })
+                    : mergesBelow.length === 1
+                        ? t('stacks.toast.mergedWithBelow.one', { reference })
+                        : t('stacks.toast.mergedWithBelow.other', { reference, count: mergesBelow.length }));
+            } else if (outcome === 'queued') {
+                toast.message(t('sourceBoard.toast.mergeQueued', { reference }));
+            } else if (outcome === 'merging') {
+                toast.message(t('sourceBoard.toast.mergeRunning', { reference }), { description: t('sourceBoard.toast.mergeRunningDescription') });
+            } else {
+                toast.message(t('sourceBoard.toast.notMerged', { reference }), { description: message });
+            }
         } catch (error) {
             toast.error(t('sourceBoard.toast.mergeFailed', { reference }), { description: error instanceof Error ? error.message : String(error) });
         } finally {
@@ -241,6 +287,7 @@ export const SourceBoardActions: React.FC<{
             {openPull?.draft && capabilities?.draftChangeRequests ? (
                 <ActionButton icon="git-pull-request" label={t('sourceBoard.actions.markReady')} busy={busy === 'ready'} onClick={() => void markReady()} />
             ) : null}
+            {stackOnTop && !project ? <ActionButton icon="stack" label={stackOnTopLabel} onClick={stackOnTop} /> : null}
         </>
     );
 
@@ -279,10 +326,18 @@ export const SourceBoardActions: React.FC<{
                                     <Icon name="chat-new" className="size-4 shrink-0" />
                                     {t('sourceBoard.actions.newSession')}
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onSelect={() => onStartWorktree(project, selectionOf(item))}>
-                                    <Icon name="git-branch" className="size-4 shrink-0" />
-                                    {t(pull ? 'sourceBoard.actions.checkoutWorktree' : 'sourceBoard.actions.newWorktreeSession')}
-                                </DropdownMenuItem>
+                                {worktreeAvailable ? (
+                                    <DropdownMenuItem onSelect={() => onStartWorktree(project, selectionOf(item))}>
+                                        <Icon name="git-branch" className="size-4 shrink-0" />
+                                        {t(pull ? 'sourceBoard.actions.checkoutWorktree' : 'sourceBoard.actions.newWorktreeSession')}
+                                    </DropdownMenuItem>
+                                ) : null}
+                                {worktreeAvailable && stackOnTop ? (
+                                    <DropdownMenuItem onSelect={stackOnTop}>
+                                        <Icon name="stack" className="size-4 shrink-0" />
+                                        {stackOnTopLabel}
+                                    </DropdownMenuItem>
+                                ) : null}
                             </>
                         ) : null}
                     </DropdownMenuContent>
@@ -303,49 +358,55 @@ const LINK_CLASS = cn(
  * walkthrough. Both open in the panel beside the chat on screen and read the
  * PR through the project's own folder: the folder the app shows when it
  * belongs to the project, else the project's root, without the app moving
- * there. With no chat on screen the app opens a draft of the project first.
- * The phone shell has no side panel: there Changes opens the workspace
- * drawer's Git tab on the PR, in the project's draft when the app shows
- * another, `onLeave` gives the chat back underneath it, and the walkthrough
- * is not offered.
+ * there; a PR of a repository under a root that is not one is read through
+ * that repository, leaving the Git selection alone. With no chat on screen
+ * the app opens a draft of the project first. The phone shell has no side
+ * panel: there Changes opens the workspace drawer's Git tab on the PR, in the
+ * project's draft when the app shows another, `onLeave` gives the chat back
+ * underneath it, and the walkthrough is not offered.
  */
 export const SourceBoardPullLinks: React.FC<{
     pull: GitHubPullReference;
     project: SourceBoardProject;
+    /** The folder the board reads; a repository under the project's root when the root is not one. */
+    repository: string | null;
     context: SourceControlReadContext;
     projectOwnsDirectory: (directory: string | undefined) => boolean;
     currentDirectory: string | undefined;
     onLeave?: () => void;
-}> = ({ pull, project, context, projectOwnsDirectory, currentDirectory, onLeave }) => {
+}> = ({ pull, project, repository, context, projectOwnsDirectory, currentDirectory, onLeave }) => {
     const { t } = useI18n();
     const mobile = useMobileAppActions();
     const open = (surface: 'diff' | 'walkthrough') => {
         const source: PullRequestSource = { kind: 'pr', number: pull.number, sourceRepo: { owner: pull.sourceRepo.owner, repo: pull.sourceRepo.repo } };
         const ui = useUIStore.getState();
-        const owned = Boolean(currentDirectory && projectOwnsDirectory(currentDirectory));
+        const target = resolvePullLinkTarget({
+            projectPath: project.path,
+            repository,
+            currentDirectory: currentDirectory ?? null,
+            owned: Boolean(currentDirectory && projectOwnsDirectory(currentDirectory)),
+        });
         if (mobile) {
-            const directory = owned && currentDirectory ? currentDirectory : project.path;
-            if (directory === currentDirectory) ui.closeMainSurfaces();
+            if (target.mobileDirectory === currentDirectory) ui.closeMainSurfaces();
             else useSessionUIStore.getState().openNewSessionDraft({ selectedProjectId: project.id, directoryOverride: project.path });
-            // The phone's Changes looks requests up by the normalized folder.
-            usePullRequestSelectionStore.getState().requestDiff(normalizePath(directory) ?? directory, source);
+            // A repository under the folder is shown in place of the Git selection, which stays as it was.
+            usePullRequestSelectionStore.getState().requestDiff(target.mobileRequestDirectory, source, target.mobileRepository);
             onLeave?.();
             mobile.openChanges();
             return;
         }
         if (currentDirectory) ui.closeMainSurfaces();
         else useSessionUIStore.getState().openNewSessionDraft({ selectedProjectId: project.id, directoryOverride: project.path });
-        const panelDirectory = currentDirectory ?? project.path;
-        // Another project's PR is read through that project's root, the
-        // folder its tab names; the request is keyed by that same folder.
-        const targetDirectory = owned || !currentDirectory ? null : normalizeContextPanelDirectoryKey(project.path);
-        const directory = targetDirectory ?? panelDirectory;
+        // Another project's PR, or one of a repository under a root that is
+        // not one, is read through the folder its tab names; the request is
+        // keyed by that same folder.
+        const { panelDirectory, targetDirectory, requestDirectory } = target;
         if (surface === 'diff') {
-            usePullRequestSelectionStore.getState().requestDiff(directory, source);
+            usePullRequestSelectionStore.getState().requestDiff(requestDirectory, source);
             ui.openContextPanelTab(panelDirectory, { mode: 'diff', diffScope: 'pr', targetDirectory });
             return;
         }
-        useWalkthroughStore.getState().requestTarget(directory, { source, context });
+        useWalkthroughStore.getState().requestTarget(requestDirectory, { source, context });
         ui.openContextPanelTab(panelDirectory, { mode: 'walkthrough', targetDirectory });
     };
     return (

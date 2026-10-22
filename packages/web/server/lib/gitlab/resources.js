@@ -105,7 +105,7 @@ async function mapLimited(items, limit, task) {
 
 /**
  * A merge request's live state in the shape GitHub's summaries use, so one
- * badge rule colours both: orange only for a failed or still running pipeline or a conflict,
+ * badge rule colours both: orange only for a failed pipeline or a conflict,
  * and a merge request still waiting for approval keeps the open colour.
  */
 function liveMergeRequestSummary(ref, raw) {
@@ -139,6 +139,7 @@ function liveMergeRequestSummary(ref, raw) {
     checks,
   };
   if (text(raw.sha)) summary.headSha = raw.sha;
+  if (text(raw.target_branch)) summary.base = raw.target_branch;
   return summary;
 }
 
@@ -244,6 +245,57 @@ export function createGitLabResourceService({ origin, client, download, resolveP
     orderBy: 'updated_at',
     sort: 'desc',
   });
+
+  // GitLab has no stack object: merge requests stack by branch, each one
+  // targeting the source branch of the one below. The chain around an open
+  // merge request is read one link at a time, as far as each link is the only
+  // open merge request there (a branch with two on top forks, and stops),
+  // within the project itself (a fork's branch of the same name is another
+  // branch), never through the default branch, which is the trunk (a release
+  // merge request out of it is no lower layer), and never twice.
+  const CHAIN_LINK_LIMIT = 10;
+  const isChainLink = (raw, projectId) => isPlainObject(raw) && Number.isInteger(raw.iid)
+    && isString(raw.source_branch) && isString(raw.target_branch) && isString(raw.web_url)
+    && raw.source_branch !== raw.target_branch
+    && String(raw.source_project_id) === String(projectId) && String(raw.target_project_id) === String(projectId);
+  const openMergeRequestOn = async (projectId, filter) => {
+    const page = readPage(await client.MergeRequests.all({ projectId, state: 'opened', maxPages: 1, perPage: 2, showExpanded: true, ...filter }));
+    const items = asArray(page.items);
+    return items.length === 1 && isChainLink(items[0], projectId) ? items[0] : null;
+  };
+  const chainLayer = (raw) => ({
+    number: raw.iid,
+    title: isString(raw.title) ? raw.title : '',
+    url: isString(raw.web_url) ? raw.web_url : '',
+    state: raw.state === 'opened' ? 'open' : raw.state === 'merged' ? 'merged' : 'closed',
+    draft: raw.draft === true || raw.work_in_progress === true,
+    head: raw.source_branch,
+  });
+  const readChain = async (raw, defaultBranch) => {
+    const projectId = raw?.target_project_id;
+    if (raw?.state !== 'opened' || !Number.isInteger(projectId) || !isChainLink(raw, projectId)) return null;
+    const seen = new Set([raw.iid]);
+    const below = [];
+    let base = raw.target_branch;
+    for (let link = 0; link < CHAIN_LINK_LIMIT && base !== defaultBranch; link += 1) {
+      const next = await openMergeRequestOn(projectId, { sourceBranch: base });
+      if (!next || seen.has(next.iid)) break;
+      seen.add(next.iid);
+      below.unshift(chainLayer(next));
+      base = next.target_branch;
+    }
+    const above = [];
+    let head = raw.source_branch;
+    for (let link = 0; link < CHAIN_LINK_LIMIT && head !== defaultBranch; link += 1) {
+      const next = await openMergeRequestOn(projectId, { targetBranch: head });
+      if (!next || seen.has(next.iid)) break;
+      seen.add(next.iid);
+      above.push(chainLayer(next));
+      head = next.source_branch;
+    }
+    if (below.length === 0 && above.length === 0) return null;
+    return { number: null, base, layers: [...below, chainLayer(raw), ...above] };
+  };
 
   const requireMergeRequest = (value, project, requireProjectIds = false) => {
     const mapped = requireMapped(mapGitLabMergeRequest(value, identity, project), 'GitLab returned an invalid merge request');
@@ -958,7 +1010,7 @@ export function createGitLabResourceService({ origin, client, download, resolveP
         constrainToPrimary: options.constrainToPrimary,
         remote: options.remote,
       });
-      const [noteSource, diffs, ci, headProject, commitPage, diffStats, threadPermissions] = await Promise.all([
+      const [noteSource, diffs, ci, headProject, commitPage, diffStats, threadPermissions, chain] = await Promise.all([
         // The preview's timeline reads the notes as their threads; other readers keep the plain list.
         options.includeTimeline
           ? readCollection((page) => client.MergeRequestDiscussions.all(target.project.id, number, page), 'GitLab merge request has more threads than OpenChamber reads')
@@ -978,6 +1030,9 @@ export function createGitLabResourceService({ origin, client, download, resolveP
           : Promise.resolve(null),
         options.includeDiff ? readDiffStats(target.project, number) : Promise.resolve(null),
         options.includeTimeline ? readThreadPermissions(target.project, number) : Promise.resolve(null),
+        // The chain it is a layer of, for the preview and for an agent given
+        // the merge request; one that cannot be read leaves its stack unknown.
+        readChain(raw, isString(target.raw?.default_branch) ? target.raw.default_branch : null).catch(() => undefined),
       ]);
       const notes = options.includeTimeline ? notesOfDiscussions(noteSource, threadPermissions) : noteSource;
       if (canonicalReads && !Array.isArray(notes)) throw new Error('GitLab returned an invalid merge request note list');
@@ -1021,6 +1076,7 @@ export function createGitLabResourceService({ origin, client, download, resolveP
         diff: files.map((file) => file.patch).filter(Boolean).join('\n'),
         ci,
       };
+      if (chain !== undefined) context.stack = chain;
       if (!options.includeTimeline) return context;
       if (canonicalReads && !Array.isArray(commitPage?.items)) throw new Error('GitLab returned an invalid merge request commit list');
       return {

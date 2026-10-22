@@ -32,7 +32,7 @@ import {
   type StructuredError,
   type TokenUsageInfo,
 } from "./model"
-import { projectUserParts, structuredErrorText, toolAttachments, toolOutputText } from "./projection"
+import { projectInboxMessage, structuredErrorText, toolAttachments, toolOutputText } from "./projection"
 import { runningShellFromWire, type RunningShell, type ShellEnd } from "./background-shell"
 
 // ---------------------------------------------------------------------------
@@ -97,6 +97,23 @@ export type CatalogKind =
   /** Web search providers or the default choice changed (`websearch.updated`). */
   | "websearch"
 
+/**
+ * When a running turn began, on this device's clock. `host` is the OpenChamber
+ * host's own record, the same for every client; `live` is this device seeing
+ * the turn begin, for hosts that keep no record.
+ */
+export type SessionTurnStart = { at: number; source: "host" | "live" }
+
+/**
+ * A start the host reported on its own clock, moved onto this device's: the
+ * time that has passed by the host's clock, counted back from now here. A
+ * phone whose clock is off still shows the host's elapsed time.
+ */
+export const hostTurnStart = (startedAt: number, hostNow: number): SessionTurnStart => ({
+  at: Date.now() - Math.max(0, hostNow - startedAt),
+  source: "host",
+})
+
 export type SyncEvent =
   | { type: "server.connected"; properties: Record<never, never> }
   | { type: "installation.update-available"; properties: { version: string } }
@@ -116,7 +133,11 @@ export type SyncEvent =
    * store still holds.
    */
   | { type: "session.revert.committed"; properties: { sessionID: string; to: string } }
-  | { type: "session.status"; properties: { sessionID: string; status: SessionStatus } }
+  /**
+   * `turnStart` is set when the event knows when the running turn began: the
+   * host's record, or this device seeing the turn begin.
+   */
+  | { type: "session.status"; properties: { sessionID: string; status: SessionStatus; turnStart?: SessionTurnStart } }
   /**
    * `outcome` is set when the event ends a turn (`session.execution.*`) and
    * absent for a bare status change. Only `interrupted` is an explicit stop.
@@ -159,6 +180,8 @@ export type SyncEvent =
   | { type: "openchamber.page-waiting"; properties: { sessionID: string; directory: string | null; page: { id: string; title: string } } }
   /** That page stopped waiting: answered, answered in the chat, or its turn ended. */
   | { type: "openchamber.page-settled"; properties: { sessionID: string; pageID: string } }
+  /** The server started or stopped waiting to write a session's recap and suggestion. */
+  | { type: "openchamber.session-assist"; properties: { sessionID: string; directory: string | null; pending: boolean } }
 
 /** Agent-completion / restart notices the OpenChamber server publishes for non-web runtimes. */
 export type OpenchamberNotification = {
@@ -324,7 +347,14 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
     case "session.permissions":
       return [sessionEvent(event.data.sessionID, { permissions: event.data.permissions })]
     case "session.viewed":
-      return [sessionEvent(event.data.sessionID, { time: { viewed: event.created } })]
+      // The watermark is the idle transition the viewer saw, not when the view
+      // was recorded: a turn that ended after it stays unread.
+      return [sessionEvent(event.data.sessionID, { time: { viewed: event.data.idle } })]
+    // OpenCode stamps the archive time and the update time with the event.
+    case "session.archived":
+      return [sessionEvent(event.data.sessionID, { time: { archived: event.created, updated: event.created } })]
+    case "session.unarchived":
+      return [sessionEvent(event.data.sessionID, { time: { archived: null, updated: event.created } })]
     case "session.revert.staged":
       return [sessionEvent(event.data.sessionID, { revert: event.data.revert })]
     case "session.revert.cleared":
@@ -343,8 +373,13 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
       return [{ type: "session.status", properties: { sessionID: event.data.sessionID, status: event.data.status } }]
     case "session.idle":
       return [{ type: "session.idle", properties: { sessionID: event.data.sessionID } }]
+    // The one event that marks where a turn begins. Stamped on arrival: the
+    // event's own time is OpenCode's clock, not this device's.
     case "session.execution.started":
-      return [{ type: "session.status", properties: { sessionID: event.data.sessionID, status: { type: "busy" } } }]
+      return [{
+        type: "session.status",
+        properties: { sessionID: event.data.sessionID, status: { type: "busy" }, turnStart: { at: Date.now(), source: "live" } },
+      }]
     case "session.execution.succeeded":
       return [
         sessionEvent(event.data.sessionID, { outcome: "succeeded", time: { idle: event.created, updated: event.created } }),
@@ -371,51 +406,21 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
     // --- user input ---------------------------------------------------------
 
     case "session.inbox.enqueued": {
-      const item = event.data.item
-      const messageID = event.data.inboxID
-      if (item.type === "user") {
-        return [
-          {
-            type: "message.updated",
-            properties: {
-              info: compact({
-                id: messageID,
-                sessionID: event.data.sessionID,
-                role: "user",
-                time: { created: event.created },
-                metadata: item.payload.metadata,
-              }),
-            },
-          },
-          {
-            type: "message.parts.replaced",
-            properties: {
-              sessionID: event.data.sessionID,
-              messageID,
-              parts: projectUserParts(item.payload, { sessionID: event.data.sessionID, messageID, created: event.created }),
-            },
-          },
-        ]
-      }
-      if (item.type === "synthetic") {
-        return [
-          {
-            type: "message.updated",
-            properties: {
-              info: compact({
-                id: messageID,
-                sessionID: event.data.sessionID,
-                role: "synthetic",
-                time: { created: event.created },
-                text: item.payload.text,
-                description: item.payload.description,
-                metadata: item.payload.metadata,
-              }),
-            },
-          },
-        ]
-      }
-      return []
+      const projected = projectInboxMessage(event.data.item, {
+        sessionID: event.data.sessionID,
+        messageID: event.data.inboxID,
+        created: event.created,
+      })
+      if (!projected) return []
+      const updated: SyncEvent = { type: "message.updated", properties: { info: projected.info } }
+      if (!projected.parts) return [updated]
+      return [
+        updated,
+        {
+          type: "message.parts.replaced",
+          properties: { sessionID: event.data.sessionID, messageID: event.data.inboxID, parts: projected.parts },
+        },
+      ]
     }
     case "session.inbox.delivered":
       return [messagePatch(event.data.sessionID, event.data.inboxID, { time: { created: event.created } })]
@@ -468,6 +473,9 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
               time: { created: event.created },
               text: event.data.text,
               description: `Instructions updated: ${Object.keys(event.data.delta ?? {}).join(", ")}`,
+              // The metadata OpenCode stores with the message, so a live update
+              // reads the same as one loaded from history.
+              metadata: { notice: "instructions", instructionSources: Object.keys(event.data.delta ?? {}) },
             },
           },
         },

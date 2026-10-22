@@ -15,6 +15,7 @@ export interface WebviewHtmlOptions {
   /** A new-session editor tab that opens its draft in "Run on several models" mode. */
   initialComposer?: 'parallel';
   viewMode?: 'sidebar' | 'editor';
+  panelType?: 'chat' | 'settings';
   devServerUrl?: string | null;
   extensionVersion?: string;
 }
@@ -62,9 +63,11 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
     initialSessionId,
     initialComposer,
     viewMode = 'sidebar',
+    panelType = 'chat',
     devServerUrl,
     extensionVersion = '',
   } = options;
+  const workspaceFolderJson = JSON.stringify(workspaceFolder).replace(/</g, '\\u003c');
   const workspaceFoldersJson = JSON.stringify(workspaceFolders).replace(/</g, '\\u003c');
 
   const scriptPath = vscode.Uri.joinPath(extensionUri, 'dist', 'webview', 'assets', 'index.js');
@@ -198,7 +201,7 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
     window.process = window.process || { env: { NODE_ENV: 'production' }, platform: '', version: '', browser: true };
 
     window.__VSCODE_CONFIG__ = {
-      workspaceFolder: "${workspaceFolder.replace(/\\/g, '\\\\')}",
+      workspaceFolder: ${workspaceFolderJson},
       workspaceFolders: ${workspaceFoldersJson},
       theme: "${themeKind}",
       connectionStatus: "${initialStatus}",
@@ -207,10 +210,11 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
       platform: "${os.platform()}",
       arch: "${os.arch()}",
       viewMode: "${viewMode}",
+      panelType: "${panelType}",
       initialSessionId: ${initialSessionId ? `"${initialSessionId.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : 'null'},
       initialComposer: ${initialComposer ? `"${initialComposer}"` : 'null'},
     };
-    window.__OPENCHAMBER_HOME__ = "${workspaceFolder.replace(/\\/g, '\\\\')}";
+    window.__OPENCHAMBER_HOME__ = ${workspaceFolderJson};
     // VS Code's display language. The UI bundle uses it as the default locale
     // until the user picks one; the splash below picks its strings from it too.
     window.__OPENCHAMBER_HOST_LANGUAGE__ = ${JSON.stringify(vscode.env.language)};

@@ -1,6 +1,7 @@
 import type { WorktreeMetadata } from '@/types/worktree';
 import type { DesktopSettings } from '@/lib/settings/registry';
 import type { GitIdentityProfile, GitIdentitySummary } from './git-identity';
+import type { GitPathUnavailableReason } from './git-path-diff';
 import type {
   ChangeRequest,
   ChangeRequestContext,
@@ -10,6 +11,7 @@ import type {
   IssueComment,
   MergeChangeRequestInput,
   PageResult,
+  PullRequestStack,
   ProjectUpstream,
   ReadyChangeRequestInput,
   CommentInput,
@@ -25,6 +27,7 @@ import type {
   SourceControlDeviceFlowStart,
   SourceControlIdentity,
   SourceControlEmptyMutationResult,
+  SourceControlCreateMutationResult,
   SourceControlMergeMutationResult,
   SourceControlMutationReceipt,
   SourceControlReadyMutationResult,
@@ -230,6 +233,11 @@ export interface GitStatus {
   files: GitStatusFile[];
   isClean: boolean;
   /**
+   * True when the branch has no commit yet (a fresh `git init`). Absent from
+   * runtimes that do not report it (VS Code), which reads as false.
+   */
+  unborn?: boolean;
+  /**
    * Per-file line stats split by Git scope. A file with edits in both scopes
    * appears in both maps; the values are never summed into each other.
    */
@@ -282,6 +290,20 @@ export interface GetGitDiffOptions {
   staged?: boolean;
   contextLines?: number;
 }
+
+export interface GetGitDiffsOptions {
+  paths: string[];
+  staged?: boolean;
+  contextLines?: number;
+}
+
+/**
+ * One path of a batched `getGitDiff`: the same diff, or the failure that read
+ * would have thrown. `reason` is set when the path no longer resolves.
+ */
+export type GitPathDiffBatchEntry =
+  | { path: string; ok: true; diff: GitPathDiffResponse }
+  | { path: string; ok: false; error: string; reason: GitPathUnavailableReason | null };
 
 /**
  * Diff between two refs. Uses three-dot (`base...head`) semantics server-side, so changes
@@ -1069,6 +1091,12 @@ export interface GitAPI {
    */
   prefetchProjectStatuses?(directories: string[]): Promise<void>;
   getGitDiff(directory: string, options: GetGitDiffOptions): Promise<GitPathDiffResponse>;
+  /**
+   * `getGitDiff` for many paths of one side in one request. Rejects when the
+   * request itself fails; per-path failures are entries. Absent in runtimes
+   * that read per path (VS Code).
+   */
+  getGitDiffs?(directory: string, options: GetGitDiffsOptions): Promise<GitPathDiffBatchEntry[]>;
   getGitFileDiff(directory: string, options: GetGitFileDiffOptions): Promise<GitFileDiffResponse>;
   getGitRangeDiff?(directory: string, options: GetGitRangeDiffOptions): Promise<GitDiffResponse>;
   getGitRangeFiles?(directory: string, options: GetGitRangeFilesOptions): Promise<GitRangeFileEntry[]>;
@@ -1165,6 +1193,8 @@ export interface GitAPI {
     resolvedWorktreeRoot: string | null;
     resolvedCwd: string | null;
   }>;
+  /** Where `directory` sits inside its checkout (`ai`, or `''` at the root); rejects when unknown. */
+  resolveRepositoryPrefix?(directory: string): Promise<string>;
   /** Phase 1: canonicalize a directory to full worktree state */
   canonicalizeWorktreeState?(directory: string): Promise<{
     worktreeRoot: string | null;
@@ -1475,6 +1505,8 @@ export type GitHubUserSummary = {
 type GitHubRepoRef = {
   owner: string;
   repo: string;
+  /** GitHub Enterprise host (e.g. "ghe.example.com"); github.com when absent. */
+  host?: string;
   url: string;
 };
 
@@ -1609,6 +1641,8 @@ export type GitHubPullRequestContextResult = {
   diff?: string;
   checks?: GitHubChecksSummary | null;
   checkRuns?: GitHubCheckRun[];
+  /** Sent only when the PR is a layer of a stack. */
+  stack?: PullRequestStack;
 };
 
 export type GitHubPullRequestStatus = {
@@ -1624,7 +1658,10 @@ export type GitHubPullRequestStatus = {
   resolvedRemoteName?: string | null;
 };
 
-export type GitHubPullRequestRef = GitHubRepoSelector & { number: number };
+export type GitHubPullRequestRef = GitHubRepoSelector & { number: number; host?: string };
+
+/** What a refresh of the server's short-lived provider answers covers. */
+export type ProviderReadsRefreshScope = { item: GitHubPullRequestRef } | { lists: true };
 
 /** Live fields of a known PR, refreshed in batches for list surfaces. */
 export type GitHubPullRequestLiveSummary = GitHubPullRequestRef & {
@@ -1632,6 +1669,8 @@ export type GitHubPullRequestLiveSummary = GitHubPullRequestRef & {
   draft: boolean;
   title: string;
   headSha?: string;
+  /** The branch it targets, so a PR retargeted on the host is followed too. */
+  base?: string;
   mergeable: boolean | null;
   mergeableState: string | null;
   /** Null for closed/merged PRs, whose checks are not actionable. */
@@ -1801,8 +1840,11 @@ export type GitHubReferenceDetail = {
     commits: GitHubReferenceCommit[];
     /** How many commits the PR has in all; null when the host does not say. */
     commitTotal: number | null;
+    /** The stack the PR is a layer of; null when it is in none, absent when the host could not say. */
+    stack?: PullRequestStack | null;
   } | null;
 };
+
 
 export type GitHubReferenceCommit = {
   sha: string;
@@ -1844,6 +1886,29 @@ export type GitHubReferencesResult =
       hasMore: boolean;
       total: number;
     };
+
+/** Why a folder asked for in a search across repositories was left out of it. */
+export type GitHubReferencesAcrossSkip = 'no-repo' | 'disconnected' | 'invalid-context' | 'error';
+
+/**
+ * One page of issues or PRs across several repositories, each read through its
+ * own bound context: a folder that holds repositories, listed all at once.
+ * Repositories read with the same account are searched together; one folder
+ * that cannot be read is reported in `repositories` and never empties the rest.
+ */
+export type GitHubReferencesAcrossResult = {
+  /** Newest activity first. `directory` is the context folder the item was read through, for its preview and actions. */
+  items: Array<GitHubReference & { directory: string }>;
+  /** Opaque; null on the last page. */
+  cursor: string | null;
+  hasMore: boolean;
+  total: number;
+  /** Every folder asked for, in the order asked: its GitHub repository, or why it was left out. */
+  repositories: Array<
+    | { directory: string; status: 'included'; repo: GitHubRepoRef }
+    | { directory: string; status: GitHubReferencesAcrossSkip }
+  >;
+};
 
 export type GitHubRepoUpstreamResult = {
   connected: boolean;
@@ -1923,7 +1988,7 @@ export interface SourceControlAPI {
     branch: string,
     options?: { force?: boolean },
   ): Promise<ChangeRequestStatus>;
-  changeRequestCreate(payload: CreateChangeRequestInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
+  changeRequestCreate(payload: CreateChangeRequestInput): Promise<SourceControlMutationReceipt<SourceControlCreateMutationResult>>;
   changeRequestUpdate(payload: UpdateChangeRequestInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
   changeRequestMerge(payload: MergeChangeRequestInput): Promise<SourceControlMutationReceipt<SourceControlMergeMutationResult>>;
   changeRequestReady(payload: ReadyChangeRequestInput): Promise<SourceControlMutationReceipt<SourceControlReadyMutationResult>>;
@@ -1939,8 +2004,13 @@ export interface SourceControlAPI {
   changeRequestSetLabels(payload: SetLabelsInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
   issueSetLabels(payload: SetLabelsInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
   changeRequestSetReviewers(payload: SetReviewersInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
-  /** Forgets the server's short-lived answers from this host, so the next reads ask it again. */
-  refreshProviderReads(identity: SourceControlIdentity): Promise<void>;
+  /**
+   * Forgets the server's short-lived answers from this host, so the next
+   * reads ask it again: those about one item (a preview's refresh, which also
+   * reads that item's followed state again), or the lists (the board's list
+   * refresh).
+   */
+  refreshProviderReads(identity: SourceControlIdentity, scope: ProviderReadsRefreshScope): Promise<void>;
   /** One page of a project's labels, for the board's picker. */
   referenceLabels(context: SourceControlReadContext, project: GitHubRepoSelector): Promise<GitHubIssueLabel[]>;
   /** One page of the people who can be asked to review in a project. */
@@ -1980,6 +2050,13 @@ export interface SourceControlAPI {
 
   /** GitHub only: one page of issues or PRs for the reference picker. Throws on failure. */
   githubReferences(context: SourceControlReadContext, options: GitHubReferencesOptions): Promise<GitHubReferencesResult>;
+  /**
+   * GitHub only: one page of issues or PRs across up to 100 repositories, each
+   * read through its own context. Absent where the runtime cannot. Throws when
+   * the whole request fails (rate limit, network); a single folder that cannot
+   * be read is reported in the result instead.
+   */
+  githubReferencesAcross?(contexts: SourceControlReadContext[], options: GitHubReferencesOptions): Promise<GitHubReferencesAcrossResult>;
   /** GitHub only: comments of one item the picker previews, and a PR's size, review and checks. Throws on failure. */
   githubReferenceDetail(context: SourceControlReadContext, item: GitHubPullRequestRef): Promise<GitHubReferenceDetailResult>;
   /** GitHub only: checks and mergeability of up to 30 listed PRs, for their colour. Throws on failure. */
@@ -2294,6 +2371,8 @@ export interface LinearAPI {
   authDisconnect(): Promise<{ removed: boolean }>;
   authActivate(organizationId: string): Promise<LinearAuthStatus>;
   issuesList(options?: LinearIssuesListOptions): Promise<LinearIssuesListResult>;
+  /** Forgets the server's short-lived Linear lists, so the next list read asks Linear: the board's list refresh. */
+  refreshListReads(): Promise<void>;
   issueGet(id: string): Promise<LinearIssueGetResult>;
   issueStates(teamId: string): Promise<LinearIssueStatesResult>;
   issueUpdate(input: LinearIssueUpdateInput): Promise<LinearIssueUpdateResult>;

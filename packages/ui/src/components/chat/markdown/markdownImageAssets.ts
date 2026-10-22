@@ -103,6 +103,13 @@ const validateDataImage = async (source: string): Promise<void> => {
   await validateImageBlob(new Blob([bytes]), match[1].toLowerCase());
 };
 
+/** A grant request the server refused; `status` is its HTTP status. */
+export class ImageGrantRequestError extends Error {
+  constructor(readonly status: number) {
+    super(`Unable to prepare images (${status})`);
+  }
+}
+
 export const isLocalMarkdownImageSource = (source: string): boolean => (
   !/^(?:https?:)?\/\//i.test(source)
   && !/^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(source)
@@ -113,12 +120,15 @@ export const prepareLocalMarkdownImages = async ({
   directory,
   sessionId,
   messageId,
+  callId,
   signal,
 }: {
   sources: readonly string[];
   directory: string;
   sessionId: string;
   messageId: string;
+  /** The openchamber_render call whose page names the sources: the server then shows them up to the page's weight budget. */
+  callId?: string;
   signal: AbortSignal;
 }): Promise<Map<string, PreparedMarkdownImage>> => {
   const resolver = getRuntimeUrlResolver();
@@ -127,7 +137,7 @@ export const prepareLocalMarkdownImages = async ({
     cache = new Map();
     prepareCaches.set(resolver, cache);
   }
-  const key = `${sessionId}\0${messageId}\0${directory}\0${sources.join('\0')}`;
+  const key = `${sessionId}\0${messageId}\0${callId ?? ''}\0${directory}\0${sources.join('\0')}`;
   const cached = cache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     cache.delete(key);
@@ -141,13 +151,13 @@ export const prepareLocalMarkdownImages = async ({
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ directory, messageId, sources }),
+      body: JSON.stringify({ directory, messageId, callId, sources }),
       // The grant is issued by the server that holds the file: a space's for a space directory.
       directory,
       signal,
     },
   );
-  if (!response.ok) throw new Error(`Unable to prepare images (${response.status})`);
+  if (!response.ok) throw new ImageGrantRequestError(response.status);
   const payload = await response.json() as {
     results?: Array<{
       source?: string;

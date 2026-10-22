@@ -9,6 +9,7 @@ import yaml from 'yaml';
 import { discoverSkills } from './opencodeConfig';
 import { readEnterprisePolicy } from '../../web/server/lib/enterprise-mode.js';
 import { isInstalledFromSource, readInstalledSources } from '../../web/server/lib/skills-catalog/installed-sources.js';
+import { removeDirectory } from '../../web/server/lib/skills-catalog/remove-directory.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -237,14 +238,6 @@ function parseSkillMd(content: string): { frontmatter: SkillFrontmatter; warning
   }
 }
 
-async function safeRm(dir: string) {
-  try {
-    await fs.promises.rm(dir, { recursive: true, force: true });
-  } catch {
-    // ignore
-  }
-}
-
 async function cloneRepo(cloneUrl: string, targetDir: string, ref: string | null = null) {
   const branch = ref ? ['--branch', ref] : [];
   const preferred = ['clone', '--depth', '1', '--filter=blob:none', '--no-checkout', ...branch, cloneUrl, targetDir];
@@ -384,7 +377,7 @@ export async function scanSkillsRepository(options: { source: string; subpath?: 
 
     return { ok: true as const, items };
   } finally {
-    await safeRm(tempBase);
+    await removeDirectory(tempBase);
   }
 }
 
@@ -566,7 +559,7 @@ export async function installSkillsFromRepository(options: {
       }
 
       if (exists && decision === 'overwrite') {
-        await safeRm(targetDir);
+        await removeDirectory(targetDir);
       }
 
       await fs.promises.mkdir(path.dirname(targetDir), { recursive: true });
@@ -575,7 +568,7 @@ export async function installSkillsFromRepository(options: {
         await copyDirectoryNoSymlinks(srcDir, targetDir);
         installed.push({ skillName: plan.skillName, skillDir: plan.skillDirPosix, scope: options.scope, source: targetSource });
       } catch (error) {
-        await safeRm(targetDir);
+        await removeDirectory(targetDir);
         skipped.push({
           skillName: plan.skillName,
           reason: error instanceof Error ? error.message : 'Failed to copy skill files',
@@ -585,7 +578,7 @@ export async function installSkillsFromRepository(options: {
 
     return { ok: true as const, installed, skipped };
   } finally {
-    await safeRm(tempBase);
+    await removeDirectory(tempBase);
   }
 }
 

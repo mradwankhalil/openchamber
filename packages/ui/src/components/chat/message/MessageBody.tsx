@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Part } from '@/lib/opencode/model';
+import type { FilePart, Part } from '@/lib/opencode/model';
 
 import UserTextPart from './parts/UserTextPart';
 import ToolPart from './parts/ToolPart';
@@ -11,7 +11,10 @@ import type { StreamPhase, ToolPopupContent, AgentMentionInfo } from './types';
 import type { TurnChangedFile, TurnGroupingContext } from '../lib/turns/types';
 import { cn } from '@/lib/utils';
 import { isEmptyTextPart, extractTextContent } from './partUtils';
+import { isInvisibleText } from '@/lib/invisibleText';
 import { FadeInOnReveal } from './FadeInOnReveal';
+import { SessionNoticeBlock } from './SessionNoticeBlock';
+import { readSessionNoticePart } from '@/lib/opencode/session-notices';
 import { Button } from '@/components/ui/button';
 import { ErrorResponseDetails } from '@/components/chat/ErrorResponseDetails';
 import { SaveProjectPlanDialog } from '@/components/session/SaveProjectPlanDialog';
@@ -68,6 +71,7 @@ import { isCapacitorMobileApp } from '@/apps/mobileNativeChrome';
 import { shareFileFromNativeApp } from '@/lib/nativeFileShare';
 import { WorktreeRequiresGitRepositoryError } from '@/lib/worktrees/worktreeCreate';
 import { buildTurnImageExportSource, cloneMessageImageExportSource } from './imageExport';
+import { hasTextSelectionInside } from '@/lib/textSelection';
 
 
 const CONTAIN_LAYOUT_STYLE = { contain: 'layout' as const, transform: 'translateZ(0)' };
@@ -119,6 +123,8 @@ const TurnChangedFilePillButton = React.memo(({
             onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                // Keep a filename selection selectable instead of opening the file.
+                if (hasTextSelectionInside(event.currentTarget)) return;
                 onOpen(file.file);
             }}
         >
@@ -441,6 +447,10 @@ const UserMessageBody = React.memo(({ messageId, parts, messageCreatedAt, isMobi
         part.type === 'file' && part.filename ? [part.filename] : []
     )), [parts]);
 
+    const attachmentFiles = React.useMemo(() => parts.filter((part): part is FilePart => (
+        part.type === 'file' && Boolean(part.url)
+    )), [parts]);
+
     const mentionToken = agentMention?.token;
     let mentionInjected = false;
 
@@ -552,7 +562,9 @@ const UserMessageBody = React.memo(({ messageId, parts, messageCreatedAt, isMobi
     const actionsBlock = chatSurfaceMode !== 'peek' && ((canCopyMessage && hasCopyableText) || onRevert || effectiveOnFork || onToggleContextPin || hasExtraActions) ? (
         <div className={cn(
             'group/user-actions flex items-start justify-end',
-            isMobile ? 'h-11 pt-0' : 'h-8 pt-2'
+            // In a sticky turn header (TurnItem) the mobile row is shorter: it
+            // stays on screen, and the reply below keeps its own top margin.
+            isMobile ? 'h-11 pt-0 in-data-[turn-sticky-header]:h-9' : 'h-8 pt-2'
         )}>
             <div
                 className={cn(
@@ -748,7 +760,12 @@ const UserMessageBody = React.memo(({ messageId, parts, messageCreatedAt, isMobi
                 compact
                 className={userContentParts.length > 0 ? 'mb-2' : 'mt-0'}
             />
-            <div className="leading-relaxed text-foreground/90 text-base overflow-hidden">
+            {/* A long prompt in a sticky turn header scrolls inside the bubble,
+                so the header never covers more than 40% of the screen. Only
+                there: `overflow-hidden` already makes the text a scroll
+                container, and `overscroll-contain` on it stopped the wheel
+                over any prompt from reaching the chat. */}
+            <div className="leading-relaxed text-foreground/90 text-base overflow-hidden scrollbar-none in-data-[turn-sticky-header]:max-h-[40dvh] in-data-[turn-sticky-header]:overflow-y-auto in-data-[turn-sticky-header]:overscroll-contain">
                 {/* Positional keys, not part ids: the server echo of a just-sent
                     message swaps the optimistic part id, and id-based keys would
                     remount the text subtree (blank frame + height jump). */}
@@ -773,6 +790,8 @@ const UserMessageBody = React.memo(({ messageId, parts, messageCreatedAt, isMobi
                                 partIndex={index}
                                 onTruncationChange={handlePartTruncationChange}
                                 attachmentFilenames={attachmentFilenames}
+                                attachmentFiles={attachmentFiles}
+                                onShowPopup={onShowPopup}
                             />
                         </React.Fragment>
                     );
@@ -1548,14 +1567,12 @@ const AssistantMessageBody = React.memo(({
         [messageId, t, vscodeApi]
     );
 
-    // The turn footer saves the whole reply: the text the turn's earlier steps
-    // wrote, then every text part of this message. A reply of one text part
-    // keeps the copy of what the chat rendered.
+    // Re-render every part so folded text and settled highlighting are included.
     const earlierAssistantText = turnGroupingContext?.earlierAssistantText;
     const shareTurnAsImage = React.useCallback(
         async (requestedSourceElement?: HTMLElement | null) => {
             const segments = [...(earlierAssistantText ?? []), ...assistantTextSegments(assistantTextParts)];
-            if (segments.length <= 1) {
+            if (segments.length === 0) {
                 await shareMessageAsImage(requestedSourceElement);
                 return;
             }
@@ -1690,7 +1707,13 @@ const AssistantMessageBody = React.memo(({
             }
 
             if (part.type === 'reasoning') {
-                if (showReasoningTraces) {
+                // Empty reasoning draws nothing once it has ended, so it must
+                // not count as content before the answer (no divider). While it
+                // streams it stays mounted: ReasoningPart shows its busy header
+                // before the first reasoning text arrives.
+                const reasoningEnded = part.time?.end !== undefined
+                    || (effectiveStreamPhase !== 'streaming' && effectiveStreamPhase !== 'cooldown');
+                if (showReasoningTraces && !(reasoningEnded && isInvisibleText(part.text))) {
                     if (!collapsibleThinkingBlocks) {
                         // Non-collapsible mode: render thinking blocks as plain text inline.
                         rendered.push(
@@ -1722,6 +1745,19 @@ const AssistantMessageBody = React.memo(({
             if (part.type === 'tool') {
                 const toolPart = part as ToolPartType;
                 const toolName = toolPart.tool?.toLowerCase() ?? '';
+
+                // A session notice that landed during this step (see
+                // `attachSyntheticContext`) draws as its own info row.
+                const notice = readSessionNoticePart(toolPart);
+                if (notice) {
+                    rendered.push(
+                        <FadeInOnReveal key={`notice-${toolPart.id}`}>
+                            <SessionNoticeBlock notice={notice} blockId={toolPart.id} />
+                        </FadeInOnReveal>
+                    );
+                    i++;
+                    continue;
+                }
 
                 if (!isToolRowShown(toolPart)) {
                     i++;

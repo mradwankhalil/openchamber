@@ -266,6 +266,12 @@ behavior before and after the change. Attach screenshots for static states and
 a short recording for motion, gestures, drag-and-drop, focus, or multi-step
 interactions.
 
+Evidence goes in the PR description: drag screenshots, recordings and logs into
+the GitHub editor and GitHub hosts them. Never commit them to the branch (an
+`evidence/` or `pr-evidence/` folder, request logs, traces): committed, they
+ship in every clone of the repository, and the intake check asks you to remove
+them.
+
 Claims about performance, memory, CPU, rendering, startup, or similar empirical
 behavior require relevant before and after measurements.
 
@@ -326,9 +332,9 @@ conversation remains chronological. Previous review comments are not rewritten.
 ### Size label and parking
 
 Every PR gets a `size:XS` to `size:XXL` label from its changed lines. Tests,
-lockfiles, translation catalogs (`packages/ui/src/lib/i18n/messages`) and PR
-evidence images don't count, so a one-line settings change that touches twelve
-locale files is still `size:XS`.
+lockfiles and translation catalogs (`packages/ui/src/lib/i18n/messages`) don't
+count, so a one-line settings change that touches twelve locale files is still
+`size:XS`.
 
 A `size:XL` or larger PR with no Ideas discussion linked in its body also gets
 `needs-discussion` and a comment. Link the discussion (or shrink the PR) and

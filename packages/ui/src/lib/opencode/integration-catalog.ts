@@ -4,8 +4,10 @@
  *
  * The list is what a user can connect and how each provider is connected
  * right now. The cached snapshot is a starting point only: Settings reads the
- * list again every time it opens and after every credential write, and each
- * read replaces the snapshot. Nothing refreshes it in the background.
+ * list again every time it opens, after every credential write, and when
+ * OpenCode reports a credential change made elsewhere (an account switch after
+ * a usage limit, another client, OpenCode's own TUI), and each read replaces
+ * the snapshot. Nothing reads it while Settings is closed.
  *
  * The snapshot belongs to the runtime it was read from; after a runtime
  * switch it is ignored until a read from the new runtime lands.
@@ -29,6 +31,20 @@ export interface IntegrationCatalog {
 let snapshot: { runtimeKey: string; catalog: IntegrationCatalog } | null = null
 let latestRead = 0
 let prefetching = false
+const credentialChangeListeners = new Set<() => void>()
+
+/** Called for OpenCode's `credential.updated` / `credential.switched` events. */
+export function notifyCredentialChanged(): void {
+  for (const listener of credentialChangeListeners) listener()
+}
+
+/** A screen showing the list re-reads it on a credential change; returns the unsubscribe. */
+export function subscribeCredentialChanges(listener: () => void): () => void {
+  credentialChangeListeners.add(listener)
+  return () => {
+    credentialChangeListeners.delete(listener)
+  }
+}
 
 /** The last list read from the current runtime, or `null` when there is none. */
 export function peekIntegrationCatalog(): IntegrationCatalog | null {

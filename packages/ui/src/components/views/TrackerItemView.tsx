@@ -3,7 +3,7 @@ import * as React from 'react';
 import { ReferencePreview } from '@/components/references/ReferencePreview';
 import { DEFAULT_REPOSITORY_FILTER, type ReferencePickerItem } from '@/components/references/referencePickerItems';
 import {
-    forgetGitHubPullStatuses,
+    forgetGitHubPullStatus,
     useGitHubPullStatuses,
     useGitHubReadContext,
     useGitHubReferenceDetail,
@@ -18,6 +18,7 @@ import { SourceBoardLinearStatus } from '@/components/sourceBoard/SourceBoardLin
 import { SourceBoardLabels, SourceBoardReviewers } from '@/components/sourceBoard/SourceBoardMetaEditors';
 import { SourceBoardReply } from '@/components/sourceBoard/SourceBoardReply';
 import { isSameRepositoryItemLink, settleTrackerItemRequest, trackerTargetOfUrl, useShowTrackerItem, wasTrackerItemRequested } from '@/components/sourceBoard/openTrackerItem';
+import { useLinkRepository } from '@/components/sourceBoard/boardRepository';
 import { usePullAttachments } from '@/components/sourceBoard/pullAttachments';
 import { useThreadActions } from '@/components/sourceBoard/threadActions';
 import { useBoardRevalidation } from '@/components/sourceBoard/useBoardRevalidation';
@@ -26,9 +27,13 @@ import { useMinuteTickerNow } from '@/hooks/useDurationTicker';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import type { GitHubReferenceKind } from '@/lib/api/types';
 import { useI18n } from '@/lib/i18n';
+import { useTrackedItems } from '@/lib/trackedItems/interest';
+import type { TrackedItem } from '@/lib/trackedItems/model';
 import { openExternalUrl } from '@/lib/url';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useUIStore } from '@/stores/useUIStore';
+
+const NO_FOLLOWED: TrackedItem[] = [];
 
 type TrackerItemViewProps = {
     /** The item's link, as its tab keeps it. */
@@ -50,6 +55,8 @@ type TrackerItemViewProps = {
  * session or a worktree; the item can be attached to the session on screen.
  * A link its project cannot read, opened just now, opens in the browser
  * instead and its tab closes; restored on launch, the tab says so in place.
+ * A project that is a folder of repositories reads the link through the
+ * repository whose remote it points into.
  */
 export const TrackerItemView: React.FC<TrackerItemViewProps> = (props) => {
     const target = trackerTargetOfUrl(props.url);
@@ -65,7 +72,7 @@ export const TrackerItemView: React.FC<TrackerItemViewProps> = (props) => {
     const content = !target
         ? <UnavailableState url={url} />
         : target.source === 'linear'
-            ? <LinearTrackerItem url={url} identifier={target.identifier} onUnavailable={fallBack} onShown={settle} />
+            ? <LinearTrackerItem url={url} identifier={target.identifier} visible={props.visible} onUnavailable={fallBack} onShown={settle} />
             : <RepositoryTrackerItem {...props} kind={target.kind} onUnavailable={fallBack} onShown={settle} />;
 
     // The preview scrolls on its own, with its actions pinned under it.
@@ -97,16 +104,26 @@ const UnavailableState: React.FC<{ url: string }> = ({ url }) => {
 type FallBack = () => void;
 
 const RepositoryTrackerItem: React.FC<TrackerItemViewProps & { kind: GitHubReferenceKind; onUnavailable: FallBack; onShown: () => void }> = ({
-    url, directory, panelDirectory, foreign, kind, onUnavailable, onShown,
+    url, directory, panelDirectory, foreign, visible, kind, onUnavailable, onShown,
 }) => {
     const { t } = useI18n();
     const { sourceControl } = useRuntimeAPIs();
     const activeProjectId = useProjectsStore((state) => state.activeProjectId);
+    // A folder of repositories reads the link through the one it points into.
+    const linkRepository = useLinkRepository(directory, url);
+    const readDirectory = linkRepository.directory;
     // The link itself is the search: it finds that one item, whatever its state.
-    const lookup = useGitHubReferenceList({ enabled: true, directory, kind, filter: DEFAULT_REPOSITORY_FILTER, query: url });
+    const lookup = useGitHubReferenceList({ enabled: linkRepository.status === 'ready', directory: readDirectory, kind, filter: DEFAULT_REPOSITORY_FILTER, query: url });
     // Only the item the link names: a lookup that fell back to a search lists others.
     const reference = lookup.items.find((item) => isSameRepositoryItemLink(item.url, url)) ?? null;
-    const readContext = useGitHubReadContext(directory);
+    // While the tab is on screen its item's state, checks included, follows the
+    // host; the other rows of a lookup that fell back to a search do not.
+    const followed = React.useMemo(
+        () => lookup.followed.filter((item) => item.provider !== 'linear' && item.number === reference?.number),
+        [lookup.followed, reference],
+    );
+    useTrackedItems(visible ? followed : NO_FOLLOWED);
+    const readContext = useGitHubReadContext(readDirectory);
     const context = readContext && readContext !== 'missing' ? readContext : null;
 
     // Answered without it: the project's host does not know the link, or no
@@ -120,8 +137,8 @@ const RepositoryTrackerItem: React.FC<TrackerItemViewProps & { kind: GitHubRefer
         if (found) onShown();
     }, [found, onShown]);
 
-    const { detail, refresh: refreshDetail } = useGitHubReferenceDetail(directory, reference, true);
-    const pullStatusOf = useGitHubPullStatuses(directory, reference ? [reference] : []);
+    const { detail, refresh: refreshDetail } = useGitHubReferenceDetail(readDirectory, reference, true);
+    const pullStatusOf = useGitHubPullStatuses(readDirectory, reference ? [reference] : []);
     const attachments = usePullAttachments(reference);
     const [checksOpen, setChecksOpen] = React.useState(false);
     // The tab can stay open for hours; a frozen clock read every newer comment as "Just now".
@@ -134,16 +151,26 @@ const RepositoryTrackerItem: React.FC<TrackerItemViewProps & { kind: GitHubRefer
         [refreshDetail, retryLookup],
     );
     const threadActions = useThreadActions(reference, context, refreshItem);
+    // Another layer of the PR's stack opens as a tab of its own, read through the same folder.
+    const showTrackerItem = useShowTrackerItem();
+    const stack = detail.status === 'ready' ? detail.value.pull?.stack ?? null : null;
     // For a change made on the host's own site, which the server's
-    // short-lived answers would otherwise hide for up to half a minute.
+    // short-lived answers would otherwise hide for up to half a minute: this
+    // tab's item alone, its state and checks included.
     const refreshFromHost = async () => {
-        if (context) await sourceControl.refreshProviderReads(context).catch(() => undefined);
-        forgetGitHubPullStatuses();
+        if (context && reference) {
+            const item = { owner: reference.sourceRepo.owner, repo: reference.sourceRepo.repo, number: reference.number };
+            await sourceControl.refreshProviderReads(context, { item }).catch(() => undefined);
+            forgetGitHubPullStatus(item);
+        }
         await refreshItem();
     };
 
     if (!reference) {
         if (unavailable) return <UnavailableState url={url} />;
+        if (linkRepository.status === 'failed') {
+            return <TrackerState message={t('gitView.empty.discoverFailed')} onRetry={linkRepository.retry} />;
+        }
         return lookup.status === 'error'
             ? <TrackerState message={lookup.error ?? t('contextPanel.tracker.loadFailed')} onRetry={() => void retryLookup()} />
             : <TrackerState message={t('common.loading')} />;
@@ -155,7 +182,7 @@ const RepositoryTrackerItem: React.FC<TrackerItemViewProps & { kind: GitHubRefer
         <>
             <ReferencePreview
                 item={item}
-                directory={directory}
+                directory={readDirectory}
                 pullStatus={pull ? pullStatusOf(pull) : IDLE_PULL_STATUS}
                 linearDetail={{ status: 'idle' }}
                 githubDetail={detail}
@@ -165,7 +192,8 @@ const RepositoryTrackerItem: React.FC<TrackerItemViewProps & { kind: GitHubRefer
                 onIncludeDiffChange={() => undefined}
                 now={now}
                 // Starting work happens on the board and in New Worktree; here the item is read and acted on.
-                footer={<SourceBoardActions item={item} project={null} context={context} onStartWorktree={() => undefined} onChanged={() => void refreshItem()} />}
+                footer={<SourceBoardActions item={item} project={null} context={context} onStartWorktree={() => undefined} onChanged={() => void refreshItem()} worktreeAvailable={false} stack={stack} />}
+                onOpenStackLayer={(layer) => { showTrackerItem(layer.url, directory); }}
                 onOpenChecks={pull && context ? () => setChecksOpen(true) : undefined}
                 onRefresh={context ? refreshFromHost : undefined}
                 threadActions={threadActions}
@@ -182,6 +210,7 @@ const RepositoryTrackerItem: React.FC<TrackerItemViewProps & { kind: GitHubRefer
                     <SourceBoardPullLinks
                         pull={pull}
                         project={{ id: activeProjectId ?? '', path: directory }}
+                        repository={readDirectory}
                         context={context}
                         projectOwnsDirectory={() => !foreign}
                         currentDirectory={panelDirectory}
@@ -201,10 +230,11 @@ const RepositoryTrackerItem: React.FC<TrackerItemViewProps & { kind: GitHubRefer
     );
 };
 
-const LinearTrackerItem: React.FC<{ url: string; identifier: string; onUnavailable: FallBack; onShown: () => void }> = ({ url, identifier, onUnavailable, onShown }) => {
+const LinearTrackerItem: React.FC<{ url: string; identifier: string; visible: boolean; onUnavailable: FallBack; onShown: () => void }> = ({ url, identifier, visible, onUnavailable, onShown }) => {
     const { t } = useI18n();
     const source = useLinearSourceStatus();
-    const { detail, refresh } = useLinearIssueDetail(source === 'ready' ? identifier : null, true);
+    const { detail, refresh, followed } = useLinearIssueDetail(source === 'ready' ? identifier : null, true);
+    useTrackedItems(visible ? followed : NO_FOLLOWED);
     const showTrackerItem = useShowTrackerItem();
     const now = useMinuteTickerNow(true);
 
@@ -240,7 +270,7 @@ const LinearTrackerItem: React.FC<{ url: string; identifier: string; onUnavailab
             includeDiff={false}
             onIncludeDiffChange={() => undefined}
             now={now}
-            footer={<SourceBoardActions item={item} project={null} context={null} onStartWorktree={() => undefined} onChanged={() => void refresh()} />}
+            footer={<SourceBoardActions item={item} project={null} context={null} onStartWorktree={() => undefined} onChanged={() => void refresh()} worktreeAvailable={false} />}
             linearStateControl={<SourceBoardLinearStatus issue={detail.value} onChanged={() => void refresh()} />}
             // A parent or sub-issue opens as a tab of its own.
             onOpenLinearIssue={(issue) => { showTrackerItem(issue.url, null); }}

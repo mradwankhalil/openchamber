@@ -11,6 +11,9 @@
    without resolving the relative `url(fonts/...)` references, leaving the
    KaTeX font files unbundled (openchamber/openchamber#1880). */
 @source "./**/*.{ts,tsx,css}";
+@source "../node_modules/streamdown/dist/**/*.js";
+@source "../node_modules/@streamdown/math/dist/**/*.js";
+@source "../node_modules/@streamdown/cjk/dist/**/*.js";
 
 /* KaTeX theme overrides for light/dark mode */
 .katex {
@@ -72,10 +75,11 @@
    re-laying the row out: the text they cover fades away under them. The
    masked element sits --oc-actions-inset from its nearest @container's start
    edge; the actions reach --oc-actions-reserve in from that container's end
-   edge. */
+   edge. Both are rem at the default density: the buttons and offsets they
+   describe are spacing tokens, so they also scale with --padding-scale. */
 @utility oc-actions-mask {
-  --oc-actions-edge: calc(100cqw - var(--oc-actions-inset, 0px) - var(--oc-actions-reserve, 0px));
-  mask-image: linear-gradient(var(--oc-to-inline-end), #000 calc(var(--oc-actions-edge) - 14px), transparent calc(var(--oc-actions-edge) - 2px));
+  --oc-actions-edge: calc(100cqw - (var(--oc-actions-inset, 0px) + var(--oc-actions-reserve, 0px)) * var(--padding-scale, 1));
+  mask-image: linear-gradient(var(--oc-to-inline-end), #000 calc(var(--oc-actions-edge) - 0.875rem), transparent calc(var(--oc-actions-edge) - 0.125rem));
 
   /* A title whose own direction differs from the interface (dir="auto") starts
      on the side the actions cover, so fading there would hide its first
@@ -83,7 +87,7 @@
   &:where(:root[dir="rtl"] *):dir(ltr),
   &:where(:root:not([dir="rtl"]) *):dir(rtl) {
     mask-image: none;
-    padding-inline-start: var(--oc-actions-reserve, 0px);
+    padding-inline-start: calc(var(--oc-actions-reserve, 0px) * var(--padding-scale, 1));
   }
 }
 
@@ -148,7 +152,7 @@ button,
    off the message root: it also contains code, tables and their controls. */
 .markdown-content,
 .markdown-content :where(p, h1, h2, h3, h4, h5, h6, li, blockquote, td:not([align]), th:not([align]), div.whitespace-pre-wrap),
-.markdown-content details[data-md-details] > summary > span:last-child {
+.markdown-content details > summary {
   unicode-bidi: plaintext;
   text-align: start;
 }
@@ -161,9 +165,9 @@ button,
 /* A technical fragment is one LTR run, even inside an RTL list or quote. */
 .markdown-content :where(
   pre, code, kbd, samp,
-  [data-component="markdown-code"],
-  [data-markdown="table-wrapper"],
-  [data-markdown="mermaid-block"],
+  [data-streamdown="code-block"],
+  [data-streamdown="table-wrapper"],
+  [data-streamdown="mermaid-block"],
   .katex,
   [data-openchamber-file-link="true"],
   [data-openchamber-agent-mention="true"],
@@ -363,7 +367,9 @@ button,
   color: color-mix(in srgb, var(--syntax-comment) 85%, var(--syntax-foreground) 15%);
 }
 
-:root.vscode-runtime [data-chat-input="true"] .cm-placeholder {
+/* The composer draws its placeholder as a pseudo-element of the empty line
+   (editor/theme.ts); in VS Code it takes the editor's placeholder colour. */
+:root.vscode-runtime [data-chat-input="true"] .cm-content.cm-composer-empty .cm-line::before {
   color: var(--vscode-input-placeholderForeground, var(--muted-foreground));
 }
 
@@ -914,11 +920,29 @@ html:not(.dark) .chat-scroll {
   }
 }
 
-/* Pierre diff viewer styling */
-.pierre-diff-wrapper {
+/* Every Pierre instance (Changes view, tool cards, the tool dialog, the Files
+   view) renders into the shadow root of a `diffs-container`. Setting the font
+   and line height on that host resolves `--text-code` where the instance sits, so local
+   overrides such as the Files view's editor font size and the mobile code
+   size apply too. */
+diffs-container {
   --diffs-font-family: var(--font-mono, ui-monospace, monospace);
   --diffs-font-size: var(--text-code);
+  /* 24px at the default 12px code size. Tool cards and the tool dialog wrap
+     lines, so Pierre measures their rows and the height can scale. */
+  --diffs-line-height: calc(var(--text-code) * 2);
+}
+
+/* The Changes view and the walkthrough virtualize with fixed 24px rows
+   (`VIRTUAL_METRICS.lineHeight` in PierreDiffViewer.tsx). Without wrapping,
+   Pierre does not measure rows, so a taller row would make long diffs jump
+   while scrolling. */
+.pierre-diff-wrapper diffs-container {
   --diffs-line-height: 24px;
+}
+
+/* Pierre diff viewer styling */
+.pierre-diff-wrapper {
   --diffs-tab-size: 2;
   --diffs-header-font-family: var(--font-sans, system-ui, sans-serif);
   --diffs-min-number-column-width: 4ch;
@@ -1119,6 +1143,20 @@ html:not(.dark) .chat-scroll {
   }
 }
 
+/* Git panel header: gives up room in steps while its row does not fit, as
+   measured by useToolbarFit in GitHeader. The repository picker shrinks
+   first; the branch picker keeps its width until that is not enough. Then
+   the sync button drops its word, keeping its icon, counts and tooltip; the
+   counts go last. */
+[data-git-header-branch-shrinks] .branch-selector__trigger {
+  flex-shrink: 1;
+}
+
+[data-git-header-compact] .sync-actions__label,
+[data-git-header-tight] .sync-actions__text {
+  display: none;
+}
+
 /* Diff toolbar: labels collapse to icons only when the row does not fit, as
    measured by useDiffToolbarFit. The walkthrough label goes first. Review is
    the primary action in this row, so it keeps its label longest; the
@@ -1137,6 +1175,52 @@ html:not(.dark) .chat-scroll {
 [data-diff-toolbar-compact] .diff-toolbar__review-button,
 [data-diff-toolbar-compact] .diff-toolbar__expand-button {
   padding-inline: 0.375rem;
+}
+
+/* When even the icons do not fit, the view options move from the end into
+   "More actions": side-by-side, whitespace, line wrap, then the tree view;
+   last, if the row still does not fit, the walkthrough. DiffView lists in the
+   menu the ones whose step is set. */
+.diff-toolbar__more,
+[data-diff-toolbar-more-layout] .diff-toolbar__layout-toggle,
+[data-diff-toolbar-more-whitespace] .diff-toolbar__whitespace-toggle,
+[data-diff-toolbar-more-wrap] .diff-toolbar__wrap-toggle,
+[data-diff-toolbar-more-tree] .diff-toolbar__tree-toggle,
+[data-diff-toolbar-more-walkthrough] .diff-toolbar__walkthrough-button {
+  display: none;
+}
+
+[data-diff-toolbar-more-layout] .diff-toolbar__more {
+  display: inline-flex;
+}
+
+/* Walkthrough header: gives up room in steps while its row does not fit, as
+   measured by useToolbarFit; each step keeps the ones before it. Labels go
+   first; then the model, the language, the guide and Changes move into "More";
+   then the step arrows and Generate, which "More" and the step list still
+   reach; last the scope keeps only its icon. The model picker's label and
+   chevron are its direct span and last svg. */
+.walkthrough-header__more,
+.walkthrough-header__source-icon {
+  display: none;
+}
+
+[data-walkthrough-header-compact] .walkthrough-header__label,
+[data-walkthrough-header-compact] .walkthrough-header__model > span,
+[data-walkthrough-header-compact] .walkthrough-header__model > svg:last-child,
+[data-walkthrough-header-tight] .walkthrough-header__option,
+[data-walkthrough-header-minimal] .walkthrough-header__step-arrow,
+[data-walkthrough-header-minimal] .walkthrough-header__generate,
+[data-walkthrough-header-narrow] .walkthrough-header__source-label {
+  display: none;
+}
+
+[data-walkthrough-header-tight] .walkthrough-header__more {
+  display: inline-flex;
+}
+
+[data-walkthrough-header-narrow] .walkthrough-header__source-icon {
+  display: inline;
 }
 
 /* Pull request actions: the walkthrough label goes first, since merge controls
@@ -1284,6 +1368,27 @@ html:not(.dark) .chat-scroll {
   line-height: inherit;
 }
 
+/* Lists retain an outside marker and a logical gutter in mixed-direction prose. */
+.markdown-content ul,
+.markdown-content ol {
+  list-style-position: outside;
+  padding-inline-start: 1.5rem;
+}
+
+.markdown-content li {
+  padding-block: 0;
+}
+
+.markdown-content li > p {
+  display: block;
+}
+
+.markdown-content li > ul,
+.markdown-content li > ol {
+  margin-block: 0;
+  padding-inline-start: 1.5rem;
+}
+
 /* Documents rendered with their raw HTML (the Files preview) lay images out
    the way GitHub does: inline beside text and other badges, not one block per
    line as Tailwind preflight makes them. */
@@ -1315,28 +1420,79 @@ html:not(.dark) .chat-scroll {
   margin: var(--markdown-paragraph-spacing) 0;
 }
 
-/* The markdown renderer wraps each block in a display:contents [data-md-block]
-   element, so the message-level [&_.markdown-content>*:first-child]:mt-0 /
-   [&_.markdown-content>*:last-child]:mb-0 nullifiers target the wrapper
-   (where margin is ignored), not the block. Trim the outer blocks directly so
-   messages gain no extra space at the top or bottom. The last block is found
-   by the renderer's [data-md-last] marker, not [data-md-block]:last-child: a
-   structural pseudo-class in that position makes every append to <body> (each
-   tooltip and menu portal) restyle the whole app. */
-.markdown-content > [data-md-block]:first-child > :first-child,
-.markdown-content > :first-child:not([data-md-block]) {
-  margin-top: 0;
+/* The native root and arrival wrappers add no rhythm of their own. Static
+   mode renders blocks directly; streaming mode wraps each official Block. */
+.markdown-content > [data-oc-streamdown],
+.markdown-content [data-oc-streamdown] > [data-oc-markdown-block] {
+  margin-block: 0;
 }
 
-.markdown-content > [data-md-last] > :last-child,
-.markdown-content > :last-child:not([data-md-block]) {
-  margin-bottom: 0;
+.markdown-content [data-oc-streamdown] > :where(:not([data-oc-markdown-block])),
+.markdown-content [data-oc-markdown-block] > * {
+  --oc-block-margin-start: var(--markdown-paragraph-spacing);
+  --oc-block-margin-end: var(--markdown-paragraph-spacing);
+  margin-block-start: var(--markdown-paragraph-spacing);
+  margin-block-end: var(--markdown-paragraph-spacing);
+}
+
+.markdown-content [data-oc-streamdown] > h1,
+.markdown-content [data-oc-streamdown] > h2,
+.markdown-content [data-oc-streamdown] > h3,
+.markdown-content [data-oc-streamdown] > h4,
+.markdown-content [data-oc-streamdown] > h5,
+.markdown-content [data-oc-streamdown] > h6,
+.markdown-content [data-oc-markdown-block] > h1,
+.markdown-content [data-oc-markdown-block] > h2,
+.markdown-content [data-oc-markdown-block] > h3,
+.markdown-content [data-oc-markdown-block] > h4,
+.markdown-content [data-oc-markdown-block] > h5,
+.markdown-content [data-oc-markdown-block] > h6 {
+  --oc-block-margin-start: 1.25rem;
+  --oc-block-margin-end: 0.5rem;
+  margin-block-start: 1.25rem;
+  margin-block-end: 0.5rem;
+}
+
+.markdown-content [data-oc-streamdown] > :first-child:not([data-oc-markdown-block]) {
+  margin-block-start: 0 !important;
+}
+
+.markdown-content [data-oc-streamdown] > :last-child:not([data-oc-markdown-block]) {
+  margin-block-end: 0 !important;
+}
+
+/* Keep wrapper-edge detection separate from content-edge matching. The combined
+   wrapper:last-child > :last-child selector caused broad subtree invalidation
+   on code-token insertions in Chrome session-switch traces. Local variables
+   carry the edge override without requiring Streamdown block metadata or DOM
+   writes. Reset on every wrapper so nested documents cannot inherit an edge.
+   Non-edge blocks retain their paragraph/heading margins through the defaults. */
+.markdown-content [data-oc-markdown-block] {
+  --oc-block-edge-start: initial;
+  --oc-block-edge-end: initial;
+}
+
+.markdown-content [data-oc-streamdown] > [data-oc-markdown-block]:first-child {
+  --oc-block-edge-start: 0px;
+}
+
+.markdown-content [data-oc-streamdown] > [data-oc-markdown-block]:last-child {
+  --oc-block-edge-end: 0px;
+}
+
+.markdown-content [data-oc-markdown-block] > :first-child {
+  margin-block-start: var(--oc-block-edge-start, var(--oc-block-margin-start)) !important;
+}
+
+.markdown-content [data-oc-markdown-block] > :last-child {
+  margin-block-end: var(--oc-block-edge-end, var(--oc-block-margin-end)) !important;
 }
 
 /* Tool cards (code size) and reasoning (meta size, dimmed) are intentionally
    compact — keep their paragraphs tight, matching prior behavior. */
 .markdown-content.markdown-tool p,
 .markdown-content.markdown-reasoning p {
+  --oc-block-margin-end: 0px;
   margin-bottom: 0;
 }
 
@@ -1347,14 +1503,6 @@ html:not(.dark) .chat-scroll {
 
 .form-markdown > .markdown-content.markdown-tool {
   font-size: inherit !important;
-}
-
-.form-markdown > .markdown-content > [data-md-block]:first-child > :first-child {
-  margin-top: 0;
-}
-
-.form-markdown > .markdown-content > [data-md-last] > :last-child {
-  margin-bottom: 0;
 }
 
 /* Reasoning markdown renders at meta size, dimmed. */
@@ -1383,8 +1531,7 @@ html:not(.dark) .chat-scroll {
 .markdown-content.markdown-reasoning b,
 .markdown-content.markdown-reasoning em,
 .markdown-content.markdown-reasoning del,
-.markdown-content.markdown-reasoning [data-markdown="strong"],
-.markdown-content.markdown-reasoning [data-markdown="bold"] {
+.markdown-content.markdown-reasoning [data-streamdown="strong"] {
   color: var(--surface-muted-foreground) !important;
 }
 
@@ -1400,8 +1547,7 @@ html:not(.dark) .chat-scroll {
 
 .markdown-content.markdown-reasoning strong,
 .markdown-content.markdown-reasoning b,
-.markdown-content.markdown-reasoning [data-markdown="strong"],
-.markdown-content.markdown-reasoning [data-markdown="bold"] {
+.markdown-content.markdown-reasoning [data-streamdown="strong"] {
   font-weight: inherit !important;
   color: inherit !important;
   font-style: inherit !important;
@@ -1446,18 +1592,15 @@ html:not(.dark) .chat-scroll {
 
 /* GitHub writes `<summary><h3>Findings</h3></summary>`: like GitHub, the
    heading keeps its size but sits on the chevron's line without margins. */
-.markdown-content details[data-md-details] > summary > span:last-child > :is(h1, h2, h3, h4, h5, h6, p) {
+.markdown-content details > summary h1,
+.markdown-content details > summary h2,
+.markdown-content details > summary h3,
+.markdown-content details > summary h4,
+.markdown-content details > summary h5,
+.markdown-content details > summary h6,
+.markdown-content details > summary p {
   display: inline;
   margin: 0;
-}
-
-.markdown-content details[data-md-details] > summary:has(> span:last-child > :is(h1, h2, h3, h4, h5, h6)) {
-  align-items: center;
-}
-
-.markdown-content details[data-md-details] > summary:has(> span:last-child > :is(h1, h2, h3, h4, h5, h6)) > [data-md-disclosure-icon] {
-  align-self: center;
-  margin-top: 0;
 }
 
 /* Code font */
@@ -1471,7 +1614,7 @@ html:not(.dark) .chat-scroll {
    quiet chip. The colour keeps the theme's value with a touch of transparency,
    and the chip fades into the background further, so neither shouts like the
    original full-strength style. */
-.markdown-content code[data-markdown="inline-code"] {
+.markdown-content code[data-streamdown="inline-code"] {
   background-color: var(--markdown-inline-code-bg, var(--surface-subtle)) !important;
   color: var(--markdown-inline-code, var(--foreground)) !important;
   padding: 0.1rem 0.35rem;
@@ -1481,7 +1624,7 @@ html:not(.dark) .chat-scroll {
 }
 
 @supports (color: color-mix(in lab, red, red)) {
-  .markdown-content code[data-markdown="inline-code"] {
+  .markdown-content code[data-streamdown="inline-code"] {
     background-color: color-mix(in srgb, var(--markdown-inline-code-bg, var(--surface-subtle)) 50%, transparent) !important;
     color: color-mix(in srgb, var(--markdown-inline-code, var(--foreground)) 90%, transparent) !important;
   }
@@ -1522,8 +1665,11 @@ html:not(.dark) .chat-scroll {
 
 /* Markdown blockquote - use theme colors */
 .markdown-content blockquote {
+  border-inline-end: 0;
   border-inline-start: 2px solid var(--markdown-blockquote-border, var(--border));
+  padding-inline-end: 0;
   padding-inline-start: 0.8rem;
+  font-style: normal;
   color: var(--markdown-blockquote, var(--muted-foreground));
 }
 
@@ -1533,7 +1679,8 @@ html:not(.dark) .chat-scroll {
 }
 
 /* Markdown bold/italic/strikethrough - use theme colors */
-.markdown-content strong {
+.markdown-content strong,
+.markdown-content [data-streamdown="strong"] {
   color: var(--markdown-bold, var(--foreground));
 }
 
@@ -1545,8 +1692,7 @@ html:not(.dark) .chat-scroll {
    jumping to the full foreground (mirrors the reasoning-scope rules below). */
 .markdown-content blockquote strong,
 .markdown-content blockquote b,
-.markdown-content blockquote [data-markdown="strong"],
-.markdown-content blockquote [data-markdown="bold"] {
+.markdown-content blockquote [data-streamdown="strong"] {
   color: inherit;
 }
 
@@ -1559,84 +1705,162 @@ html:not(.dark) .chat-scroll {
   color: var(--markdown-strikethrough, var(--muted-foreground));
 }
 
-/* Streamdown code blocks: ensure light/dark Shiki vars work even when Tailwind doesn't scan Streamdown's internal class names. */
-.markdown-content [data-markdown="code-block-body"] {
+/* Native table chrome keeps the existing compact toolbar and framed canvas. */
+.markdown-content [data-streamdown="table-wrapper"] {
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  margin: var(--markdown-paragraph-spacing) 0;
+  padding: 0;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.markdown-content [data-streamdown="table-wrapper"] > div:has(> table) {
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 0.5rem;
+  background: var(--surface-elevated);
+}
+
+.markdown-content [data-streamdown="table"] {
+  width: auto;
+  margin: 0;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.markdown-content [data-streamdown="table-header"] {
+  background: transparent;
+}
+
+.markdown-content [data-streamdown="table-row"] {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.markdown-content tbody > [data-streamdown="table-row"]:last-child {
+  border-bottom: 0;
+}
+
+.markdown-content [data-streamdown="table-cell"],
+.markdown-content [data-streamdown="table-header-cell"] {
+  min-width: 120px;
+  padding: 0.625rem 1rem;
+  border-inline-end: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  vertical-align: middle;
+  font-size: inherit;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: color-mix(in srgb, var(--foreground) 90%, transparent);
+}
+
+.markdown-content [data-streamdown="table-header-cell"] {
+  color: var(--foreground);
+}
+
+.markdown-content td:last-child,
+.markdown-content th:last-child {
+  border-inline-end: 0;
+}
+
+/* A table that is still streaming is not measured: it keeps its natural width
+   (or shrinks to the column when cells wrap) until the reply settles. */
+.markdown-content [data-table-wrap="false"] [data-streamdown="table"][data-oc-table-layout="pending"] {
+  width: max-content;
+}
+
+.markdown-content [data-streamdown="table"][data-oc-table-layout="pending"] code {
+  white-space: nowrap;
+}
+
+.markdown-content [data-streamdown="table"][data-oc-table-layout="natural"] {
+  width: max-content;
+  table-layout: auto;
+}
+
+.markdown-content [data-streamdown="table"][data-oc-table-layout="natural"] td,
+.markdown-content [data-streamdown="table"][data-oc-table-layout="natural"] th {
+  white-space: nowrap;
+}
+
+.markdown-content [data-streamdown="table"][data-oc-table-layout="natural"] code {
+  white-space: nowrap;
+}
+
+/* Exclude headings from the first intrinsic layout when body rows exist.
+   The layout effect commits the measured colgroup before the first paint. */
+.markdown-content [data-streamdown="table"][data-oc-table-layout="natural"]:has(> tbody > tr) > thead {
+  display: none;
+}
+
+.markdown-content [data-streamdown="table"][data-oc-table-layout="fixed"] code {
+  white-space: var(--oc-table-code-wrap, normal);
+  overflow-wrap: anywhere;
+}
+
+/* Both the initial token shell and highlighted body use native token rows. */
+.markdown-content [data-streamdown="code-block-body"] {
   font-size: var(--text-code);
   background-color: transparent;
   color: var(--shiki-light, inherit);
 }
 
-.markdown-content [data-markdown="code-block-body"] span[style*="--sdm-c"] {
-  color: var(--sdm-c) !important;
-}
-
-.markdown-content [data-markdown="code-block-body"] span[style*="--sdm-tbg"] {
-  background-color: var(--sdm-tbg) !important;
-}
-
-.markdown-content [data-markdown="code-block-body"] span[style*="--shiki-light"] {
-  color: var(--shiki-light) !important;
-}
-
-.markdown-content [data-markdown="code-block-body"] span[style*="--shiki-light-bg"] {
-  background-color: var(--shiki-light-bg) !important;
-}
-
-.dark .markdown-content [data-markdown="code-block-body"] {
+.dark .markdown-content [data-streamdown="code-block-body"] {
   background-color: transparent;
   color: var(--shiki-dark, var(--shiki-light, inherit));
 }
 
-.dark .markdown-content [data-markdown="code-block-body"] span[style*="--shiki-dark"] {
-  color: var(--shiki-dark) !important;
-}
-
-.dark .markdown-content [data-markdown="code-block-body"] span[style*="--shiki-dark-bg"] {
-  background-color: var(--shiki-dark-bg) !important;
-}
-
 /* Reduce code block header height */
-[data-markdown="code-block-header"] {
+[data-streamdown="code-block-header"] {
   --foreground: var(--surface-foreground);
   color: var(--foreground);
   margin: 0;
   padding: 0.375rem 0.75rem;
+  height: auto;
+  min-height: 2rem;
+  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding-right: 5.25rem;
+  padding-inline-end: 5.25rem;
   border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 0;
-  /* A tone step above the code body, not a ruled strip. */
-  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+  background: transparent;
+}
+
+[data-streamdown="code-block-header"] > span {
+  margin: 0;
 }
 
 /* Disable Streamdown's code block virtualization and keep block chrome fixed */
-.markdown-content [data-markdown="code-block"] {
+.markdown-content [data-streamdown="code-block"] {
   content-visibility: visible !important;
   contain-intrinsic-size: none !important;
   position: relative;
   display: flex;
   flex-direction: column;
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  margin: var(--markdown-paragraph-spacing) 0;
   padding: 0 !important;
   box-sizing: border-box;
   inline-size: 100%;
   max-inline-size: 100%;
   min-inline-size: 0;
   overflow: hidden;
-  --foreground: var(--syntax-foreground);
+  --foreground: var(--surface-elevated-foreground);
   color: var(--foreground);
-  /* Flat, separated from the page by tone. The small mix keeps the block
-     visible in themes whose code background equals the page. */
-  background: color-mix(in srgb, var(--syntax-foreground) 3%, var(--syntax-background));
-  border-radius: 0.75rem;
+  background: var(--surface-elevated);
+  border-radius: 1rem;
 }
 
-.markdown-content [data-markdown="code-block"] > div:not([data-markdown]) {
+.markdown-content [data-streamdown="code-block"] > div:has(> [data-streamdown="code-block-actions"]) {
   position: absolute;
   top: 0;
-  right: 0;
+  inset-inline-end: 0;
   margin-top: 0;
   height: 2rem;
   z-index: 6;
@@ -1644,7 +1868,7 @@ html:not(.dark) .chat-scroll {
 }
 
 /* Streamdown code block body: scroll text content within the card body */
-.markdown-content [data-markdown="code-block-body"] {
+.markdown-content [data-streamdown="code-block-body"] {
   display: block;
   inline-size: 100%;
   min-width: 0;
@@ -1660,54 +1884,38 @@ html:not(.dark) .chat-scroll {
   border-radius: 0;
 }
 
-.markdown-content [data-markdown="code-block-body"] pre {
+.markdown-content [data-streamdown="code-block-body"] pre {
   display: block;
   width: 100%;
   min-width: 100%;
   max-width: 100%;
   margin: 0 !important;
-  padding: 0.75rem !important;
+  padding: 0.625rem 0.75rem !important;
   border: 0 !important;
   border-radius: 0 !important;
   box-shadow: none !important;
   background: transparent !important;
 }
 
-.markdown-content [data-markdown="code-block-body"] > * {
+.markdown-content [data-streamdown="code-block-body"] > pre {
   border: 0 !important;
   border-radius: 0 !important;
   box-shadow: none !important;
   background: transparent !important;
 }
 
-.markdown-content [data-markdown="code-block-body"] code {
+.markdown-content [data-streamdown="code-block-body"] code {
   white-space: pre;
   overflow-wrap: normal;
   word-break: normal;
   background: transparent !important;
 }
 
-/* The marked renderer uses its own code-body wrapper instead of Streamdown's.
-   The code element keeps its background image: the gutter rule below. */
-.markdown-content [data-md-code-body],
-.markdown-content [data-md-code-body] pre {
-  background: transparent !important;
-}
-
-.markdown-content [data-md-code-body] code {
-  background-color: transparent !important;
-}
-
-/* Line numbers are a counter over Shiki's `.line` spans, so a code line
-   carries no element of its own for its number. The gutter is a 2rem column
-   with a 0.75rem gap before the code; its rule is a background line on the
-   code element, so it runs unbroken past wrapped rows. A wrapped line keeps
-   its number on its first row. The number is generated content: selection,
-   copy and the accessibility tree never see it. */
-.markdown-content [data-md-code-lines] {
+/* Native counters keep numbers out of source text. Only numbered blocks
+   reserve a gutter; noLineNumbers fences keep their full content width. */
+.markdown-content [data-streamdown="code-block-body"] code:has(> .before\:content-\[counter\(line\)\]) {
   display: block;
-  padding-left: 2.75rem;
-  counter-reset: md-code-line;
+  padding-inline-start: 2.75rem;
   background-image: linear-gradient(
     color-mix(in srgb, var(--border) 50%, transparent),
     color-mix(in srgb, var(--border) 50%, transparent)
@@ -1717,28 +1925,36 @@ html:not(.dark) .chat-scroll {
   background-size: 1px 100%;
 }
 
-.markdown-content [data-md-code-lines] > .line {
-  counter-increment: md-code-line;
-}
-
-/* The empty line Shiki draws after a trailing line break is not a line. */
-.markdown-content [data-md-code-lines] > .line:last-child:empty:not(:first-child) {
-  display: none;
-}
-
-.markdown-content [data-md-code-lines] > .line::before {
-  content: counter(md-code-line);
-  content: counter(md-code-line) / '';
+.markdown-content [data-streamdown="code-block-body"] code > .before\:content-\[counter\(line\)\]::before {
+  content: counter(line) / '';
   float: left;
   width: 2rem;
-  margin-left: -2.75rem;
+  margin-inline-start: -2.75rem;
+  margin-inline-end: 0;
   /* The 1px stands for the rule, which sits inside the column. */
-  padding-right: calc(0.75rem + 1px);
+  padding-inline-end: calc(0.75rem + 1px);
+  font-size: inherit;
   color: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
   font-variant-numeric: tabular-nums;
   text-align: right;
   user-select: none;
   white-space: nowrap;
+}
+
+.markdown-content[data-code-wrap="true"] [data-streamdown="code-block-body"] {
+  overflow-x: hidden;
+}
+
+.markdown-content[data-code-wrap="true"] [data-streamdown="code-block-body"] pre,
+.markdown-content[data-code-wrap="true"] [data-streamdown="code-block-body"] code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.markdown-content[data-code-wrap="false"] [data-streamdown="code-block-body"] pre,
+.markdown-content[data-code-wrap="false"] [data-streamdown="code-block-body"] code {
+  white-space: pre;
+  overflow-wrap: normal;
 }
 
 /* First uncached open of a session shows a hydration skeleton; the real
@@ -1836,20 +2052,21 @@ html:not(.dark) .chat-scroll {
   }
 }
 
-[data-message-image-export="true"] [data-md-code-body] {
+[data-message-image-export="true"] [data-streamdown="code-block-body"] {
   overflow: visible !important;
 }
 
-[data-message-image-export="true"] [data-md-code-lines] {
+[data-message-image-export="true"] [data-streamdown="code-block-body"] pre,
+[data-message-image-export="true"] [data-streamdown="code-block-body"] code {
   white-space: pre-wrap !important;
   overflow-wrap: anywhere !important;
 }
 
-[data-message-image-export="true"] [data-md-code-actions] {
+[data-message-image-export="true"] [data-streamdown="code-block-actions"] {
   display: none !important;
 }
 
-.markdown-content [data-markdown="code-block-actions"] {
+.markdown-content [data-streamdown="code-block-actions"] {
   pointer-events: auto;
   transition: opacity 0.15s ease;
   border: 0 !important;
@@ -1858,7 +2075,7 @@ html:not(.dark) .chat-scroll {
   gap: 0.125rem;
 }
 
-.markdown-content [data-markdown="code-block-actions"] button {
+.markdown-content [data-streamdown="code-block-actions"] button {
   border: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
@@ -1867,26 +2084,13 @@ html:not(.dark) .chat-scroll {
   min-height: 1.5rem;
 }
 
-.markdown-content [data-markdown="code-block-actions"] button svg {
+.markdown-content [data-streamdown="code-block-actions"] button svg {
   width: 0.875rem;
   height: 0.875rem;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .markdown-content [data-markdown="code-block"] [data-markdown="code-block-actions"] {
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .markdown-content [data-markdown="code-block"]:hover [data-markdown="code-block-actions"],
-  .markdown-content [data-markdown="code-block"]:focus-within [data-markdown="code-block-actions"] {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
-
 /* Mermaid block: position context for controls wrapper. */
-[data-markdown="mermaid-block"] {
+[data-streamdown="mermaid-block"] {
   position: relative;
   border-radius: 0.75rem;
   border: 1px solid var(--interactive-border);
@@ -1894,35 +2098,35 @@ html:not(.dark) .chat-scroll {
   padding: 0.5rem;
 }
 
-[data-markdown="mermaid-block"] [data-markdown="mermaid-scroll"] {
+[data-streamdown="mermaid-block"] [data-streamdown="mermaid-scroll"] {
   overflow: auto;
   min-width: 0;
 }
 
 /* Like code-block actions: hidden until hover only where a pointer can
    hover; on touch screens the zoom controls stay visible. */
-[data-markdown="mermaid-block"] [data-markdown="mermaid-toolbar"] {
+[data-streamdown="mermaid-block"] [data-streamdown="mermaid-toolbar"] {
   transition: opacity 0.15s ease;
 }
 
 @media (hover: hover) and (pointer: fine) {
-  [data-markdown="mermaid-block"] [data-markdown="mermaid-toolbar"] {
+  [data-streamdown="mermaid-block"] [data-streamdown="mermaid-toolbar"] {
     opacity: 0;
     pointer-events: none;
   }
 
-  [data-markdown="mermaid-block"]:hover [data-markdown="mermaid-toolbar"],
-  [data-markdown="mermaid-block"]:focus-within [data-markdown="mermaid-toolbar"] {
+  [data-streamdown="mermaid-block"]:hover [data-streamdown="mermaid-toolbar"],
+  [data-streamdown="mermaid-block"]:focus-within [data-streamdown="mermaid-toolbar"] {
     opacity: 1;
     pointer-events: auto;
   }
 }
 
-[data-markdown="mermaid-block"][data-mermaid-render="svg"] [data-markdown="mermaid-scroll"] {
+[data-streamdown="mermaid-block"][data-mermaid-render="svg"] [data-streamdown="mermaid-scroll"] {
   overflow: hidden;
 }
 
-[data-markdown="mermaid-block"] [data-markdown="mermaid-viewport"] {
+[data-streamdown="mermaid-block"] [data-streamdown="mermaid-viewport"] {
   width: 100%;
   min-width: 0;
   height: min(24rem, 70vh);
@@ -1933,17 +2137,17 @@ html:not(.dark) .chat-scroll {
   background: var(--surface-elevated);
 }
 
-[data-markdown="mermaid-block"] [data-markdown="mermaid"] {
+[data-streamdown="mermaid-block"] [data-streamdown="mermaid"] {
   width: 100%;
   height: 100%;
   display: block;
 }
 
-[data-markdown="mermaid-block"][data-mermaid-panning="true"] [data-markdown="mermaid-viewport"] {
+[data-streamdown="mermaid-block"][data-mermaid-panning="true"] [data-streamdown="mermaid-viewport"] {
   cursor: grabbing;
 }
 
-[data-markdown="mermaid-block"] [data-markdown="mermaid-ascii"] {
+[data-streamdown="mermaid-block"] [data-streamdown="mermaid-ascii"] {
   margin: 0;
   white-space: pre;
   width: max-content;
@@ -1953,13 +2157,19 @@ html:not(.dark) .chat-scroll {
   background: transparent;
 }
 
-[data-markdown="mermaid-block"] [data-markdown="mermaid"] svg {
+[data-streamdown="mermaid-block"] [data-streamdown="mermaid"] svg {
   width: 100% !important;
   height: 100% !important;
   min-width: 0;
   max-width: none !important;
   display: block;
   background: var(--surface-elevated);
+}
+
+/* Reserve the viewport while the initial batched fit runs. Visibility keeps
+   SVG bounds measurable, and offline exports do not opt into this gate. */
+[data-oc-mermaid-viewer] > svg:not([data-oc-mermaid-fitted]) {
+  visibility: hidden;
 }
 
 /* Fullscreen Mermaid popup: scale diagrams to fill available viewport panel area. */
@@ -1973,7 +2183,14 @@ html:not(.dark) .chat-scroll {
   width: 100%;
 }
 
-.markdown-mermaid-fullscreen [data-markdown="mermaid-block"] {
+/* Streamdown adds a root between the fullscreen container and the diagram.
+   Carry the definite height through it so percentage viewport heights resolve. */
+.markdown-mermaid-fullscreen [data-oc-streamdown] {
+  height: 100%;
+  min-height: 0;
+}
+
+.markdown-mermaid-fullscreen [data-streamdown="mermaid-block"] {
   width: 100%;
   height: 100%;
   min-height: 100%;
@@ -1983,17 +2200,17 @@ html:not(.dark) .chat-scroll {
   background: var(--surface-elevated);
 }
 
-.markdown-mermaid-fullscreen [data-markdown="mermaid-block"] [data-markdown="mermaid-scroll"] {
+.markdown-mermaid-fullscreen [data-streamdown="mermaid-block"] [data-streamdown="mermaid-scroll"] {
   width: 100%;
   height: 100%;
   overflow: auto;
 }
 
-.markdown-mermaid-fullscreen [data-markdown="mermaid-block"][data-mermaid-render="svg"] [data-markdown="mermaid-scroll"] {
+.markdown-mermaid-fullscreen [data-streamdown="mermaid-block"][data-mermaid-render="svg"] [data-streamdown="mermaid-scroll"] {
   overflow: hidden;
 }
 
-.markdown-mermaid-fullscreen [data-markdown="mermaid-block"] [data-markdown="mermaid-viewport"] {
+.markdown-mermaid-fullscreen [data-streamdown="mermaid-block"] [data-streamdown="mermaid-viewport"] {
   width: 100%;
   height: 100%;
   min-width: 100%;
@@ -2001,13 +2218,13 @@ html:not(.dark) .chat-scroll {
   overflow: hidden;
 }
 
-.markdown-mermaid-fullscreen [data-markdown="mermaid-block"] [data-markdown="mermaid"] {
+.markdown-mermaid-fullscreen [data-streamdown="mermaid-block"] [data-streamdown="mermaid"] {
   width: 100%;
   height: 100%;
   display: block;
 }
 
-.markdown-mermaid-fullscreen [data-markdown="mermaid-block"] [data-markdown="mermaid-ascii"] {
+.markdown-mermaid-fullscreen [data-streamdown="mermaid-block"] [data-streamdown="mermaid-ascii"] {
   margin: 0;
   white-space: pre;
   width: max-content;
@@ -2018,7 +2235,7 @@ html:not(.dark) .chat-scroll {
   background: transparent;
 }
 
-.markdown-mermaid-fullscreen [data-markdown="mermaid-block"] [data-markdown="mermaid"] svg {
+.markdown-mermaid-fullscreen [data-streamdown="mermaid-block"] [data-streamdown="mermaid"] svg {
   width: 100% !important;
   height: 100% !important;
   max-width: none !important;

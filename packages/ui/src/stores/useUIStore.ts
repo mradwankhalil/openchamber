@@ -17,8 +17,10 @@ import { useFilesViewTabsStore } from './useFilesViewTabsStore';
 import { rebaseMovedPath } from '@/lib/filePathMoves';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { noteBrowserTabOpenedWithAddress, requestBrowserTabLoad } from '@/lib/browser/devServerWait';
+import { clampLiveBrowserTabs, LIVE_BROWSER_TABS_DEFAULT } from '@/lib/browser/liveTabs';
 import { isContextPanelMode, type ContextPanelMode } from '@/lib/surfaces/modes';
 import { CONTEXT_SURFACE_WIDTHS } from '@/lib/surfaces/registry';
+import { orderMobileWorkspaceTabs, shownMobileWorkspaceTabs, type MobileWorkspaceTab } from '@/lib/mobileWorkspaceTabs';
 import {
   carrySurfaceToZone,
   getZoneView,
@@ -858,6 +860,10 @@ interface UIStore {
   /** Surface ids the user hid from the context rail; stored as the hidden set
       so surfaces added later appear for everyone. */
   contextRailHiddenSurfaces: string[];
+  /** Order of the phone's workspace drawer tabs (lib/mobileWorkspaceTabs.ts). */
+  mobileWorkspaceTabOrder: string[];
+  /** Workspace drawer tabs the user hid; stored as the hidden set so tabs added later appear for everyone. */
+  mobileWorkspaceHiddenTabs: string[];
   /** Surfaces the user moved off the right zone, per device (lib/workspace/zones.ts). */
   contextSurfaceZones: ContextZonePlacement;
   contextEditorTreeVisible: boolean;
@@ -929,6 +935,7 @@ interface UIStore {
   isUsageStatsPageOpen: boolean;
   /** The issues and pull requests board. */
   isSourceBoardOpen: boolean;
+  isOverviewOpen: boolean;
   openGuestPageId: string | null;
   worktreesPageProjectId: string | null;
   /** The project whose isolated spaces fill the main area, opened from its menu in the sidebar. */
@@ -999,6 +1006,8 @@ interface UIStore {
   layoutAnimations: boolean;
   /** Plain clicks on links in chat open in the built-in browser panel (desktop only). */
   openLinksInBrowserPanel: boolean;
+  /** How many of the user's browser tabs keep their page loaded, across projects (desktop only). */
+  liveBrowserTabLimit: number;
   /** Plain clicks on issue, PR and Linear links in chat open them on the issues and PRs board. */
   openTrackerLinksOnBoard: boolean;
   autoDeleteAfterDays: number;
@@ -1085,6 +1094,7 @@ interface UIStore {
   persistChatDraft: boolean;
   showOpenCodeUpdateNotifications: boolean;
   agentControlToolEnabled: boolean;
+  agentScheduleToolEnabled: boolean;
   agentWebToolEnabled: boolean;
   /** Full-text message search (server index). Opt-in: off keeps every part of it idle. */
   messageSearchEnabled: boolean;
@@ -1112,6 +1122,8 @@ interface UIStore {
    * for the same reason as the memory flag.
    */
   routingFeatureAvailable: boolean;
+  /** Whether the overview page exists at all; the server says, from `OPENCHAMBER_OVERVIEW_ENABLED`. */
+  overviewFeatureAvailable: boolean;
   /**
    * When the user last looked at each memory scope, keyed by scope. Drives the
    * new/changed badges; there is no stored review state.
@@ -1128,6 +1140,7 @@ interface UIStore {
   largeTextPasteBehavior: LargeTextPasteBehavior;
   enterToSend: boolean;
   enterToSendConfigured: boolean;
+  mobileReturnKeySends: boolean;
   wideChatLayoutEnabled: boolean;
   codeBlockLineWrap: boolean;
   tableCellWrap: boolean;
@@ -1141,9 +1154,11 @@ interface UIStore {
   mermaidRenderingMode: MermaidRenderingMode;
   userMessageRenderingMode: UserMessageRenderingMode;
   collapsibleUserMessages: boolean;
+  stickyUserHeader: boolean;
   promptNavigatorEnabled: boolean;
   showSplitAssistantMessageActions: boolean;
   allowPromptingSubagentSessions: boolean;
+  savePastedImagesAsFiles: boolean;
   isExpandedInput: boolean;
   reportUsage: boolean;
   shortcutOverrides: Record<string, ShortcutCombo>;
@@ -1181,8 +1196,12 @@ interface UIStore {
   /** A new background browser tab for an agent at `url`; returns its tab id, or null where there is no browser. */
   openAgentBrowserTab: (directory: string, url: string, ownerSessionId: string | null) => string | null;
   setContextPanelTabTargetPath: (directory: string, tabID: string, targetPath: string) => void;
-  /** Points file tabs and the editor's open files at or under `fromPath` at `toPath` after a move or rename. */
-  moveContextFilePaths: (directory: string, fromPath: string, toPath: string) => void;
+  /**
+   * Points file tabs and the editor's open files at or under `fromPath` at `toPath` after a move or
+   * rename. `filesRoot` is the root the editor keeps them under when it is not `directory`: a draft
+   * waiting for a space shows the space's files in its own panel.
+   */
+  moveContextFilePaths: (directory: string, fromPath: string, toPath: string, filesRoot?: string) => void;
   setActiveContextPanelTab: (directory: string, tabID: string) => void;
   reorderContextPanelTabs: (directory: string, activeTabID: string, overTabID: string) => void;
   closeContextPanelTab: (directory: string, tabID: string) => void;
@@ -1213,6 +1232,8 @@ interface UIStore {
   setWorkStatusSectionOrder: (sectionIds: readonly string[]) => void;
   setContextRailSurfaceVisible: (surfaceId: string, visible: boolean) => void;
   setContextRailHiddenSurfaces: (surfaceIds: string[]) => void;
+  setMobileWorkspaceTabOrder: (order: readonly string[]) => void;
+  setMobileWorkspaceTabVisible: (tab: MobileWorkspaceTab, visible: boolean) => void;
   setSessionSwitcherOpen: (open: boolean) => void;
   setSessionDropdownOpen: (open: boolean) => void;
   setPendingDiffFile: (filePath: string | null, staged?: boolean, scope?: PendingDiffScope | null) => void;
@@ -1236,6 +1257,7 @@ interface UIStore {
   setIntegrationsCatalogOpen: (open: boolean) => void;
   setUsageStatsPageOpen: (open: boolean) => void;
   setSourceBoardOpen: (open: boolean) => void;
+  setOverviewOpen: (open: boolean) => void;
   setOpenGuestPage: (id: string | null) => void;
   setWorktreesPageProjectId: (projectId: string | null) => void;
   setSpacesPageProjectId: (projectId: string | null) => void;
@@ -1277,6 +1299,7 @@ interface UIStore {
   setConfirmFileTreeMove: (value: boolean) => void;
   setLayoutAnimations: (value: boolean) => void;
   setOpenLinksInBrowserPanel: (value: boolean) => void;
+  setLiveBrowserTabLimit: (value: number) => void;
   setOpenTrackerLinksOnBoard: (value: boolean) => void;
   setFileTreeSide: (side: 'left' | 'right') => void;
   setAutoDeleteAfterDays: (days: number) => void;
@@ -1358,6 +1381,7 @@ interface UIStore {
   setPersistChatDraft: (value: boolean) => void;
   setShowOpenCodeUpdateNotifications: (value: boolean) => void;
   setAgentControlToolEnabled: (value: boolean) => void;
+  setAgentScheduleToolEnabled: (value: boolean) => void;
   setAgentWebToolEnabled: (value: boolean) => void;
   setMessageSearchEnabled: (value: boolean) => void;
   setMessageSearchReasoningEnabled: (value: boolean) => void;
@@ -1371,6 +1395,7 @@ interface UIStore {
   setPermissionDefaultMode: (value: PermissionMode) => void;
   setAgentMemoryFeatureAvailable: (value: boolean) => void;
   setRoutingFeatureAvailable: (value: boolean) => void;
+  setOverviewFeatureAvailable: (value: boolean) => void;
   markAgentMemoryViewed: (key: string, viewedAt: number) => void;
   setProjectContextTab: (value: string) => void;
   openProjectKnowledgePlan: (directory: string, projectContextId: string, planId: string) => void;
@@ -1378,6 +1403,7 @@ interface UIStore {
   setInputSpellcheckEnabled: (value: boolean) => void;
   setLargeTextPasteBehavior: (value: LargeTextPasteBehavior) => void;
   setEnterToSend: (value: boolean) => void;
+  setMobileReturnKeySends: (value: boolean) => void;
   setEnterToSendConfigured: (value: boolean) => void;
   setWideChatLayoutEnabled: (value: boolean) => void;
   setCodeBlockLineWrap: (value: boolean) => void;
@@ -1392,9 +1418,11 @@ interface UIStore {
   setMermaidRenderingMode: (value: MermaidRenderingMode) => void;
   setUserMessageRenderingMode: (value: UserMessageRenderingMode) => void;
   setCollapsibleUserMessages: (value: boolean) => void;
+  setStickyUserHeader: (value: boolean) => void;
   setPromptNavigatorEnabled: (value: boolean) => void;
   setShowSplitAssistantMessageActions: (value: boolean) => void;
   setAllowPromptingSubagentSessions: (value: boolean) => void;
+  setSavePastedImagesAsFiles: (value: boolean) => void;
   viewPagerPage: 'left' | 'center' | 'right';
   setViewPagerPage: (page: 'left' | 'center' | 'right') => void;
   toggleExpandedInput: () => void;
@@ -1437,6 +1465,8 @@ export const useUIStore = create<UIStore>()(
         contextPanelByDirectory: {},
         contextRailOrder: [],
         contextRailHiddenSurfaces: [],
+        mobileWorkspaceTabOrder: [],
+        mobileWorkspaceHiddenTabs: [],
         contextSurfaceZones: {},
         contextEditorTreeVisible: true,
         fileTreeSide: 'right',
@@ -1474,6 +1504,7 @@ export const useUIStore = create<UIStore>()(
         archivePageOpenCount: 0,
         isUsageStatsPageOpen: false,
         isSourceBoardOpen: false,
+        isOverviewOpen: false,
         openGuestPageId: null,
         worktreesPageProjectId: null,
         spacesPageProjectId: null,
@@ -1512,6 +1543,7 @@ export const useUIStore = create<UIStore>()(
         confirmFileTreeMove: true,
         layoutAnimations: true,
         openLinksInBrowserPanel: false,
+        liveBrowserTabLimit: LIVE_BROWSER_TABS_DEFAULT,
         openTrackerLinksOnBoard: true,
         autoDeleteAfterDays: 30,
         sessionRetentionAction: 'archive',
@@ -1583,6 +1615,7 @@ export const useUIStore = create<UIStore>()(
         persistChatDraft: true,
         showOpenCodeUpdateNotifications: true,
         agentControlToolEnabled: true,
+        agentScheduleToolEnabled: true,
         agentWebToolEnabled: true,
         messageSearchEnabled: false,
         messageSearchReasoningEnabled: false,
@@ -1596,6 +1629,7 @@ export const useUIStore = create<UIStore>()(
         permissionDefaultMode: 'ask',
         agentMemoryFeatureAvailable: false,
         routingFeatureAvailable: false,
+        overviewFeatureAvailable: false,
         agentMemoryViewedAt: {},
         projectContextTab: 'notes',
         projectKnowledgePlanRequest: null,
@@ -1603,6 +1637,7 @@ export const useUIStore = create<UIStore>()(
         largeTextPasteBehavior: DEFAULT_LARGE_TEXT_PASTE_BEHAVIOR,
         enterToSend: false,
         enterToSendConfigured: false,
+        mobileReturnKeySends: false,
         wideChatLayoutEnabled: false,
         codeBlockLineWrap: true,
         tableCellWrap: true,
@@ -1616,9 +1651,11 @@ export const useUIStore = create<UIStore>()(
         mermaidRenderingMode: 'svg',
         userMessageRenderingMode: 'markdown',
         collapsibleUserMessages: true,
+        stickyUserHeader: false,
         promptNavigatorEnabled: true,
         showSplitAssistantMessageActions: false,
         allowPromptingSubagentSessions: false,
+        savePastedImagesAsFiles: false,
         draftStartersVisible: true,
         isExpandedInput: false,
         reportUsage: true,
@@ -1944,7 +1981,7 @@ export const useUIStore = create<UIStore>()(
           });
         },
 
-        moveContextFilePaths: (directory, fromPath, toPath) => {
+        moveContextFilePaths: (directory, fromPath, toPath, filesRoot = directory) => {
           const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
           const normalizedFrom = normalizeContextTargetPath(fromPath);
           const normalizedTo = normalizeContextTargetPath(toPath);
@@ -1961,7 +1998,7 @@ export const useUIStore = create<UIStore>()(
               },
             };
           });
-          useFilesViewTabsStore.getState().movePaths(normalizedDirectory, normalizedFrom, normalizedTo);
+          useFilesViewTabsStore.getState().movePaths(normalizeDirectoryPath(filesRoot.trim()), normalizedFrom, normalizedTo);
         },
 
         setActiveContextPanelTab: (directory, tabID) => {
@@ -2327,6 +2364,24 @@ export const useUIStore = create<UIStore>()(
           set({ contextRailHiddenSurfaces: [...new Set(surfaceIds)] });
         },
 
+        setMobileWorkspaceTabOrder: (order) => {
+          set({ mobileWorkspaceTabOrder: orderMobileWorkspaceTabs(order) });
+        },
+
+        setMobileWorkspaceTabVisible: (tab, visible) => {
+          set((state) => {
+            const hidden = state.mobileWorkspaceHiddenTabs;
+            if (visible) {
+              return hidden.includes(tab) ? { mobileWorkspaceHiddenTabs: hidden.filter((entry) => entry !== tab) } : state;
+            }
+            if (hidden.includes(tab)) return state;
+            // The last tab the user keeps stays: the drawer would have nothing to show.
+            const shown = shownMobileWorkspaceTabs(state.mobileWorkspaceTabOrder, hidden);
+            if (shown.length <= 1) return state;
+            return { mobileWorkspaceHiddenTabs: [...hidden, tab] };
+          });
+        },
+
 
         setSessionSwitcherOpen: (open) => {
           if (get().isSessionSwitcherOpen === open) {
@@ -2412,54 +2467,62 @@ export const useUIStore = create<UIStore>()(
 
         setScheduledTasksDialogOpen: (open) => {
           set(open
-            ? { isScheduledTasksDialogOpen: true, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null, openGuestPageId: null }
+            ? { isScheduledTasksDialogOpen: true, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, isOverviewOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null, openGuestPageId: null }
             : { isScheduledTasksDialogOpen: false });
         },
 
         setArchivePageOpen: (open, search = '') => {
           set(open
-            ? { isArchivePageOpen: true, archivePageSearch: search, archivePageOpenCount: get().archivePageOpenCount + 1, isUsageStatsPageOpen: false, isIntegrationsCatalogOpen: false, isSourceBoardOpen: false, isScheduledTasksDialogOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null, openGuestPageId: null }
+            ? { isArchivePageOpen: true, archivePageSearch: search, archivePageOpenCount: get().archivePageOpenCount + 1, isUsageStatsPageOpen: false, isIntegrationsCatalogOpen: false, isSourceBoardOpen: false, isOverviewOpen: false, isScheduledTasksDialogOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null, openGuestPageId: null }
             : { isArchivePageOpen: false });
         },
 
         setIntegrationsCatalogOpen: (open) => {
           set(open
-            ? { isIntegrationsCatalogOpen: true, isArchivePageOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, isScheduledTasksDialogOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null, openGuestPageId: null }
+            ? { isIntegrationsCatalogOpen: true, isArchivePageOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, isOverviewOpen: false, isScheduledTasksDialogOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null, openGuestPageId: null }
             : { isIntegrationsCatalogOpen: false });
         },
 
         setUsageStatsPageOpen: (open) => {
           set(open
-            ? { isUsageStatsPageOpen: true, isSourceBoardOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isScheduledTasksDialogOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null, openGuestPageId: null }
+            ? { isUsageStatsPageOpen: true, isSourceBoardOpen: false, isOverviewOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isScheduledTasksDialogOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null, openGuestPageId: null }
             : { isUsageStatsPageOpen: false });
         },
 
         setSourceBoardOpen: (open) => {
           set(open
-            ? { isSourceBoardOpen: true, isUsageStatsPageOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isScheduledTasksDialogOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null, openGuestPageId: null }
+            ? { isSourceBoardOpen: true, isOverviewOpen: false, isUsageStatsPageOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isScheduledTasksDialogOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null, openGuestPageId: null }
             : { isSourceBoardOpen: false });
+        },
+
+        setOverviewOpen: (open) => {
+          // Without the feature there is no page to open, whatever asks for it.
+          if (open && !get().overviewFeatureAvailable) return;
+          set(open
+            ? { isOverviewOpen: true, isSourceBoardOpen: false, isUsageStatsPageOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isScheduledTasksDialogOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null, openGuestPageId: null }
+            : { isOverviewOpen: false });
         },
 
         setWorktreesPageProjectId: (projectId) => {
           set(projectId
-            ? { worktreesPageProjectId: projectId, spacesPageProjectId: null, isScheduledTasksDialogOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, runOverviewKey: null, openGuestPageId: null }
+            ? { worktreesPageProjectId: projectId, spacesPageProjectId: null, isScheduledTasksDialogOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, isOverviewOpen: false, runOverviewKey: null, openGuestPageId: null }
             : { worktreesPageProjectId: null });
         },
 
         setSpacesPageProjectId: (projectId) => {
           set(projectId
-            ? { spacesPageProjectId: projectId, worktreesPageProjectId: null, isScheduledTasksDialogOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, runOverviewKey: null, openGuestPageId: null }
+            ? { spacesPageProjectId: projectId, worktreesPageProjectId: null, isScheduledTasksDialogOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, isOverviewOpen: false, runOverviewKey: null, openGuestPageId: null }
             : { spacesPageProjectId: null });
         },
 
         setOpenGuestPage: (id) => {
-          set(id ? { openGuestPageId: id, isScheduledTasksDialogOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null }
+          set(id ? { openGuestPageId: id, isScheduledTasksDialogOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, isOverviewOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, runOverviewKey: null }
             : { openGuestPageId: null });
         },
 
         closeMainSurfaces: () => {
           const state = get();
-          if (!state.isScheduledTasksDialogOpen && !state.isArchivePageOpen && !state.isIntegrationsCatalogOpen && !state.isUsageStatsPageOpen && !state.isSourceBoardOpen && !state.worktreesPageProjectId && !state.spacesPageProjectId && !state.runOverviewKey && !state.openGuestPageId) {
+          if (!state.isScheduledTasksDialogOpen && !state.isArchivePageOpen && !state.isIntegrationsCatalogOpen && !state.isUsageStatsPageOpen && !state.isSourceBoardOpen && !state.isOverviewOpen && !state.worktreesPageProjectId && !state.spacesPageProjectId && !state.runOverviewKey && !state.openGuestPageId) {
             return;
           }
           set({
@@ -2468,6 +2531,7 @@ export const useUIStore = create<UIStore>()(
             isIntegrationsCatalogOpen: false,
             isUsageStatsPageOpen: false,
             isSourceBoardOpen: false,
+            isOverviewOpen: false,
             worktreesPageProjectId: null,
             spacesPageProjectId: null,
             runOverviewKey: null,
@@ -2622,6 +2686,10 @@ export const useUIStore = create<UIStore>()(
 
         setOpenLinksInBrowserPanel: (value) => {
           set({ openLinksInBrowserPanel: value });
+        },
+
+        setLiveBrowserTabLimit: (value) => {
+          set({ liveBrowserTabLimit: clampLiveBrowserTabs(value) });
         },
 
         setOpenTrackerLinksOnBoard: (value) => {
@@ -3075,7 +3143,7 @@ export const useUIStore = create<UIStore>()(
         // opening it closes the other surfaces and vice versa.
         setRunOverviewKey: (runKey) => {
           set(runKey
-            ? { runOverviewKey: runKey, isSessionSwitcherOpen: false, isScheduledTasksDialogOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, openGuestPageId: null }
+            ? { runOverviewKey: runKey, isSessionSwitcherOpen: false, isScheduledTasksDialogOpen: false, isArchivePageOpen: false, isIntegrationsCatalogOpen: false, isUsageStatsPageOpen: false, isSourceBoardOpen: false, isOverviewOpen: false, worktreesPageProjectId: null, spacesPageProjectId: null, openGuestPageId: null }
             : { runOverviewKey: null });
         },
 
@@ -3157,6 +3225,9 @@ export const useUIStore = create<UIStore>()(
         setAgentControlToolEnabled: (value) => {
           set({ agentControlToolEnabled: value });
         },
+        setAgentScheduleToolEnabled: (value) => {
+          set({ agentScheduleToolEnabled: value });
+        },
         setAgentWebToolEnabled: (value) => {
           set({ agentWebToolEnabled: value });
         },
@@ -3196,6 +3267,10 @@ export const useUIStore = create<UIStore>()(
         setRoutingFeatureAvailable: (value) => {
           set({ routingFeatureAvailable: value });
         },
+        // Losing the feature closes the page, so nothing of it stays on screen.
+        setOverviewFeatureAvailable: (value) => {
+          set(value ? { overviewFeatureAvailable: true } : { overviewFeatureAvailable: false, isOverviewOpen: false });
+        },
         markAgentMemoryViewed: (key, viewedAt) => {
           set((state) => ({
             // Never moves backwards: a stale unmount landing after a newer look
@@ -3226,6 +3301,9 @@ export const useUIStore = create<UIStore>()(
         },
         setEnterToSendConfigured: (value) => {
           set({ enterToSendConfigured: value });
+        },
+        setMobileReturnKeySends: (value) => {
+          set({ mobileReturnKeySends: value });
         },
         setWideChatLayoutEnabled: (value) => {
           set({ wideChatLayoutEnabled: value });
@@ -3268,6 +3346,9 @@ export const useUIStore = create<UIStore>()(
         setCollapsibleUserMessages: (value) => {
           set({ collapsibleUserMessages: value });
         },
+        setStickyUserHeader: (value) => {
+          set({ stickyUserHeader: value });
+        },
         setPromptNavigatorEnabled: (value) => {
           set({ promptNavigatorEnabled: value });
         },
@@ -3276,6 +3357,9 @@ export const useUIStore = create<UIStore>()(
         },
         setAllowPromptingSubagentSessions: (value) => {
           set({ allowPromptingSubagentSessions: value });
+        },
+        setSavePastedImagesAsFiles: (value) => {
+          set({ savePastedImagesAsFiles: value });
         },
         setReportUsage: (value) => {
           set({ reportUsage: value });
@@ -3575,6 +3659,10 @@ export const useUIStore = create<UIStore>()(
           state.contextRailOrder = Array.isArray(state.contextRailOrder)
             ? (state.contextRailOrder as unknown[]).filter((id): id is string => typeof id === 'string' && id.trim() !== '')
             : [];
+          for (const key of ['mobileWorkspaceTabOrder', 'mobileWorkspaceHiddenTabs']) {
+            const value = state[key];
+            state[key] = Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+          }
 
           // v23 -> v24: workspace zones. Panels gain closed left/bottom zones
           // (the sanitize above), and nothing is placed off the right.
@@ -3589,6 +3677,8 @@ export const useUIStore = create<UIStore>()(
           contextPanelByDirectory: withoutForeignComparisons(state.contextPanelByDirectory),
           contextRailOrder: state.contextRailOrder,
           contextRailHiddenSurfaces: state.contextRailHiddenSurfaces,
+          mobileWorkspaceTabOrder: state.mobileWorkspaceTabOrder,
+          mobileWorkspaceHiddenTabs: state.mobileWorkspaceHiddenTabs,
           contextSurfaceZones: state.contextSurfaceZones,
           contextEditorTreeVisible: state.contextEditorTreeVisible,
           fileTreeSide: state.fileTreeSide,
@@ -3629,6 +3719,7 @@ export const useUIStore = create<UIStore>()(
           confirmFileTreeMove: state.confirmFileTreeMove,
           layoutAnimations: state.layoutAnimations,
           openLinksInBrowserPanel: state.openLinksInBrowserPanel,
+          liveBrowserTabLimit: state.liveBrowserTabLimit,
           openTrackerLinksOnBoard: state.openTrackerLinksOnBoard,
           autoDeleteAfterDays: state.autoDeleteAfterDays,
           sessionRetentionAction: state.sessionRetentionAction,
@@ -3684,6 +3775,7 @@ export const useUIStore = create<UIStore>()(
           persistChatDraft: state.persistChatDraft,
           showOpenCodeUpdateNotifications: state.showOpenCodeUpdateNotifications,
           agentControlToolEnabled: state.agentControlToolEnabled,
+          agentScheduleToolEnabled: state.agentScheduleToolEnabled,
           agentWebToolEnabled: state.agentWebToolEnabled,
           messageSearchEnabled: state.messageSearchEnabled,
           messageSearchReasoningEnabled: state.messageSearchReasoningEnabled,
@@ -3700,6 +3792,7 @@ export const useUIStore = create<UIStore>()(
           largeTextPasteBehavior: state.largeTextPasteBehavior,
           enterToSend: state.enterToSend,
           enterToSendConfigured: state.enterToSendConfigured,
+          mobileReturnKeySends: state.mobileReturnKeySends,
           wideChatLayoutEnabled: state.wideChatLayoutEnabled,
           codeBlockLineWrap: state.codeBlockLineWrap,
           tableCellWrap: state.tableCellWrap,
@@ -3714,9 +3807,11 @@ export const useUIStore = create<UIStore>()(
           mermaidRenderingMode: state.mermaidRenderingMode,
           userMessageRenderingMode: state.userMessageRenderingMode,
           collapsibleUserMessages: state.collapsibleUserMessages,
+          stickyUserHeader: state.stickyUserHeader,
           promptNavigatorEnabled: state.promptNavigatorEnabled,
           showSplitAssistantMessageActions: state.showSplitAssistantMessageActions,
           allowPromptingSubagentSessions: state.allowPromptingSubagentSessions,
+          savePastedImagesAsFiles: state.savePastedImagesAsFiles,
           draftStartersVisible: state.draftStartersVisible,
           shortcutOverrides: state.shortcutOverrides,
           fileEditorKeymap: state.fileEditorKeymap,

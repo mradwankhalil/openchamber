@@ -805,17 +805,35 @@ export function createNetworkOperations({
    * successful push, and as unpulled after a pull. A branch that was deleted
    * on the remote loses its tracking ref the same way.
    */
+  const trackingRefOf = (plan, remoteRef) => (remoteRef.startsWith('refs/heads/')
+    ? `refs/remotes/${plan.target.remote.name}/${remoteRef.slice('refs/heads/'.length)}`
+    : null);
+  /** The tracking ref it wrote, or null when there is none or it could not be written. */
   const recordRemoteTrackingRef = async (plan, controls, context, deadline, sha, remoteRef = plan.target.destinationRef) => {
-    if (!remoteRef.startsWith('refs/heads/')) return;
-    const trackingRef = `refs/remotes/${plan.target.remote.name}/${remoteRef.slice('refs/heads/'.length)}`;
+    const trackingRef = trackingRefOf(plan, remoteRef);
+    if (!trackingRef) return null;
     try {
       await commandResult(plan, controls, sha ? ['update-ref', trackingRef, sha] : ['update-ref', '-d', trackingRef], context, deadline);
+      return sha ? trackingRef : null;
     } catch (error) {
       // The transfer itself is done; a bookkeeping ref that could not be
       // written costs one stale badge until the next fetch, not the result.
       if (error?.cancelled || error?.timedOut || error?.code === 'CANCELLED' || error?.code === 'TIMEOUT') throw error;
+      return null;
     }
   };
+
+  /**
+   * Pull replays only the commits made here since the remote copy was last
+   * seen, found as the fork point in the tracking ref's reflog, the way
+   * `git pull --rebase` does. A remote branch rewritten by its host (GitHub
+   * rebasing a stacked branch after the layer below it merged) then brings
+   * its new commits in, and its old ones are not replayed on top of their
+   * rewritten selves. Without a tracking ref, the fetched commit is the base.
+   */
+  const pullRebaseArgs = (fetchedSha, trackingRef) => (trackingRef
+    ? ['rebase', '--no-verify', '--no-autostash', '--fork-point', '--onto', fetchedSha, trackingRef]
+    : ['rebase', '--no-verify', '--no-autostash', fetchedSha]);
 
   const commandResult = async (plan, controls, args, context, deadline, options = {}) => {
     const localRefCleanup = options.localRefCleanup === true
@@ -1649,11 +1667,11 @@ export function createNetworkOperations({
             if (!SHA_PATTERN.test(fetchedSha)) throw operationError('STALE_CONFIG', 'Fetched ref is invalid', 409);
             // The managed credential context is already revoked here; the
             // tracking ref is local bookkeeping and uses the credential-free one.
-            await recordRemoteTrackingRef(plan, controls, integrationContext, deadline, fetchedSha, plan.target.sourceRef);
+            const trackingRef = await recordRemoteTrackingRef(plan, controls, integrationContext, deadline, fetchedSha, plan.target.sourceRef);
             mergeStarted = true;
             await controls.markIntegrationStarted();
             // Local commits are replayed on top of the fetched ones, as pull always did here.
-            await commandResult(plan, controls, ['rebase', '--no-verify', '--no-autostash', fetchedSha], integrationContext, deadline);
+            await commandResult(plan, controls, pullRebaseArgs(fetchedSha, trackingRef), integrationContext, deadline);
             mergeStarted = false;
             await controls.markStepCompleted('updated-local-repository');
             result = { state: 'succeeded' };
@@ -1779,7 +1797,8 @@ export function createNetworkOperations({
       )).trim().toLowerCase();
       mergeStarted = true;
       await controls.markIntegrationStarted();
-      await commandResult(fetchPlan, controls, ['rebase', '--no-verify', '--no-autostash', fetchedSha], integrationContext, deadline);
+      const fetchedTrackingRef = fetchPlan.target.destinationRef.startsWith('refs/remotes/') ? fetchPlan.target.destinationRef : null;
+      await commandResult(fetchPlan, controls, pullRebaseArgs(fetchedSha, fetchedTrackingRef), integrationContext, deadline);
       mergeStarted = false;
       await controls.markStepCompleted('updated-local-repository');
       const hydrated = await hydrateIntegration(fetchPlan, controls, deadline);

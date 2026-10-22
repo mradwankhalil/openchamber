@@ -70,6 +70,9 @@ export const getPrStatusLabelKey = (summary: PrVisualSummary): PrStatusLabelKey 
     case 'merged':
       return 'sessions.sidebar.group.pr.status.merged';
     case 'open':
+      // Checks still running keep the open colour; the line names them, and
+      // such a PR is not ready to merge yet.
+      if (summary.checks?.state === 'pending') return 'sessions.sidebar.group.pr.status.checksRunning';
       // A PR still waiting for a required review is not ready to merge.
       return summary.mergeableState !== 'blocked'
         && (summary.canMerge === true || summary.mergeableState === 'clean' || summary.checks?.state === 'success')
@@ -78,7 +81,6 @@ export const getPrStatusLabelKey = (summary: PrVisualSummary): PrStatusLabelKey 
     case 'blocked':
       if (summary.mergeableState === 'dirty') return 'sessions.sidebar.group.pr.status.mergeConflicts';
       if (summary.checks?.state === 'failure') return 'sessions.sidebar.group.pr.status.checksFailing';
-      if (summary.checks?.state === 'pending') return 'sessions.sidebar.group.pr.status.checksRunning';
       return 'sessions.sidebar.group.pr.status.mergeBlocked';
     case 'draft':
       return 'sessions.sidebar.group.pr.status.draft';

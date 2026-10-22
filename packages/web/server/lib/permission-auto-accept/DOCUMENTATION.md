@@ -18,7 +18,7 @@ Policies written before the modes stored booleans. The first read converts them 
 
 ## Default mode
 
-`permissionDefaultMode` (Settings → Sessions) is written onto each new top-level session when `session.created` arrives, and only when no policy exists for it yet: a mode the creating flow already set wins, and changing the default never reaches back into older sessions. Subagents inherit instead. `ask` writes nothing. Mode resolution waits for pending writes, so a session's first permission request sees its default. The server inside an isolated space reads its own settings, which hold no such default, so the UI writes it for a session it creates in a space: from a draft, and for a `/btw` fork. A mode chosen in the draft or for the fork wins there as on the host. A space session the UI creates any other way starts in `ask`.
+`permissionDefaultMode` (Settings → Sessions) is written onto each new top-level session when `session.created` arrives, and only when no policy exists for it yet: a mode the creating flow already set wins, and changing the default never reaches back into older sessions. Subagents inherit instead. `ask` writes nothing. Mode resolution waits for pending writes, so a session's first permission request sees its default. The server inside an isolated space has no such setting; it reads the default from a file the host keeps current instead (`readDefaultMode`), see "Default permission mode" in `../spaces/DOCUMENTATION.md`. The UI also writes the default for a session it creates in a space from a draft or for a `/btw` fork, which covers a space still running an older server; a mode chosen there wins as on the host.
 
 ## Runtime
 
@@ -35,6 +35,8 @@ Unknown lineage and failed policy loads fail closed (`ask`). A failed pending-pe
 Each request's outcome (`replied`, `held`, `ignored`, `failed`) is kept for a bounded while. `isPermissionAutoAnswered` lets notifications skip only a request that was actually answered: a held one still notifies. When its own lineage lookup fails, it waits for the request's outcome, so a reply that succeeds on retry sends no push.
 
 A `held` or `failed` outcome is broadcast as `openchamber:permission-auto-accept.left-for-user` (`permissionId`, `sessionId`, `directory`). Clients keep a `safety` or `auto` session's request out of sight until this arrives or the request is answered, so an accepted request never flashes a card; the broadcast is what puts a held one on screen. Reconnect reconciliation broadcasts again for a request still held, which a client that already shows it ignores.
+
+Both broadcasts (`updated` and `left-for-user`) go to the main WebSocket, the legacy notification stream (an isolated space's host reads it) and the control stream (`broadcastPermissionUiEvent` in `server/index.js`). A window whose main event stream runs over SSE, by setting or after a WebSocket fallback, reads only the control stream; without it, such a window hid a held request for good and kept a mode another window had changed.
 
 ## Routes
 

@@ -45,8 +45,9 @@ const parseRecord = (record) => {
     || !isIdentifier(provenance.sourceRef) || !provenance.sourceRef.startsWith('refs/heads/')
     || !isIdentifier(provenance.sourceProjectId) || !isIdentifier(provenance.targetProjectId)
     || !['github', 'gitlab'].includes(provenance.provider) || !isIdentifier(provenance.instance)
+    // An unbound repository reads with the signed-in account at binding revision 0.
     || !isIdentifier(provenance.accountId) || !Number.isSafeInteger(provenance.bindingRevision)
-    || provenance.bindingRevision < 1 || !isIdentifier(provenance.primaryRemote)
+    || provenance.bindingRevision < 0 || !isIdentifier(provenance.primaryRemote)
     || !isIdentifier(provenance.projectId) || !isString(provenance.setupCommand)
     || provenance.setupCommand.length > 65536 || /[\0]/.test(provenance.setupCommand)
     || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(provenance.sourceSha)) throw invalidStore();

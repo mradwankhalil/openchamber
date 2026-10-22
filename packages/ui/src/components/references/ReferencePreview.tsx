@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
-import type { GitHubChecksSummary, GitHubPullStatus, GitHubReference, GitHubReferenceComment, GitHubReferenceDetail, LinearIssue, LinearIssueSummary } from '@/lib/api/types';
+import type { GitHubChecksSummary, GitHubPullStatus, GitHubReference, GitHubReferenceComment, GitHubReferenceDetail, LinearIssue, LinearIssueSummary, PullRequestStackLayer } from '@/lib/api/types';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
@@ -16,6 +16,8 @@ import { getSourceControlProviderLabel } from '@/lib/source-control/identity';
 import { ReferenceComments, type ReferenceThreadActions } from './ReferenceComments';
 import { buildReferenceTimeline, type ReferenceCommentItem, type ReferenceTimelineEntry } from './referenceTimeline';
 import { ChecksGlyph, ReferenceLabelChips } from './ReferencePickerRow';
+import { PullStackRows } from './PullStackRows';
+import { useReferenceImagePreview } from './useReferenceImagePreview';
 import {
     githubStateLook,
     labelColor,
@@ -30,27 +32,42 @@ import {
 export type ReferencePreviewPurpose = 'attach' | 'worktree';
 
 const MARKDOWN_CLASS = '[&_img]:max-w-full [&_img]:h-auto';
+// The pictures `useReferenceImagePreview` opens; one inside a link keeps its link, a decorative one stays plain.
+const ZOOMABLE_IMAGE_CLASS = '[&_[data-markdown-content]_img:not(a_img):not([aria-hidden=true])]:cursor-zoom-in';
 
 /**
- * `pinned` (desktop pane): the item scrolls and what the agent gets stays in
- * view below it, so a long description never hides the diff switch. Inline
- * (mobile): one flow inside the sheet's own scroll.
+ * `pinned` (desktop pane): the item header and the send summary stay in view
+ * while the meta grid, description and comments scroll between them, so a
+ * long preview never hides the diff switch. Inline (mobile): one flow inside
+ * the sheet's own scroll. Either way a divider sets the meta grid apart from
+ * what follows it.
  */
-const PreviewFrame: React.FC<{ pinned: boolean; footer: React.ReactNode; children: React.ReactNode }> = ({ pinned, footer, children }) => {
+const PreviewFrame: React.FC<{ pinned: boolean; header: React.ReactNode; meta: React.ReactNode; footer: React.ReactNode; children: React.ReactNode }> = ({ pinned, header, meta, footer, children }) => {
+    const imagePreview = useReferenceImagePreview();
     if (!pinned) {
         return (
-            <article className="flex flex-col gap-4">
+            <article className={cn('flex flex-col gap-4', ZOOMABLE_IMAGE_CLASS)} onClick={imagePreview.onClick}>
+                <header className="flex flex-col gap-2">{header}</header>
+                <div className="border-b border-border/60 pb-4">{meta}</div>
                 {children}
                 <div className="rounded-lg border border-border/60 px-3 py-2.5">{footer}</div>
+                {imagePreview.viewer}
             </article>
         );
     }
     return (
         <div className="flex h-full min-h-0 flex-col">
-            <ScrollableOverlay outerClassName="min-h-0 flex-1" className="px-6 py-5" disableHorizontal>
-                <article className="flex flex-col gap-4">{children}</article>
+            <div className="shrink-0 border-b border-border/60 px-6 pb-4 pt-5">
+                <header className="flex flex-col gap-2">{header}</header>
+            </div>
+            <ScrollableOverlay outerClassName="min-h-0 flex-1" className="px-6 pb-5 pt-4" disableHorizontal>
+                <article className={cn('flex flex-col gap-4', ZOOMABLE_IMAGE_CLASS)} onClick={imagePreview.onClick}>
+                    <div className="border-b border-border/60 pb-4">{meta}</div>
+                    {children}
+                </article>
             </ScrollableOverlay>
             <div className="shrink-0 border-t border-border/60 px-6 py-3">{footer}</div>
+            {imagePreview.viewer}
         </div>
     );
 };
@@ -251,15 +268,19 @@ const PullDetailRows: React.FC<{
 const NO_CHECKS: CachedValue<GitHubChecksSummary | null> = { status: 'ready', value: null };
 
 /**
- * The previewed PR's checks come with its own detail (GitHub's head commit,
- * GitLab's pipeline), one PR at a time, so the preview never waits for the
- * statuses a whole list asks for. Closed and merged PRs have none to show.
+ * The previewed PR's checks as its row has them, the status that stays
+ * current while the preview is open. Until that arrives they come with the
+ * PR's own detail (GitHub's head commit, GitLab's pipeline), so the preview
+ * never waits for the statuses a whole list asks for. Closed and merged PRs
+ * have none to show.
  */
 const previewChecks = (
     reference: GitHubReference,
+    pullStatus: CachedValue<GitHubPullStatus | null>,
     detail: CachedValue<GitHubReferenceDetail>,
 ): CachedValue<GitHubChecksSummary | null> => {
     if (reference.kind !== 'pull' || reference.state !== 'open') return NO_CHECKS;
+    if (pullStatus.status === 'ready' && pullStatus.value?.checks) return { status: 'ready', value: pullStatus.value.checks };
     return mapDetail(detail, (value) => value.pull?.checks ?? null);
 };
 
@@ -282,7 +303,8 @@ const GitHubPreview: React.FC<{
     stateMenu?: React.ReactNode;
     onRefresh?: () => Promise<void>;
     threadActions?: ReferenceThreadActions;
-}> = ({ reference, pullStatus, detail, purpose, pinned, includeDiff, onIncludeDiffChange, now, footer: footerOverride, pullLinks, reply, labelsControl, reviewersControl, onOpenChecks, commentAttachments, stateMenu, onRefresh, threadActions }) => {
+    onOpenStackLayer?: (layer: PullRequestStackLayer) => void;
+}> = ({ reference, pullStatus, detail, purpose, pinned, includeDiff, onIncludeDiffChange, now, footer: footerOverride, pullLinks, reply, labelsControl, reviewersControl, onOpenChecks, commentAttachments, stateMenu, onRefresh, threadActions, onOpenStackLayer }) => {
     const { t } = useI18n();
     const [refreshing, setRefreshing] = React.useState(false);
     const refresh = onRefresh ? () => {
@@ -328,6 +350,10 @@ const GitHubPreview: React.FC<{
     const labels = reference.labels.map((label) => ({ name: label.name, color: labelColor(label.color) }));
     const updated = relative(reference.updatedAt);
     const body = reference.body.trim() ? reference.body : '';
+    const stack = reference.kind === 'pull' && detail.status === 'ready' ? detail.value.pull?.stack ?? null : null;
+    const numberLabel = (number: number) => referenceNumberLabel({ ...reference, number });
+    // Counted from the bottom, as GitHub numbers layers.
+    const stackPosition = stack ? stack.layers.findIndex((layer) => layer.number === reference.number) + 1 : 0;
 
     const footer = footerOverride ?? (
         <div className="flex flex-col gap-2">
@@ -346,94 +372,125 @@ const GitHubPreview: React.FC<{
     );
 
     return (
-        <PreviewFrame pinned={pinned} footer={footer}>
-            <header className="flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                    {stateMenu ? (
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <button
-                                    type="button"
-                                    aria-label={t('references.picker.preview.stateMenuAria', { state: t(look.labelKey) })}
-                                    className="shrink-0 rounded-full outline-none transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-ring"
-                                >
-                                    <StatePill
-                                        icon={look.icon}
-                                        color={look.color}
-                                        label={t(look.labelKey)}
-                                        trailing={<Icon name="arrow-down-s" className="size-3.5 opacity-70" />}
-                                    />
-                                </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start" className="w-56">{stateMenu}</DropdownMenuContent>
-                        </DropdownMenu>
-                    ) : (
-                        <StatePill icon={look.icon} color={look.color} label={t(look.labelKey)} />
-                    )}
-                    <span className={cn('truncate typography-meta', REFERENCE_META_TEXT)}>
-                        {reference.sourceRepo.owner}/{reference.sourceRepo.repo} {referenceNumberLabel(reference)}
-                    </span>
-                    {refresh ? (
-                        <button
-                            type="button"
-                            className={cn('ms-auto inline-flex size-6 shrink-0 items-center justify-center rounded-md hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none', REFERENCE_META_TEXT)}
-                            aria-label={t('references.picker.preview.refresh')}
-                            title={t('references.picker.preview.refresh')}
-                            disabled={refreshing}
-                            onClick={refresh}
-                        >
-                            <Icon name="refresh" className={cn('size-3.5', refreshing && 'animate-spin')} />
-                        </button>
-                    ) : null}
-                    <a
-                        href={reference.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={cn('inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 typography-meta hover:bg-interactive-hover hover:text-foreground', !refresh && 'ms-auto', REFERENCE_META_TEXT)}
-                    >
-                        {getSourceControlProviderLabel(reference.provider ?? 'github')}
-                        <Icon name="external-link" className="size-3.5" />
-                    </a>
-                </div>
-                <h3 className="typography-ui-header font-semibold break-words text-foreground">{reference.title}</h3>
-            </header>
-
-            <dl className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-4 gap-y-1.5">
-                {reference.author ? (
-                    <MetaRow label={t('references.picker.preview.author')}>
-                        <span className="inline-flex items-center gap-1.5">
-                            {reference.author.avatarUrl ? (
-                                <img src={reference.author.avatarUrl} alt="" className="size-4 rounded-full" loading="lazy" />
-                            ) : null}
-                            {reference.author.login}
+        <PreviewFrame
+            pinned={pinned}
+            footer={footer}
+            header={
+                <>
+                    <div className="flex items-center gap-2">
+                        {stateMenu ? (
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <button
+                                        type="button"
+                                        aria-label={t('references.picker.preview.stateMenuAria', { state: t(look.labelKey) })}
+                                        className="shrink-0 rounded-full outline-none transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-ring"
+                                    >
+                                        <StatePill
+                                            icon={look.icon}
+                                            color={look.color}
+                                            label={t(look.labelKey)}
+                                            trailing={<Icon name="arrow-down-s" className="size-3.5 opacity-70" />}
+                                        />
+                                    </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start" className="w-56">{stateMenu}</DropdownMenuContent>
+                            </DropdownMenu>
+                        ) : (
+                            <StatePill icon={look.icon} color={look.color} label={t(look.labelKey)} />
+                        )}
+                        <span className={cn('truncate typography-meta', REFERENCE_META_TEXT)}>
+                            {reference.sourceRepo.owner}/{reference.sourceRepo.repo} {referenceNumberLabel(reference)}
                         </span>
-                    </MetaRow>
-                ) : null}
-                {updated ? <MetaRow label={t('references.picker.preview.updated')}>{updated}</MetaRow> : null}
-                {reference.kind === 'pull' ? (
-                    <>
-                        <MetaRow label={t('references.picker.preview.branch')}>
-                            <span className="inline-flex max-w-full items-center gap-1 font-mono">
-                                <span className="truncate">{reference.head}</span>
-                                <Icon name="arrow-right" className="size-3 shrink-0 text-muted-foreground" />
-                                <span className="truncate">{reference.base}</span>
+                        {refresh ? (
+                            <button
+                                type="button"
+                                className={cn('ms-auto inline-flex size-6 shrink-0 items-center justify-center rounded-md hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none', REFERENCE_META_TEXT)}
+                                aria-label={t('references.picker.preview.refresh')}
+                                title={t('references.picker.preview.refresh')}
+                                disabled={refreshing}
+                                onClick={refresh}
+                            >
+                                <Icon name="refresh" className={cn('size-3.5', refreshing && 'animate-spin')} />
+                            </button>
+                        ) : null}
+                        <a
+                            href={reference.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={cn('inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 typography-meta hover:bg-interactive-hover hover:text-foreground', !refresh && 'ms-auto', REFERENCE_META_TEXT)}
+                        >
+                            {getSourceControlProviderLabel(reference.provider ?? 'github')}
+                            <Icon name="external-link" className="size-3.5" />
+                        </a>
+                    </div>
+                    <h3 className="typography-ui-header font-semibold break-words text-foreground">{reference.title}</h3>
+                </>
+            }
+            meta={
+                <dl className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-4 gap-y-1.5">
+                    {reference.author ? (
+                        <MetaRow label={t('references.picker.preview.author')}>
+                            <span className="inline-flex items-center gap-1.5">
+                                {reference.author.avatarUrl ? (
+                                    <img src={reference.author.avatarUrl} alt="" className="size-4 rounded-full" loading="lazy" />
+                                ) : null}
+                                {reference.author.login}
                             </span>
                         </MetaRow>
-                        <PullDetailRows detail={detail} checks={previewChecks(reference, detail)} links={pullLinks} onOpenChecks={onOpenChecks} />
-                    </>
-                ) : null}
-                {reviewersControl && reference.kind === 'pull' ? (
-                    <MetaRow label={t('references.picker.preview.reviewers')}>{reviewersControl}</MetaRow>
-                ) : null}
-                {labelsControl ? (
-                    // Shown with no labels too, so some can be added.
-                    <MetaRow label={t('references.picker.preview.labels')}>{labelsControl}</MetaRow>
-                ) : labels.length > 0 ? (
-                    <MetaRow label={t('references.picker.preview.labels')}><ReferenceLabelChips labels={labels} /></MetaRow>
-                ) : null}
-            </dl>
+                    ) : null}
+                    {updated ? <MetaRow label={t('references.picker.preview.updated')}>{updated}</MetaRow> : null}
+                    {reference.kind === 'pull' ? (
+                        <>
+                            <MetaRow label={t('references.picker.preview.branch')}>
+                                <span className="inline-flex max-w-full items-center gap-1 font-mono">
+                                    <span className="truncate">{reference.head}</span>
+                                    <Icon name="arrow-right" className="size-3 shrink-0 text-muted-foreground" />
+                                    <span className="truncate">{reference.base}</span>
+                                </span>
+                            </MetaRow>
+                            <PullDetailRows detail={detail} checks={previewChecks(reference, pullStatus, detail)} links={pullLinks} onOpenChecks={onOpenChecks} />
+                        </>
+                    ) : null}
+                    {reviewersControl && reference.kind === 'pull' ? (
+                        <MetaRow label={t('references.picker.preview.reviewers')}>{reviewersControl}</MetaRow>
+                    ) : null}
+                    {labelsControl ? (
+                        // Shown with no labels too, so some can be added.
+                        <MetaRow label={t('references.picker.preview.labels')}>{labelsControl}</MetaRow>
+                    ) : labels.length > 0 ? (
+                        <MetaRow label={t('references.picker.preview.labels')}><ReferenceLabelChips labels={labels} /></MetaRow>
+                    ) : null}
+                </dl>
+            }
+        >
+            {stack ? (
+                <section className="flex flex-col gap-2 border-b border-border/60 pb-4">
+                    <h4 className="flex items-center gap-2 typography-ui-label font-semibold text-foreground">
+                        {t('stacks.preview.label')}
+                        {stackPosition > 0 ? (
+                            <span className={cn('typography-meta font-normal tabular-nums', REFERENCE_META_TEXT)}>
+                                {t('stacks.preview.position', { position: stackPosition, size: stack.layers.length })}
+                            </span>
+                        ) : null}
+                        {stack.number !== null && stack.layers.filter((layer) => layer.state === 'open').length > 1 ? (
+                            // GitHub rebases a stack only from its own page; its API has no such action.
+                            <a
+                                href={reference.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={cn('ms-auto inline-flex items-center gap-1 typography-meta font-normal hover:text-foreground', REFERENCE_META_TEXT)}
+                            >
+                                {t('stacks.preview.rebaseOnHost')}
+                                <Icon name="external-link" className="size-3.5" />
+                            </a>
+                        ) : null}
+                    </h4>
+                    <PullStackRows stack={stack} current={reference.number} numberLabel={numberLabel} currentLook={look} onOpen={onOpenStackLayer} />
+                </section>
+            ) : null}
 
-            <div className="min-w-0 flex-1 border-t border-border/60 pt-4">
+            <div className="min-w-0 flex-1">
                 {body ? (
                     <ReferenceBody content={body} />
                 ) : (
@@ -564,42 +621,47 @@ const LinearPreview: React.FC<{
     );
 
     return (
-        <PreviewFrame pinned={pinned} footer={footer}>
-            <header className="flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                    {stateControl ?? (issue.state?.name ? <StatePill icon={look.icon} color={look.color} label={issue.state.name} /> : null)}
-                    <span className={cn('truncate typography-meta', REFERENCE_META_TEXT)}>{issue.identifier}</span>
-                    <a
-                        href={issue.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={cn('ms-auto inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 typography-meta hover:bg-interactive-hover hover:text-foreground', REFERENCE_META_TEXT)}
-                    >
-                        Linear
-                        <Icon name="external-link" className="size-3.5" />
-                    </a>
-                </div>
-                <h3 className="typography-ui-header font-semibold break-words text-foreground">{issue.title}</h3>
-            </header>
-
-            <dl className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-4 gap-y-1.5">
-                {parent ? (
-                    <MetaRow label={t('references.picker.preview.parent')}>
-                        <RelatedLinearIssue issue={parent} onOpen={onOpenIssue} />
-                    </MetaRow>
-                ) : null}
-                {assignee ? <MetaRow label={t('references.picker.preview.assignee')}>{assignee}</MetaRow> : null}
-                {issue.team ? <MetaRow label={t('references.picker.preview.team')}>{issue.team.name}</MetaRow> : null}
-                {issue.priority && issue.priority > 0 ? (
-                    <MetaRow label={t('references.picker.preview.priority')}>{t(LINEAR_PRIORITY_KEYS[issue.priority])}</MetaRow>
-                ) : null}
-                {updated ? <MetaRow label={t('references.picker.preview.updated')}>{updated}</MetaRow> : null}
-                {labels.length > 0 ? (
-                    <MetaRow label={t('references.picker.preview.labels')}><ReferenceLabelChips labels={labels} /></MetaRow>
-                ) : null}
-            </dl>
-
-            <div className="min-w-0 flex-1 border-t border-border/60 pt-4">
+        <PreviewFrame
+            pinned={pinned}
+            footer={footer}
+            header={
+                <>
+                    <div className="flex items-center gap-2">
+                        {stateControl ?? (issue.state?.name ? <StatePill icon={look.icon} color={look.color} label={issue.state.name} /> : null)}
+                        <span className={cn('truncate typography-meta', REFERENCE_META_TEXT)}>{issue.identifier}</span>
+                        <a
+                            href={issue.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={cn('ms-auto inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 typography-meta hover:bg-interactive-hover hover:text-foreground', REFERENCE_META_TEXT)}
+                        >
+                            Linear
+                            <Icon name="external-link" className="size-3.5" />
+                        </a>
+                    </div>
+                    <h3 className="typography-ui-header font-semibold break-words text-foreground">{issue.title}</h3>
+                </>
+            }
+            meta={
+                <dl className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-4 gap-y-1.5">
+                    {parent ? (
+                        <MetaRow label={t('references.picker.preview.parent')}>
+                            <RelatedLinearIssue issue={parent} onOpen={onOpenIssue} />
+                        </MetaRow>
+                    ) : null}
+                    {assignee ? <MetaRow label={t('references.picker.preview.assignee')}>{assignee}</MetaRow> : null}
+                    {issue.team ? <MetaRow label={t('references.picker.preview.team')}>{issue.team.name}</MetaRow> : null}
+                    {issue.priority && issue.priority > 0 ? (
+                        <MetaRow label={t('references.picker.preview.priority')}>{t(LINEAR_PRIORITY_KEYS[issue.priority])}</MetaRow>
+                    ) : null}
+                    {updated ? <MetaRow label={t('references.picker.preview.updated')}>{updated}</MetaRow> : null}
+                    {labels.length > 0 ? (
+                        <MetaRow label={t('references.picker.preview.labels')}><ReferenceLabelChips labels={labels} /></MetaRow>
+                    ) : null}
+                </dl>
+            }
+        >
+            <div className="min-w-0 flex-1">
                 {detail.status === 'loading' || detail.status === 'idle' ? (
                     <p className="inline-flex items-center gap-2 typography-meta text-muted-foreground">
                         <Icon name="loader-4" className="size-3.5 animate-spin" />
@@ -657,7 +719,9 @@ export const ReferencePreview: React.FC<{
     onRefresh?: () => Promise<void>;
     /** Answer and resolve a PR's review threads; without it they are read only. */
     threadActions?: ReferenceThreadActions;
-}> = ({ item, directory, pullStatus, linearDetail, githubDetail, purpose, pinned, includeDiff, onIncludeDiffChange, now, footer, pullLinks, linearStateControl, reply, labelsControl, reviewersControl, onOpenChecks, commentAttachments, stateMenu, onOpenLinearIssue, onRefresh, threadActions }) => {
+    /** Opens another layer of the previewed PR's stack; without it the layers are plain text. */
+    onOpenStackLayer?: (layer: PullRequestStackLayer) => void;
+}> = ({ item, directory, pullStatus, linearDetail, githubDetail, purpose, pinned, includeDiff, onIncludeDiffChange, now, footer, pullLinks, linearStateControl, reply, labelsControl, reviewersControl, onOpenChecks, commentAttachments, stateMenu, onOpenLinearIssue, onRefresh, threadActions, onOpenStackLayer }) => {
     const { t } = useI18n();
     const rewriteMarkdown = useGitLabUploadRewrite(directory, item?.source === 'github' ? item.reference : null);
     if (!item) {
@@ -691,6 +755,7 @@ export const ReferencePreview: React.FC<{
                 stateMenu={stateMenu}
                 onRefresh={onRefresh}
                 threadActions={threadActions}
+                onOpenStackLayer={onOpenStackLayer}
             />
         </ReferenceMarkdownRewriteContext.Provider>
     );

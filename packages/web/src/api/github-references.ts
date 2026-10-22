@@ -12,6 +12,7 @@ import type {
   GitHubReferenceDetailResult,
   GitHubReferencesOptions,
   GitHubReferencesResult,
+  GitHubReferencesAcrossResult,
   SourceControlReadContext,
 } from '@openchamber/ui/lib/api/types';
 import type { RuntimeFetchOptions } from '@openchamber/ui/lib/runtime-fetch';
@@ -45,34 +46,36 @@ const referenceFields = {
   sourceRepo: z.object({ owner: z.string(), repo: z.string(), source: z.string() }),
 };
 
+const referenceSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('issue'),
+    ...referenceFields,
+    state: z.enum(['open', 'completed', 'not_planned']),
+  }),
+  z.object({
+    kind: z.literal('pull'),
+    ...referenceFields,
+    state: z.enum(['open', 'closed', 'merged']),
+    draft: z.boolean(),
+    head: z.string(),
+    base: z.string(),
+    headSha: z.string(),
+    headRepo: z.object({
+      owner: z.string(),
+      repo: z.string(),
+      url: z.string(),
+      cloneUrl: z.string().optional(),
+      sshUrl: z.string().optional(),
+    }).nullable(),
+  }),
+]);
+
 const referencesResultSchema = z.discriminatedUnion('connected', [
   z.object({ connected: z.literal(false) }),
   z.object({
     connected: z.literal(true),
     repo: z.object({ owner: z.string(), repo: z.string(), url: z.string() }).nullable(),
-    items: z.array(z.discriminatedUnion('kind', [
-      z.object({
-        kind: z.literal('issue'),
-        ...referenceFields,
-        state: z.enum(['open', 'completed', 'not_planned']),
-      }),
-      z.object({
-        kind: z.literal('pull'),
-        ...referenceFields,
-        state: z.enum(['open', 'closed', 'merged']),
-        draft: z.boolean(),
-        head: z.string(),
-        base: z.string(),
-        headSha: z.string(),
-        headRepo: z.object({
-          owner: z.string(),
-          repo: z.string(),
-          url: z.string(),
-          cloneUrl: z.string().optional(),
-          sshUrl: z.string().optional(),
-        }).nullable(),
-      }),
-    ])),
+    items: z.array(referenceSchema),
     cursor: z.string().nullable(),
     hasMore: z.boolean(),
     total: z.number(),
@@ -123,10 +126,37 @@ const referenceDetailResultSchema = z.discriminatedUnion('connected', [
           url: z.string().nullable(),
         })).default([]),
         commitTotal: z.number().nullable().default(null),
+        // Absent when the host could not say, or said something that does not
+        // hold together; null when the PR is in no stack. Never fails the detail.
+        stack: z.object({
+          number: z.number().nullable(),
+          base: z.string(),
+          layers: z.array(z.object({
+            number: z.number(),
+            title: z.string(),
+            url: z.string(),
+            state: z.enum(['open', 'closed', 'merged']),
+            draft: z.boolean(),
+            head: z.string(),
+          })),
+        }).nullable().optional().catch(undefined),
       }).nullable(),
     }).nullable(),
   }),
 ]);
+
+const referencesAcrossResultSchema = z.strictObject({
+  items: z.array(referenceSchema.and(z.object({ directory: z.string().min(1) }))),
+  cursor: z.string().nullable(),
+  hasMore: z.boolean(),
+  total: z.number().int().nonnegative(),
+  repositories: z.array(z.union([
+    z.strictObject({ directory: z.string().min(1), status: z.literal('included'),
+      repo: z.strictObject({ owner: z.string(), repo: z.string(), url: z.string() }),
+    }),
+    z.strictObject({ directory: z.string().min(1), status: z.enum(['no-repo', 'disconnected', 'invalid-context', 'error']) }),
+  ])),
+});
 
 const pullStatusesResultSchema = z.discriminatedUnion('connected', [
   z.object({ connected: z.literal(false) }),
@@ -192,8 +222,26 @@ export const fetchGitHubReferenceDetail = async (
   query.set('owner', item.owner);
   query.set('repo', item.repo);
   query.set('number', String(item.number));
+  const host = item.host?.trim();
+  // A ref with an enterprise host names its instance; a missing host is github.com.
+  if (host && host !== 'github.com') {
+    query.set('host', host);
+  }
   const response = await fetch('/api/source-control/github/references/detail', { query, headers: { Accept: 'application/json' } });
   return readPayload(response, referenceDetailResultSchema, 'Failed to load issue or pull request detail');
+};
+
+export const fetchGitHubReferencesAcross = async (
+  fetch: GitHubFetch,
+  contexts: SourceControlReadContext[],
+  options: GitHubReferencesOptions,
+): Promise<GitHubReferencesAcrossResult> => {
+  const response = await fetch('/api/source-control/github/references/across', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contexts, ...options, query: options.query?.trim() }),
+  });
+  return readPayload(response, referencesAcrossResultSchema, 'Failed to load issues and pull requests');
 };
 
 export const fetchGitHubPullStatuses = async (
@@ -202,7 +250,12 @@ export const fetchGitHubPullStatuses = async (
   pulls: GitHubPullRequestRef[],
 ): Promise<GitHubPullStatusesResult> => {
   const query = readContextQuery(context);
-  query.set('pulls', pulls.map((pull) => `${pull.owner}/${pull.repo}#${pull.number}`).join(','));
+  query.set('pulls', pulls.map((pull) => {
+    const host = pull.host?.trim().toLowerCase();
+    // The server reads `owner/repo#number`, optionally `@host`; a missing or
+    // github.com host is the default, so it is left off.
+    return `${pull.owner}/${pull.repo}#${pull.number}${host && host !== 'github.com' ? `@${host}` : ''}`;
+  }).join(','));
   const response = await fetch('/api/source-control/github/references/status', { query, headers: { Accept: 'application/json' } });
   return readPayload(response, pullStatusesResultSchema, 'Failed to load pull request statuses');
 };

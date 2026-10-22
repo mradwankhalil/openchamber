@@ -17,12 +17,14 @@ export const BROWSER_CONTROL_ACTIONS = [
   'browser.snapshot',
   'browser.click',
   'browser.type',
+  'browser.select',
   'browser.scroll',
   'browser.back',
   'browser.forward',
   'browser.inspect',
   'browser.capture',
   'browser.resize',
+  'browser.close',
 ] as const;
 export type BrowserControlAction = (typeof BROWSER_CONTROL_ACTIONS)[number];
 
@@ -52,10 +54,14 @@ export type BrowserOpenParameters = BrowserTabTarget & { url: string; viewport?:
 export type BrowserSnapshotParameters = BrowserTabTarget & { selector?: string };
 export type BrowserClickParameters = BrowserTabTarget & { selector?: string; text?: string };
 export type BrowserTypeParameters = BrowserTabTarget & { selector: string; value: string; submit: boolean };
+export type BrowserSelectParameters = BrowserTabTarget & {
+  selector: string;
+} & ({ label: string; value?: never } | { value: string; label?: never });
 export type BrowserScrollParameters = BrowserTabTarget & { selector?: string; direction?: BrowserScrollDirection };
 export type BrowserInspectParameters = BrowserTabTarget & { selector: string };
 export type BrowserCaptureParameters = BrowserTabTarget & { label?: string };
 export type BrowserResizeParameters = BrowserTabTarget & { viewport: BrowserViewportMode };
+export type BrowserCloseParameters = BrowserTabTarget;
 
 /**
  * Where an action came from: the project the agent works in and the chat it
@@ -75,12 +81,14 @@ export type BrowserProviderRequest = ProviderRequestEnvelope & (
   | { action: 'browser.snapshot'; parameters: BrowserSnapshotParameters }
   | { action: 'browser.click'; parameters: BrowserClickParameters }
   | { action: 'browser.type'; parameters: BrowserTypeParameters }
+  | { action: 'browser.select'; parameters: BrowserSelectParameters }
   | { action: 'browser.scroll'; parameters: BrowserScrollParameters }
   | { action: 'browser.back'; parameters: BrowserTabTarget }
   | { action: 'browser.forward'; parameters: BrowserTabTarget }
   | { action: 'browser.inspect'; parameters: BrowserInspectParameters }
   | { action: 'browser.capture'; parameters: BrowserCaptureParameters }
   | { action: 'browser.resize'; parameters: BrowserResizeParameters }
+  | { action: 'browser.close'; parameters: BrowserCloseParameters }
 );
 
 export type BrowserViewportSummary = {
@@ -90,6 +98,13 @@ export type BrowserViewportSummary = {
 };
 
 export type BrowserElementBounds = { x: number; y: number; width: number; height: number };
+
+export type BrowserSnapshotOption = {
+  label: string;
+  value: string;
+  selected: boolean;
+  disabled: boolean;
+};
 
 /** One interactive element of a snapshot; absent fields mean empty or default. */
 export type BrowserSnapshotElement = {
@@ -101,6 +116,9 @@ export type BrowserSnapshotElement = {
   role?: string;
   label?: string;
   disabled?: true;
+  options?: BrowserSnapshotOption[];
+  optionsTruncated?: boolean;
+  multiple?: boolean;
   missingAccessibleName?: true;
 };
 
@@ -144,6 +162,7 @@ export type BrowserConsoleProblem = {
 
 export type BrowserClickData = { clicked: string; label: string; url: string };
 export type BrowserTypeData = { selector: string; url: string };
+export type BrowserSelectData = { selector: string; label: string; value: string; url: string };
 export type BrowserScrollData = {
   scrollY: number;
   maxScrollY: number;
@@ -172,17 +191,25 @@ export type BrowserCaptureData = {
   viewport: BrowserViewportSummary;
 };
 export type BrowserResizeData = { viewport: BrowserViewportSummary };
+/**
+ * A closed tab: what the provider or panel actually removed. `tabId` names it
+ * when the provider has tabs; a provider with a single page refuses the action
+ * rather than reporting a close it did not do.
+ */
+export type BrowserCloseData = { closed: true; tabId?: string };
 
 export type BrowserProviderData =
   | BrowserOpenData
   | BrowserSnapshotData
   | BrowserClickData
   | BrowserTypeData
+  | BrowserSelectData
   | BrowserScrollData
   | BrowserNavigationData
   | BrowserInspectData
   | BrowserCaptureData
-  | BrowserResizeData;
+  | BrowserResizeData
+  | BrowserCloseData;
 
 /**
  * What the service answers. `error` is read by the agent, so it should say

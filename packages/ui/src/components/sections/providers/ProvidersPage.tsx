@@ -20,7 +20,7 @@ import { formatCompactNumber } from '@/lib/numberFormat';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { opencodeClient } from '@/lib/opencode/client';
-import { loadIntegrationCatalog, peekIntegrationCatalog, type IntegrationCatalog } from '@/lib/opencode/integration-catalog';
+import { loadIntegrationCatalog, peekIntegrationCatalog, subscribeCredentialChanges, type IntegrationCatalog } from '@/lib/opencode/integration-catalog';
 import { fetchDisabledProviders, setProviderDisabled as setProviderDisabledRequest } from '@/lib/disabledProviders';
 import { requiresProviderAuth } from './providerAvailability';
 import { listConnectableProviders } from './connectableProviders';
@@ -45,6 +45,8 @@ import { useEnterpriseMode } from '@/stores/useEnterprisePolicyStore';
 import { ClassificationProvidersPage } from '@/components/sections/classification/ClassificationProvidersPage';
 import { SettingsBackButton } from '@/components/sections/shared/SettingsCards';
 import { ProviderAccounts } from './ProviderAccounts';
+import { ProviderAccountSwitchToggle } from './ProviderAccountSwitchToggle';
+import { isVSCodeRuntime } from '@/lib/desktop';
 import { CustomProviderForm } from './CustomProviderForm';
 
 import { ProviderOAuthMethods } from './ProviderOAuthMethods';
@@ -188,6 +190,7 @@ export const ProvidersPage: React.FC = () => {
   // Bumped after a credential write so the integration snapshot (which owns the
   // "connected" signal in v2) is refetched even when the selection is unchanged.
   const [integrationsRevision, setIntegrationsRevision] = React.useState(0);
+  const backgroundIntegrationsReadRef = React.useRef(false);
   const [showAuthPanel, setShowAuthPanel] = React.useState(false);
   // An administrator turned on enterprise mode: providers come from the
   // OpenCode config, and the server refuses new ones and new keys.
@@ -215,6 +218,9 @@ export const ProvidersPage: React.FC = () => {
     // grid reads the same list for each provider's status, and the connect
     // page derives what can still be connected from it.
     let isMounted = true;
+    // A re-read nobody asked for keeps the list on screen quietly when it fails.
+    const background = backgroundIntegrationsReadRef.current;
+    backgroundIntegrationsReadRef.current = false;
 
     const loadIntegrations = async () => {
       try {
@@ -225,6 +231,7 @@ export const ProvidersPage: React.FC = () => {
       } catch (error) {
         if (!isMounted) return;
         console.error('Failed to load provider integrations:', error);
+        if (background) return;
         // A list already on screen stays; only a page with none says it failed.
         setIntegrationsLoadFailed(true);
         toast.error(t('settings.providers.page.toast.authMethodsLoadFailed'));
@@ -237,6 +244,16 @@ export const ProvidersPage: React.FC = () => {
       isMounted = false;
     };
   }, [integrationsRevision, t]);
+
+  // An account switch made outside this page (after a usage limit, by another
+  // client, in OpenCode's TUI) moves the Active mark too.
+  React.useEffect(
+    () => subscribeCredentialChanges(() => {
+      backgroundIntegrationsReadRef.current = true;
+      setIntegrationsRevision((revision) => revision + 1);
+    }),
+    [],
+  );
 
   const connectedProviderIds = React.useMemo(
     () => new Set(providers.map((provider) => provider.id)),
@@ -881,6 +898,11 @@ export const ProvidersPage: React.FC = () => {
             <span className="typography-ui-label text-foreground">{t('settings.providers.page.auth.incomplete')}</span>
             {showApiKeyAuth ? <SettingsInfoHint>{t('settings.providers.page.auth.incompleteHint')}</SettingsInfoHint> : null}
           </div>
+        ) : null}
+
+        {/* The switch happens in the managed OpenCode plugin; VS Code runs its own OpenCode without it. */}
+        {usedCredentials.length > 0 && !isVSCodeRuntime() ? (
+          <ProviderAccountSwitchToggle providerId={selectedProvider.id} accountCount={usedCredentials.length} />
         ) : null}
 
         {enterpriseLocked ? (

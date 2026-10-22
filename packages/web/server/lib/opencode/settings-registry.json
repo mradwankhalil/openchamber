@@ -153,6 +153,9 @@
     "agentControlToolEnabled": {
       "scope": "instance"
     },
+    "agentScheduleToolEnabled": {
+      "scope": "instance"
+    },
     "agentWebToolEnabled": {
       "scope": "instance"
     },
@@ -184,6 +187,10 @@
       "scope": "instance"
     },
     "agentMemoryFeatureAvailable": {
+      "scope": "instance",
+      "computed": true
+    },
+    "overviewFeatureAvailable": {
       "scope": "instance",
       "computed": true
     },
@@ -279,6 +286,10 @@
       "scope": "profile",
       "perSurface": true
     },
+    "sidebarListSessionGrouping": {
+      "scope": "profile",
+      "perSurface": true
+    },
     "sidebarProjectSortOrder": {
       "scope": "profile"
     },
@@ -343,6 +354,10 @@
     },
     "collapsibleUserMessages": {
       "scope": "profile"
+    },
+    "stickyUserHeader": {
+      "scope": "profile",
+      "perSurface": true
     },
     "promptNavigatorEnabled": {
       "scope": "profile",
@@ -438,6 +453,12 @@
         "desktop"
       ]
     },
+    "liveBrowserTabLimit": {
+      "scope": "profile",
+      "surfaces": [
+        "desktop"
+      ]
+    },
     "openTrackerLinksOnBoard": {
       "scope": "profile",
       "surfaces": [
@@ -469,10 +490,16 @@
     "enterToSendConfigured": {
       "scope": "profile"
     },
+    "mobileReturnKeySends": {
+      "scope": "profile"
+    },
     "persistChatDraft": {
       "scope": "profile"
     },
     "largeTextPasteBehavior": {
+      "scope": "profile"
+    },
+    "savePastedImagesAsFiles": {
       "scope": "profile"
     },
     "followUpBehavior": {
@@ -549,7 +576,22 @@
     "smallModelOverride": {
       "scope": "profile"
     },
+    "smallModelVariant": {
+      "scope": "profile"
+    },
     "walkthroughModelOverride": {
+      "scope": "profile"
+    },
+    "walkthroughModelVariant": {
+      "scope": "profile"
+    },
+    "fallbackModel": {
+      "scope": "profile"
+    },
+    "fallbackVariant": {
+      "scope": "profile"
+    },
+    "accountSwitchProviders": {
       "scope": "profile"
     },
     "zenModel": {
@@ -757,6 +799,14 @@
       "local": true
     },
     "contextRailHiddenSurfaces": {
+      "scope": "device",
+      "local": true
+    },
+    "mobileWorkspaceTabOrder": {
+      "scope": "device",
+      "local": true
+    },
+    "mobileWorkspaceHiddenTabs": {
       "scope": "device",
       "local": true
     },

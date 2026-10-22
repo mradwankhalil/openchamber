@@ -48,6 +48,12 @@ describe('settings registry', () => {
       useUIStore.setState(original, true);
     }
   });
+  test('round-trips the small model thinking variant', () => {
+    expect(parseSettingsDocument({ smallModelVariant: 'high' })).toEqual({ smallModelVariant: 'high' });
+    expect(parseSettingsDocument({ smallModelVariant: '' })).toEqual({});
+    expect(parseSettingsDocument({ smallModelVariant: 3 })).toEqual({});
+  });
+
   test('accepts only interface languages the UI ships', () => {
     expect(parseSettingsDocument({ locale: 'zh-CN' })).toEqual({ locale: 'zh-CN' });
     expect(parseSettingsDocument({ locale: 'xx' })).toEqual({});

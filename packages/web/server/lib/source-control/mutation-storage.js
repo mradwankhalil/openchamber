@@ -27,7 +27,9 @@ const KINDS = [
 const STATES = ['running', 'succeeded', 'failed', 'outcome-unknown'];
 const TERMINAL_STATES = ['succeeded', 'failed'];
 const TARGET_OPTIONAL_KEYS = ['number', 'head', 'base', 'headSha'];
-const RESULT_KEYS = [...TARGET_OPTIONAL_KEYS, 'state', 'merged', 'ready', 'commented', 'failureStatus', 'failureCode'];
+const RESULT_KEYS = [...TARGET_OPTIONAL_KEYS, 'state', 'merged', 'outcome', 'stacked', 'ready', 'commented', 'failureStatus', 'failureCode'];
+// A merge GitHub accepted without finishing it yet: in a merge queue, or still running.
+const MERGE_OUTCOMES = ['queued', 'merging'];
 
 const emptyState = () => ({ version: VERSION, records: {} });
 const isBoolean = (value) => Object.prototype.toString.call(value) === '[object Boolean]';
@@ -94,6 +96,8 @@ const isTerminalResult = (value) => isPlainObject(value)
   && (value.headSha === undefined || isNonEmptyString(value.headSha))
   && (value.state === undefined || isNonEmptyString(value.state))
   && (value.merged === undefined || isBoolean(value.merged))
+  && (value.outcome === undefined || MERGE_OUTCOMES.includes(value.outcome))
+  && (value.stacked === undefined || isBoolean(value.stacked))
   && (value.commented === undefined || isBoolean(value.commented))
   && (value.ready === undefined || isBoolean(value.ready))
   && (value.failureStatus === undefined || isFailureStatus(value.failureStatus))

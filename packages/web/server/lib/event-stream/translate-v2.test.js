@@ -71,8 +71,11 @@ describe('translateWireEvent', () => {
   });
 
   test('execution events synthesize the status vocabulary v2 no longer emits', () => {
-    expect(translateWireEvent(wire('session.execution.started', { sessionID: 's1' })))
-      .toMatchObject([{ type: 'session.status', properties: { sessionID: 's1', status: { type: 'busy' } } }]);
+    const started = translateWireEvent(wire('session.execution.started', { sessionID: 's1' }));
+    expect(started).toMatchObject([{ type: 'session.status', properties: { sessionID: 's1', status: { type: 'busy' } } }]);
+    expect(started[0].properties.turnStartedAt).toBe(started[0].created);
+    expect(translateWireEvent(wire('session.step.started', { sessionID: 's1', assistantMessageID: 'msg_1' }))[1].properties)
+      .not.toHaveProperty('turnStartedAt');
 
     const succeeded = translateWireEvent(wire('session.execution.succeeded', { sessionID: 's1' }));
     expect(succeeded.map((entry) => entry.type)).toEqual(['session.status', 'session.idle']);

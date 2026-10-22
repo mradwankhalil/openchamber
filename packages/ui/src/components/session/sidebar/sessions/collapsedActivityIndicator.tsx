@@ -41,9 +41,8 @@ export function CollapsedActivityIndicator({
 export const CollapsedSessionActivityIndicator: React.FC<{
   nodes: SessionNode[];
   blockingSessionIds?: readonly string[];
-  includeUnreadSubtasks: boolean;
-}> = ({ nodes, blockingSessionIds, includeUnreadSubtasks }) => {
-  const resolved = useCollapsedSessionActivityState({ nodes, blockingSessionIds, includeUnreadSubtasks });
+}> = ({ nodes, blockingSessionIds }) => {
+  const resolved = useCollapsedSessionActivityState({ nodes, blockingSessionIds });
   if (!resolved) return null;
   return <CollapsedActivityIndicator state={resolved} />;
 };

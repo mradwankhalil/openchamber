@@ -13,7 +13,8 @@ import * as React from 'react';
 
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import type {
-    GitHubPullReference,
+    SourceControlBindingRead,
+    GitHubPullRequestRef,
     GitHubPullStatus,
     GitHubReference,
     GitHubReferenceDetail,
@@ -29,7 +30,7 @@ import type {
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { GITHUB_SOURCE_CONTROL_IDENTITY, resolveSourceControlIdentity } from '@/lib/source-control/identity';
 import { getSourceControlAuthKey, useSourceControlAuthStore } from '@/stores/useSourceControlAuthStore';
-import { useRepositoryBinding } from '@/lib/source-control/repository-binding';
+import { useRepositoryBinding, useRepositoryBindings } from '@/lib/source-control/repository-binding';
 import { useLinearAuthStore } from '@/stores/useLinearAuthStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
@@ -42,17 +43,33 @@ import {
 
 
 import { fetchGitLabReferenceDetail, fetchGitLabReferencePage } from './gitlabReferences';
-import { createListCache, createValueCache, useCachedList, useCachedValue, useReferenceRevalidation, type CachedValue, type ListPage } from './referenceCache';
+import {
+    NO_ACROSS_CONTEXTS,
+    fetchAcrossPage,
+    ensurePullStatuses,
+    groupPullsByDirectory,
+    needsPullStatus,
+    partitionAcrossContexts,
+    pullStatusKey,
+    type AcrossContexts,
+    type AcrossReference,
+    type PullStatusGroup,
+    type ReadContextState,
+} from './acrossRepositories';
+import { isNewerThanRead, useLiveLinearIssues, useLivePullStatuses, useLiveReferences, type LivePullStatus } from './liveReferences';
+import { createListCache, createValueCache, useCachedList, useCachedValue, useReferenceRevalidation, type CachedValue, type ListPage, type PageRead, type ReadStamp } from './referenceCache';
 import type { LinearReferenceFilter } from './referencePickerItems';
 
 const githubLists = createListCache<GitHubReference>();
+const githubAcrossLists = createListCache<AcrossReference>();
 const linearLists = createListCache<LinearIssueSummary>();
 const linearDetails = createValueCache<LinearIssue>();
 const githubDetails = createValueCache<GitHubReferenceDetail>();
 
 export type ReferenceSourceStatus = 'ready' | 'disconnected' | 'unsupported';
 
-const BUILT_IN_IDENTITIES: SourceControlIdentity[] = [
+/** The hosts every remote is recognised on, whether or not an account there is connected. */
+export const BUILT_IN_SOURCE_CONTROL_IDENTITIES: readonly SourceControlIdentity[] = [
     GITHUB_SOURCE_CONTROL_IDENTITY,
     { provider: 'gitlab', instance: 'https://gitlab.com' },
 ];
@@ -61,27 +78,65 @@ const BUILT_IN_IDENTITIES: SourceControlIdentity[] = [
  * The project's binding and every host it lives on: the providers it is bound
  * to and the hosts its remotes point at, whether or not an account there works.
  */
+function repositoryHostsOf(read: SourceControlBindingRead | null, knownIdentities: readonly SourceControlIdentity[]): SourceControlIdentity[] {
+    if (!read) return [];
+    const found = new Map<string, SourceControlIdentity>();
+    const add = (identity: SourceControlIdentity) => found.set(getSourceControlAuthKey(identity), identity);
+    for (const provider of read.binding?.providers ?? []) add({ provider: provider.provider, instance: provider.instance });
+    const identities = [...knownIdentities, ...BUILT_IN_SOURCE_CONTROL_IDENTITIES];
+    for (const remote of read.repository.remotes) {
+        const identity = resolveSourceControlIdentity(
+            { name: remote.name, fetchUrl: remote.fetch.displayUrl, pushUrl: remote.push.displayUrl },
+            identities,
+        );
+        if (identity) add(identity);
+    }
+    return [...found.values()];
+}
+
 function useRepositoryHosts(directory: string | null) {
     const { sourceControl } = useRuntimeAPIs();
     const binding = useRepositoryBinding(directory, sourceControl, Boolean(directory));
     const knownIdentities = useSourceControlAuthStore((state) => state.identities);
-    const hosts = React.useMemo(() => {
-        const read = binding.read;
-        if (!read) return [];
-        const found = new Map<string, SourceControlIdentity>();
-        const add = (identity: SourceControlIdentity) => found.set(getSourceControlAuthKey(identity), identity);
-        for (const provider of read.binding?.providers ?? []) add({ provider: provider.provider, instance: provider.instance });
-        const identities = [...knownIdentities, ...BUILT_IN_IDENTITIES];
-        for (const remote of read.repository.remotes) {
-            const identity = resolveSourceControlIdentity(
-                { name: remote.name, fetchUrl: remote.fetch.displayUrl, pushUrl: remote.push.displayUrl },
-                identities,
-            );
-            if (identity) add(identity);
-        }
-        return [...found.values()];
-    }, [binding.read, knownIdentities]);
+    const hosts = React.useMemo(() => repositoryHostsOf(binding.read, knownIdentities), [binding.read, knownIdentities]);
     return { binding, hosts };
+}
+
+/** The context a folder is read with once its binding and accounts are known: GitHub's, else GitLab's. */
+function pickReadContext(
+    binding: { contexts: readonly SourceControlReadContext[]; status: 'idle' | 'loading' | 'ready' | 'stale' | 'error' },
+    hostPending: boolean,
+): ReadContextState {
+    const context = binding.contexts.find((candidate) => candidate.provider === 'github')
+        ?? binding.contexts.find((candidate) => candidate.provider === 'gitlab')
+        ?? null;
+    if (context) return context;
+    if (binding.status === 'error') return 'missing';
+    return binding.status === 'ready' && !hostPending ? 'missing' : null;
+}
+
+const NO_DIRECTORIES: readonly string[] = [];
+
+/**
+ * The read contexts of several folders at once, for a list across the
+ * repositories under a project folder. `ready` once every folder's context is
+ * known; the GitHub ones are what a search is sent, the rest are left out.
+ */
+function useGitHubReadContexts(directories: readonly string[]): AcrossContexts {
+    const { sourceControl } = useRuntimeAPIs();
+    const bindings = useRepositoryBindings(directories, sourceControl);
+    const knownIdentities = useSourceControlAuthStore((state) => state.identities);
+    const authEntries = useSourceControlAuthStore((state) => state.entries);
+    return React.useMemo(() => {
+        if (directories.length === 0) return NO_ACROSS_CONTEXTS;
+        return partitionAcrossContexts(directories.map((directory, index) => {
+            const binding = bindings[index];
+            if (!binding) return { directory, state: null };
+            const hostPending = repositoryHostsOf(binding.read, knownIdentities)
+                .some((host) => !authEntries[getSourceControlAuthKey(host)]?.hasChecked);
+            return { directory, state: pickReadContext(binding, hostPending) };
+        }));
+    }, [authEntries, bindings, directories, knownIdentities]);
 }
 
 /**
@@ -126,12 +181,7 @@ export function useGitHubReadContext(directory: string | null): SourceControlRea
     const { binding, hosts } = useRepositoryHosts(directory);
     const hostPending = useSourceControlAuthStore((state) => hosts
         .some((host) => !state.entries[getSourceControlAuthKey(host)]?.hasChecked));
-    const context = binding.contexts.find((candidate) => candidate.provider === 'github')
-        ?? binding.contexts.find((candidate) => candidate.provider === 'gitlab')
-        ?? null;
-    if (context) return context;
-    if (binding.status === 'error') return 'missing';
-    return binding.status === 'ready' && !hostPending ? 'missing' : null;
+    return pickReadContext(binding, hostPending);
 }
 
 /**
@@ -239,7 +289,49 @@ export function useGitHubReferenceList(options: {
         if (!result.repo) return { kind: 'unavailable', reason: 'no-repo' };
         return { kind: 'page', items: result.items, cursor: result.cursor, hasMore: result.hasMore };
     }, [context, kind, people, sourceControl, state, text]);
-    return useCachedList(githubLists, key, fetchPage);
+    const list = useCachedList(githubLists, key, fetchPage);
+    const readable = context && context !== 'missing' ? context : null;
+    const contextOf = React.useCallback(() => readable, [readable]);
+    const live = useLiveReferences(list.items, contextOf, list.pageReads);
+    return { ...list, items: live.items, followed: live.followed };
+}
+
+const NO_ACROSS_ITEMS: AcrossReference[] = [];
+
+/**
+ * Issues or PRs of every GitHub repository under a project folder, one request
+ * per page (`githubReferencesAcross`). Waits until every folder's context is
+ * known, and its key carries the set of contexts asked, so a change in it
+ * lists again. Folders on GitLab or without a context are not asked; those the
+ * answer skipped come back as `skipped`. `contexts` is what the list was built from.
+ */
+export function useGitHubAcrossReferenceList(options: {
+    enabled: boolean;
+    directories: readonly string[];
+    kind: GitHubReferenceKind;
+    filter: RepositoryReferenceFilter;
+    query: string;
+}) {
+    const { sourceControl } = useRuntimeAPIs();
+    const { enabled, directories, kind, filter, query } = options;
+    const { state, people } = filter;
+    const contexts = useGitHubReadContexts(enabled ? directories : NO_DIRECTORIES);
+    const text = query.trim();
+    const key = enabled && contexts.ready
+        ? JSON.stringify([getRuntimeKey(), contexts.github.map(({ directory, context }) => [directory, readContextCacheKey(context)]), kind, state, people, text])
+        : null;
+    const fetchPage = React.useCallback(async (cursor: string | null): Promise<ListPage<AcrossReference>> => {
+        // Absent where the runtime cannot (VS Code); the board never offers the search there.
+        const search = sourceControl.githubReferencesAcross?.bind(sourceControl);
+        return fetchAcrossPage(search, contexts.github, { kind, state, people, query: text, cursor });
+    }, [contexts.github, kind, people, sourceControl, state, text]);
+    const list = useCachedList(githubAcrossLists, key, fetchPage);
+    const contextOf = React.useCallback(
+        (item: AcrossReference) => contexts.github.find((entry) => entry.directory === item.directory)?.context ?? null,
+        [contexts.github],
+    );
+    const live = useLiveReferences(list.items, contextOf, list.pageReads);
+    return { ...list, items: live.items.length === 0 ? NO_ACROSS_ITEMS : live.items, followed: live.followed, contexts };
 }
 
 export function useLinearReferenceList(options: {
@@ -269,7 +361,9 @@ export function useLinearReferenceList(options: {
         if (result.connected === false) return { kind: 'unavailable', reason: 'disconnected' };
         return { kind: 'page', items: result.issues ?? [], cursor: result.cursor ?? null, hasMore: Boolean(result.hasMore) };
     }, [linear, people, priority, status, teamId, text]);
-    return useCachedList(linearLists, key, fetchPage);
+    const list = useCachedList(linearLists, key, fetchPage);
+    const live = useLiveLinearIssues(list.items, list.pageReads);
+    return { ...list, items: live.items, followed: live.followed };
 }
 
 /**
@@ -315,37 +409,31 @@ const githubPullStatuses = createValueCache<GitHubPullStatus | null>(200);
 const PULL_STATUS_BATCH = 10;
 const IDLE: CachedValue<GitHubPullStatus | null> = { status: 'idle' };
 
-/** Forgets every PR's checks and mergeability, so the lists showing them ask again: the board's refresh. */
+/** Forgets every PR's checks and mergeability, so the lists showing them ask again: the board's list refresh. */
 export const forgetGitHubPullStatuses = (): void => githubPullStatuses.clear();
 
-/** An open PR, draft or not: its preview shows checks, and a ready one is coloured by them. */
-const needsPullStatus = (reference: GitHubReference): reference is GitHubPullReference => (
-    reference.kind === 'pull' && reference.state === 'open'
-);
+/** Forgets one PR's checks and mergeability, at any head commit: the preview's refresh. */
+export const forgetGitHubPullStatus = (pull: GitHubPullRequestRef): void => {
+    const marker = `|${pull.owner}/${pull.repo}#${pull.number}@`.toLowerCase();
+    githubPullStatuses.forget((key) => key.toLowerCase().includes(marker));
+};
 
-const samePull = (status: GitHubPullStatus, pull: GitHubPullReference) => (
-    status.number === pull.number
-    && status.owner.toLowerCase() === pull.sourceRepo.owner.toLowerCase()
-    && status.repo.toLowerCase() === pull.sourceRepo.repo.toLowerCase()
+const pullStatusScope = (group: PullStatusGroup): string => (
+    JSON.stringify([getRuntimeKey(), readContextCacheKey(group.context), group.directory])
 );
 
 /**
- * Checks and mergeability of the open PRs a list shows, asked after the list
- * in batches of a page, so they colour like the sidebar. GitHub only: a GitLab
- * project's items, issues and closed PRs ask nothing and answer `idle`. A ready
- * null is a PR GitHub could not resolve.
+ * Checks and mergeability of the open PRs of each group, asked after the list
+ * in batches of a page, so they colour like the sidebar. A group is a folder
+ * and the GitHub context its PRs are read through; groups are asked
+ * independently. The reader answers `idle` for anything outside them.
  */
-export function useGitHubPullStatuses(directory: string | null, references: readonly GitHubReference[]) {
+function usePullStatusGroups(groups: readonly PullStatusGroup[]) {
     const { sourceControl } = useRuntimeAPIs();
-    const context = useGitHubReadContext(directory);
-    const github = context && context !== 'missing' && context.provider === 'github' ? context : null;
-    const scope = github ? JSON.stringify([getRuntimeKey(), readContextCacheKey(github), directory]) : null;
-    const keyOf = React.useCallback(
-        (pull: GitHubPullReference) => `${scope}|${pull.sourceRepo.owner}/${pull.sourceRepo.repo}#${pull.number}@${pull.headSha}`,
-        [scope],
+    const keys = React.useMemo(
+        () => groups.flatMap((group) => group.pulls.map((pull) => pullStatusKey(pullStatusScope(group), pull))),
+        [groups],
     );
-    const pulls = React.useMemo(() => (scope ? references.filter(needsPullStatus) : []), [references, scope]);
-    const keys = React.useMemo(() => pulls.map(keyOf), [keyOf, pulls]);
 
     // Through the store, not an effect: React reads the version again once it
     // has subscribed, so an answer that lands between a render and its
@@ -362,27 +450,77 @@ export function useGitHubPullStatuses(directory: string | null, references: read
     // by a refresh or gone old are asked again; fresh and pending ones are
     // skipped by `ensureMany`.
     React.useEffect(() => {
-        if (!github || pulls.length === 0) return;
-        const byKey = new Map(pulls.map((pull) => [keyOf(pull), pull]));
-        githubPullStatuses.ensureMany(keys, async (batch) => {
-            const asked = batch.flatMap((key) => byKey.get(key) ?? []);
-            const result = await sourceControl.githubPullStatuses(
-                github,
-                asked.map((pull) => ({ owner: pull.sourceRepo.owner, repo: pull.sourceRepo.repo, number: pull.number })),
-            );
-            if (!result.connected) throw new Error('GitHub is not connected');
-            const answers = new Map<string, GitHubPullStatus | null>(batch.map((key) => [key, null]));
-            for (const pull of asked) {
-                answers.set(keyOf(pull), result.statuses.find((status) => samePull(status, pull)) ?? null);
-            }
-            return answers;
-        }, PULL_STATUS_BATCH);
-    }, [github, keyOf, keys, pulls, revalidation, sourceControl, version]);
+        ensurePullStatuses(
+            githubPullStatuses,
+            groups,
+            pullStatusScope,
+            (context, pulls) => sourceControl.githubPullStatuses(
+                context,
+                pulls.map((pull) => ({ owner: pull.sourceRepo.owner, repo: pull.sourceRepo.repo, number: pull.number })),
+            ),
+            PULL_STATUS_BATCH,
+        );
+    }, [groups, revalidation, sourceControl, version]);
 
-    return (reference: GitHubReference): CachedValue<GitHubPullStatus | null> => {
-        if (!scope || !needsPullStatus(reference)) return IDLE;
-        return githubPullStatuses.read(keyOf(reference)) ?? IDLE;
+    return (reference: GitHubReference, directory: string | null): AskedPullStatus => {
+        const group = groups.find((candidate) => candidate.directory === directory);
+        if (!group || !needsPullStatus(reference)) return { value: IDLE, read: null };
+        const key = pullStatusKey(pullStatusScope(group), reference);
+        return { value: githubPullStatuses.read(key) ?? IDLE, read: githubPullStatuses.readOf(key) };
     };
+}
+
+/** A PR's status as asked for its list, and when it was read (null before an answer). */
+type AskedPullStatus = { value: CachedValue<GitHubPullStatus | null>; read: ReadStamp | null };
+
+/**
+ * A PR's status as asked for its list, or the followed one when that was
+ * answered later (`liveReferences.ts`): checks that finish while the list
+ * stays on screen recolour its row.
+ */
+const newerStatus = (asked: AskedPullStatus, live: LivePullStatus | null): CachedValue<GitHubPullStatus | null> => {
+    if (!live || (asked.read && !isNewerThanRead(live.fetchedAt, asked.read))) return asked.value;
+    return { status: 'ready', value: live.status };
+};
+
+/**
+ * Checks and mergeability of the open PRs a list shows. A GitHub project asks
+ * for them with the list; a GitLab project's come from its followed merge
+ * requests' pipelines. Issues and closed PRs answer `idle`. A ready null is a
+ * PR GitHub could not resolve.
+ */
+export function useGitHubPullStatuses(directory: string | null, references: readonly GitHubReference[]) {
+    const context = useGitHubReadContext(directory);
+    const readable = context && context !== 'missing' ? context : null;
+    const github = readable?.provider === 'github' ? readable : null;
+    const groups = React.useMemo(
+        () => (github && directory ? groupPullsByDirectory(references.map((reference) => ({ reference, directory })), partitionAcrossContexts([{ directory, state: github }])) : []),
+        [directory, github, references],
+    );
+    const askedOf = usePullStatusGroups(groups);
+    const pulls = React.useMemo(() => references.map((reference) => ({ reference, context: readable })), [readable, references]);
+    const liveOf = useLivePullStatuses(pulls);
+    return (reference: GitHubReference): CachedValue<GitHubPullStatus | null> => (
+        newerStatus(askedOf(reference, directory), liveOf(reference, readable))
+    );
+}
+
+/** The same for a list across repositories: each PR is asked through the context of the folder it came from. */
+export function useGitHubPullStatusesAcross(contexts: AcrossContexts, items: readonly AcrossReference[]) {
+    const groups = React.useMemo(
+        () => groupPullsByDirectory(items.map((item) => ({ reference: item, directory: item.directory })), contexts),
+        [contexts, items],
+    );
+    const askedOf = usePullStatusGroups(groups);
+    const contextOf = React.useCallback(
+        (directory: string | null) => contexts.github.find((entry) => entry.directory === directory)?.context ?? null,
+        [contexts.github],
+    );
+    const pulls = React.useMemo(() => items.map((item) => ({ reference: item, context: contextOf(item.directory) })), [contextOf, items]);
+    const liveOf = useLivePullStatuses(pulls);
+    return (reference: GitHubReference, directory: string | null): CachedValue<GitHubPullStatus | null> => (
+        newerStatus(askedOf(reference, directory), liveOf(reference, contextOf(directory)))
+    );
 }
 
 const linearDetailKey = (workspace: string, issueId: string) => JSON.stringify([getRuntimeKey(), workspace, issueId]);
@@ -412,11 +550,26 @@ export function useLinearIssueDetail(issueId: string | null, settled: boolean) {
         if (!linear || !issueId) throw new Error('Linear is not available here');
         return fetchLinearIssue(linear, issueId);
     }, [issueId, linear]);
-    const detail = useCachedValue(linearDetails, key, fetch, settled);
+    const cached = useCachedValue(linearDetails, key, fetch, settled);
+    // The issue's state as the server follows it, once that is newer than the read.
+    const issues = React.useMemo(() => (cached.status === 'ready' ? [cached.value] : []), [cached]);
+    const read = key ? linearDetails.readOf(key) : null;
+    const readAt = read?.at ?? 0;
+    const readForced = read?.forced ?? false;
+    const reads = React.useMemo<PageRead[]>(
+        () => (readAt ? [{ start: 0, read: { at: readAt, forced: readForced } }] : []),
+        [readAt, readForced],
+    );
+    const live = useLiveLinearIssues(issues, reads);
+    const liveIssue = live.items[0];
+    const detail = React.useMemo<CachedValue<LinearIssue>>(
+        () => (cached.status === 'ready' && liveIssue && liveIssue !== cached.value ? { status: 'ready', value: liveIssue } : cached),
+        [cached, liveIssue],
+    );
     // After a change of state, read again without waiting for staleness.
     const refresh = React.useCallback(
         () => (key ? linearDetails.ensure(key, fetch, { force: true }).then(() => undefined, () => undefined) : Promise.resolve()),
         [fetch, key],
     );
-    return { detail, refresh };
+    return { detail, refresh, followed: live.followed };
 }

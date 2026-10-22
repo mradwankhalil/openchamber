@@ -1,3 +1,29 @@
+## [2.5.0] - 2026-10-19
+
+### New
+
+- Chat: the setting that pins each prompt to the top of its turn while the reply scrolls under it is back, in Settings › Chat › Messages.
+
+### Improvements
+
+- Composer: the full hint with @, $ and / shows whenever it fits on one line, also in a narrow sidebar.
+- Model picker: the popup beside a model names the provider that serves it (thanks to @yulia-ivashko).
+
+### Fixes
+
+- Performance: a chat you work in for hours stays responsive, and the message box no longer redraws on every step of a streaming reply.
+- Chat: a thinking level stays with the model it was set for and no longer carries over when you switch models.
+- Chat: closing VS Code on Windows no longer leaves a chat stuck on an unanswered question (thanks to @yulia-ivashko).
+- Chat: pressing Stop reads as a stop. The chat used to say the message failed to send (thanks to @DeryFerd).
+- Chat: messages steered into a running turn show again after a reload (thanks to @qijizh).
+- Chat: tool results made of text blocks show as readable text (thanks to @mradwankhalil).
+- Chat: no blank rows between Activity steps, and expanding a row at the bottom keeps its header in view (thanks to @yulia-ivashko).
+- Chat: selecting a file name in a message no longer opens the file (thanks to @Hayston1001).
+- Chat: the button above Stop follows the Steer or Queue setting (thanks to @yulia-ivashko).
+- Auto: a session whose saved Auto model became unavailable no longer crashes the chat (thanks to @alankyshum).
+- Commit messages: the first Generate Commit Message uses the small model from Settings (thanks to @DeryFerd).
+- Usage: the OpenRouter card calls the key's spending cap Key Limit, where it looked like the balance.
+
 ## [2.4.0] - 2026-10-17
 
 ### Improvements

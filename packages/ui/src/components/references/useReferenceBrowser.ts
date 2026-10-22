@@ -13,7 +13,10 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useMinuteTickerNow } from '@/hooks/useDurationTicker';
 import type { GitHubPullStatus, GitHubReference, GitHubReferenceKind, RepositoryReferenceFilter } from '@/lib/api/types';
 import { isIMECompositionEvent } from '@/lib/ime';
+import { useTrackedItems } from '@/lib/trackedItems/interest';
+import type { TrackedItem } from '@/lib/trackedItems/model';
 
+import { itemDirectory, leftOutFolders, type AcrossReference } from './acrossRepositories';
 import type { CachedValue } from './referenceCache';
 import {
     referencePickerItemKey,
@@ -24,7 +27,9 @@ import {
     type ReferencePickerSource,
 } from './referencePickerItems';
 import {
+    useGitHubAcrossReferenceList,
     useGitHubPullStatuses,
+    useGitHubPullStatusesAcross,
     useGitHubReferenceDetail,
     useGitHubReferenceList,
     useGitHubSourceStatus,
@@ -40,7 +45,10 @@ const lastGitHubFilter = new Map<GitHubReferenceKind, RepositoryReferenceFilter>
 let lastLinearFilter: LinearReferenceFilter = DEFAULT_LINEAR_FILTER;
 
 const NO_REFERENCES: GitHubReference[] = [];
+const NO_DIRECTORIES: readonly string[] = [];
+const NO_ACROSS_ITEMS: AcrossReference[] = [];
 const NO_ITEMS: ReadonlyMap<string, ReferencePickerItem> = new Map();
+const NO_FOLLOWED: TrackedItem[] = [];
 const SEARCH_DEBOUNCE_MS = 300;
 const DETAIL_DEBOUNCE_MS = 250;
 
@@ -51,6 +59,12 @@ export type ReferenceBrowserOptions = {
     source: ReferencePickerSource;
     /** The project GitHub or GitLab items come from. */
     directory: string | null;
+    /**
+     * Set to list the GitHub issues and PRs of these folders (the repositories
+     * under `directory`) together instead of `directory`'s own; each item then
+     * carries the folder it belongs to.
+     */
+    directories?: readonly string[] | null;
     isMobile: boolean;
     /** Tab to open GitHub on; the last used one otherwise. */
     initialGitHubKind?: GitHubReferenceKind;
@@ -60,16 +74,20 @@ export type ReferenceBrowserOptions = {
     retainedItems?: ReadonlyMap<string, ReferencePickerItem>;
     /** One item another surface asked to show, read on its own: it can be highlighted while the list does not hold it. */
     pinnedItem?: ReferencePickerItem | null;
+    /** Whether the surface is on screen; the open items its list shows are then followed live. */
+    onScreen?: boolean;
 };
 
 export function useReferenceBrowser({
     source,
     directory,
+    directories = null,
     isMobile,
     initialGitHubKind,
     linearTeamId,
     retainedItems = NO_ITEMS,
     pinnedItem = null,
+    onScreen = true,
 }: ReferenceBrowserOptions) {
     const [githubKind, setGitHubKind] = React.useState<GitHubReferenceKind>(initialGitHubKind ?? lastGitHubKind);
     const [githubFilter, setGitHubFilter] = React.useState<RepositoryReferenceFilter>(lastGitHubFilter.get(initialGitHubKind ?? lastGitHubKind) ?? DEFAULT_REPOSITORY_FILTER);
@@ -82,15 +100,25 @@ export function useReferenceBrowser({
     const now = useMinuteTickerNow(true);
     const searchRef = React.useRef<HTMLInputElement>(null);
 
-    const githubStatus = useGitHubSourceStatus(directory);
+    const across = directories !== null;
+    // Across repositories the folders answer for themselves: the list reports
+    // those it cannot read, so no single project's status gates it.
+    const githubStatus = useGitHubSourceStatus(across ? null : directory);
     // A GitLab project lists in the same tabs, as merge requests, open items only.
-    const isGitLab = useRepositoryReferenceProvider(directory) === 'gitlab';
+    const isGitLab = useRepositoryReferenceProvider(across ? null : directory) === 'gitlab' && !across;
     const linearStatus = useLinearSourceStatus();
     const sourceStatus = source === 'github' ? githubStatus : linearStatus;
 
     const githubList = useGitHubReferenceList({
-        enabled: source === 'github' && githubStatus === 'ready',
+        enabled: source === 'github' && githubStatus === 'ready' && !across,
         directory,
+        kind: githubKind,
+        filter: githubFilter,
+        query: debouncedQuery,
+    });
+    const acrossList = useGitHubAcrossReferenceList({
+        enabled: source === 'github' && githubStatus === 'ready' && across,
+        directories: directories ?? NO_DIRECTORIES,
         kind: githubKind,
         filter: githubFilter,
         query: debouncedQuery,
@@ -104,21 +132,39 @@ export function useReferenceBrowser({
     // The other GitHub tab loads in the background, so switching to it is instant.
     const otherGitHubKind: GitHubReferenceKind = githubKind === 'issue' ? 'pull' : 'issue';
     useGitHubReferenceList({
-        enabled: source === 'github' && githubStatus === 'ready',
+        enabled: source === 'github' && githubStatus === 'ready' && !across,
         directory,
         kind: otherGitHubKind,
         filter: lastGitHubFilter.get(otherGitHubKind) ?? DEFAULT_REPOSITORY_FILTER,
         query: '',
     });
-    const list = source === 'github' ? githubList : linearList;
+    useGitHubAcrossReferenceList({
+        enabled: source === 'github' && githubStatus === 'ready' && across,
+        directories: directories ?? NO_DIRECTORIES,
+        kind: otherGitHubKind,
+        filter: lastGitHubFilter.get(otherGitHubKind) ?? DEFAULT_REPOSITORY_FILTER,
+        query: '',
+    });
+    const list = source === 'github' ? (across ? acrossList : githubList) : linearList;
+    // Only the list on screen is followed; the other tab is read again when shown.
+    useTrackedItems(onScreen ? list.followed : NO_FOLLOWED);
     // Failed checks and conflicts colour open PRs once their statuses arrive.
-    const pullStatusOf = useGitHubPullStatuses(directory, source === 'github' ? githubList.items : NO_REFERENCES);
+    const singlePullStatusOf = useGitHubPullStatuses(across ? null : directory, source === 'github' && !across ? githubList.items : NO_REFERENCES);
+    const acrossPullStatusOf = useGitHubPullStatusesAcross(acrossList.contexts, source === 'github' && across ? acrossList.items : NO_ACROSS_ITEMS);
+    const pullStatusOf = (reference: GitHubReference, itemFolder?: string): CachedValue<GitHubPullStatus | null> => (
+        across ? acrossPullStatusOf(reference, itemFolder ?? null) : singlePullStatusOf(reference)
+    );
+    // Folders a list across repositories does not show: never asked, or skipped by the answer.
+    const leftOut = React.useMemo(
+        () => (across && source === 'github' ? leftOutFolders(acrossList.contexts, acrossList.skipped) : []),
+        [across, acrossList.contexts, acrossList.skipped, source],
+    );
 
-    const items = React.useMemo<ReferencePickerItem[]>(() => (
-        source === 'github'
-            ? githubList.items.map((reference) => ({ source: 'github', reference }))
-            : linearList.items.map((issue) => ({ source: 'linear', issue }))
-    ), [githubList.items, linearList.items, source]);
+    const items = React.useMemo<ReferencePickerItem[]>(() => {
+        if (source === 'linear') return linearList.items.map((issue) => ({ source: 'linear', issue }));
+        if (across) return acrossList.items.map((reference) => ({ source: 'github', reference, directory: reference.directory }));
+        return githubList.items.map((reference) => ({ source: 'github', reference }));
+    }, [across, acrossList.items, githubList.items, linearList.items, source]);
 
     // An item opened from the preview (a Linear parent or sub-issue): it can be
     // highlighted while the list does not hold it, like a pinned one.
@@ -147,7 +193,8 @@ export function useReferenceBrowser({
     const previewSettled = Boolean(settledPreviewItem && previewItem
         && referencePickerItemKey(settledPreviewItem) === referencePickerItemKey(previewItem));
     const { detail: linearDetail } = useLinearIssueDetail(previewItem?.source === 'linear' ? previewItem.issue.id : null, previewSettled);
-    const { detail: githubDetail, refresh: refreshGithubDetail } = useGitHubReferenceDetail(directory, previewItem?.source === 'github' ? previewItem.reference : null, previewSettled);
+    // Each item is read through the folder it came from.
+    const { detail: githubDetail, refresh: refreshGithubDetail } = useGitHubReferenceDetail(itemDirectory(previewItem, directory), previewItem?.source === 'github' ? previewItem.reference : null, previewSettled);
 
     const selectGitHubKind = (kind: GitHubReferenceKind) => {
         lastGitHubKind = kind;
@@ -211,6 +258,8 @@ export function useReferenceBrowser({
     return {
         source,
         directory,
+        across,
+        leftOut,
         isMobile,
         isGitLab,
         sourceStatus,

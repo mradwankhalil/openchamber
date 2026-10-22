@@ -210,6 +210,22 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => ctx.isDesktop && !ctx.isMobile && !ctx.isVSCode,
   },
   {
+    id: 'appearance.live-browser-tabs',
+    page: 'general',
+    titleKey: 'settings.openchamber.visual.field.liveBrowserTabs',
+    descriptionKey: 'settings.openchamber.visual.field.liveBrowserTabsInfo',
+    keywords: ['browser', 'tabs', 'memory', 'reload', 'background', 'loaded'],
+    isAvailable: (ctx) => ctx.isDesktop && !ctx.isMobile && !ctx.isVSCode,
+  },
+  {
+    id: 'layout.mobile-workspace-tabs',
+    page: 'general',
+    titleKey: 'settings.layout.general.mobileTabs.title',
+    descriptionKey: 'settings.layout.general.mobileTabs.info',
+    keywords: ['tabs', 'workspace', 'panel', 'order', 'hide', 'git', 'files', 'terminal', 'mcp', 'mobile'],
+    isAvailable: (ctx) => ctx.isMobile,
+  },
+  {
     id: 'appearance.open-tracker-links-on-board',
     page: 'general',
     titleKey: 'settings.openchamber.visual.field.openTrackerLinksOnBoard',
@@ -334,6 +350,12 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['autoscroll', 'auto-scroll', 'follow', 'stick to bottom', 'streaming'],
   },
   {
+    id: 'chat.sticky-user-header',
+    page: 'chat',
+    titleKey: 'settings.openchamber.visual.field.stickyUserHeader',
+    keywords: ['sticky', 'pin', 'prompt', 'header', 'user messages'],
+  },
+  {
     id: 'chat.prompt-navigator',
     page: 'chat',
     titleKey: 'settings.openchamber.visual.field.promptNavigatorEnabled',
@@ -395,6 +417,13 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'chat',
     titleKey: 'settings.openchamber.visual.field.allowPromptingSubagentSessions',
     keywords: ['subagent', 'read only', 'prompt', 'banner'],
+  },
+  {
+    id: 'chat.save-pasted-images',
+    page: 'chat',
+    titleKey: 'settings.openchamber.visual.field.savePastedImagesAsFiles',
+    descriptionKey: 'settings.openchamber.visual.field.savePastedImagesAsFilesInfo',
+    keywords: ['image', 'screenshot', 'paste', 'vision', 'text-only', 'model', 'path', 'attachment', 'file', 'link'],
   },
   {
     id: 'chat.tool-file-icons',
@@ -517,16 +546,26 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => !ctx.isMobile,
   },
   {
+    id: 'chat.mobile-return-key-sends',
+    page: 'chat',
+    titleKey: 'settings.openchamber.visual.field.mobileReturnKeySends',
+    descriptionKey: 'settings.openchamber.visual.field.mobileReturnKeySendsHint',
+    keywords: ['enter', 'return', 'send', 'newline', 'keyboard', 'enterkeyhint', 'voice', 'dictation', 'swipe up'],
+    isAvailable: (ctx) => ctx.isMobile,
+  },
+  {
     id: 'sessions.default-model',
     page: 'sessions',
     titleKey: 'settings.openchamber.defaults.field.defaultModel',
-    keywords: ['model', 'provider', 'new sessions'],
+    keywords: ['model', 'provider', 'new sessions', 'thinking', 'reasoning', 'variant'],
   },
   {
-    id: 'sessions.default-thinking',
+    id: 'sessions.fallback-model',
     page: 'sessions',
-    titleKey: 'settings.openchamber.defaults.field.defaultThinking',
-    keywords: ['thinking', 'reasoning', 'variant'],
+    titleKey: 'settings.openchamber.defaults.field.fallbackModel',
+    descriptionKey: 'settings.openchamber.defaults.field.fallbackModelInfo',
+    keywords: ['fallback', 'backup', 'usage limit', 'quota', 'rate limit', 'model', 'thinking'],
+    isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
     id: 'sessions.default-agent',
@@ -545,7 +584,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'sessions',
     titleKey: 'settings.openchamber.defaults.field.sessionWarming',
     descriptionKey: 'settings.openchamber.defaults.field.sessionWarmingInfo',
-    keywords: ['warming', 'warm', 'cache', 'prompt cache', 'keep-alive', 'idle'],
+    keywords: ['warming', 'warm', 'cache', 'prompt cache', 'keep-alive', 'idle', 'per session', 'keep warm', 'duration', 'how long', 'hour'],
   },
   {
     id: 'sessions.permission-default',
@@ -581,7 +620,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'sessions',
     titleKey: 'settings.openchamber.defaults.smallModel.title',
     descriptionKey: 'settings.openchamber.defaults.smallModel.description',
-    keywords: ['small model', 'utility', 'summary', 'recap', 'cheap', 'override'],
+    keywords: ['small model', 'utility', 'summary', 'recap', 'cheap', 'override', 'thinking', 'reasoning', 'effort', 'variant'],
   },
   {
     id: 'sessions.walkthrough-model',
@@ -746,7 +785,15 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'general',
     titleKey: 'settings.openchamber.tools.field.agentControlTool',
     descriptionKey: 'settings.openchamber.tools.field.agentControlToolInfo',
-    keywords: ['agent', 'tool', 'orchestration', 'openchamber', 'sessions', 'schedule', 'control'],
+    keywords: ['agent', 'tool', 'orchestration', 'openchamber', 'sessions', 'worktree', 'control'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'sessions.agent-schedule-tool',
+    page: 'general',
+    titleKey: 'settings.openchamber.tools.field.agentScheduleTool',
+    descriptionKey: 'settings.openchamber.tools.field.agentScheduleToolInfo',
+    keywords: ['agent', 'tool', 'schedule', 'scheduled', 'task', 'cron', 'recurring', 'openchamber'],
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
@@ -840,6 +887,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'integrations',
     titleKey: 'settings.gitlab.actions.connect',
     keywords: ['gitlab', 'connect', 'add account', 'oauth', 'pat', 'token', 'instance'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'git.github-enterprise-connect',
+    page: 'integrations',
+    titleKey: 'settings.github.enterprise.instance.customLabel',
+    descriptionKey: 'settings.github.enterprise.instance.customInfo',
+    keywords: ['github', 'enterprise', 'ghe', 'instance', 'connect', 'add account', 'pat', 'token', 'gh cli'],
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
@@ -957,6 +1012,13 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'projects',
     titleKey: 'settings.projects.page.field.projectIcon',
     keywords: ['icon', 'favicon', 'upload', 'color', 'accent color', 'appearance', 'project metadata'],
+  },
+  {
+    id: 'projects.close',
+    page: 'projects',
+    titleKey: 'settings.projects.page.actions.closeProject',
+    keywords: ['close', 'remove', 'delete', 'forget', 'project'],
+    isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
     id: 'projects.actions',
@@ -1307,6 +1369,13 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['external repository', 'add source', 'catalog'],
   },
   {
+    id: 'magic-prompts.scope',
+    page: 'magic-prompts',
+    titleKey: 'settings.magicPrompts.page.scope.label',
+    keywords: ['global', 'project', 'project overrides', 'project.json', 'inherit'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
     id: 'magic-prompts.visible-prompt',
     page: 'magic-prompts',
     titleKey: 'settings.magicPrompts.page.block.visiblePrompt',
@@ -1349,6 +1418,13 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'voice',
     titleKey: 'settings.voice.page.section.playbackAndSummary',
     keywords: ['tts', 'read aloud', 'voice', 'provider', 'speech rate', 'speech pitch', 'speech volume', 'tts input mode', 'markdown'],
+  },
+  {
+    id: 'voice.auto-read-aloud',
+    page: 'voice',
+    titleKey: 'settings.voice.page.field.autoReadAloud',
+    descriptionKey: 'settings.voice.page.tooltip.autoReadAloud',
+    keywords: ['tts', 'read aloud', 'automatic', 'auto', 'speech', 'finished', 'reply'],
   },
   {
     id: 'voice.speech-recognition',
@@ -1475,7 +1551,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     titleKey: 'settings.integrations.thirdParty.title',
     descriptionKey: 'settings.integrations.thirdParty.info',
     keywords: ['plugin', 'provider', 'install', 'update', 'remove', 'subscription'],
-    isAvailable: (ctx) => !ctx.isVSCode,
+    isAvailable: (ctx) => !ctx.isVSCode && !ctx.enterpriseMode,
   },
   {
     id: 'integrations.third-party.opencode-claude',
@@ -1483,7 +1559,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     titleKey: 'settings.integrations.thirdParty.opencodeClaude.name',
     descriptionKey: 'settings.integrations.thirdParty.opencodeClaude.description',
     keywords: ['claude', 'anthropic', 'claude code', 'pro', 'max', 'agent sdk', '@openchamber/opencode-claude'],
-    isAvailable: (ctx) => !ctx.isVSCode,
+    isAvailable: (ctx) => !ctx.isVSCode && !ctx.enterpriseMode,
   },
   {
     id: 'integrations.extensions',
@@ -1524,6 +1600,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     descriptionKey: 'settings.extensions.add.info',
     keywords: ['folder', 'path', 'zip', 'git', 'url', 'install', 'guest', 'panel'],
     isAvailable: (ctx) => !ctx.isVSCode && !ctx.isMobile,
+  },
+  {
+    id: 'extensions.browse',
+    page: 'extensions',
+    titleKey: 'settings.extensions.browse.label',
+    descriptionKey: 'settings.extensions.browse.hint',
+    keywords: ['community', 'catalog', 'marketplace', 'store', 'gallery', 'website', 'discover', 'find', 'extension'],
+    isAvailable: (ctx) => !ctx.isVSCode && !ctx.isMobile && !ctx.enterpriseMode,
   },
   {
     id: 'extensions.gitIdentity',

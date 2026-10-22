@@ -32,7 +32,7 @@ import { getRootBranch } from '@/lib/worktrees/worktreeStatus';
 import { generateBranchSlug } from '@/lib/git/branchNameGenerator';
 import { handleWorktreeCreateKeyDown } from './worktreeCreateKeyboard';
 import { NewWorktreeBranchPicker } from './NewWorktreeBranchPicker';
-import { resolveDefaultSourceBranch } from '@/lib/worktrees/worktreeSourceBranchPreference';
+import { resolveBranchOnTopSource, resolveDefaultSourceBranch } from '@/lib/worktrees/worktreeSourceBranchPreference';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useGitBranches, useGitStore, useGitLoadingBranches } from '@/stores/useGitStore';
 import { ReferencePickerDialog, type ReferencePickerConfirmFailure } from '@/components/references/ReferencePickerDialog';
@@ -123,6 +123,12 @@ interface NewWorktreeDialogProps {
   onWorktreeCreated?: (worktreePath: string) => void;
   /** Opens on "PR or issue" with this item already chosen. */
   initialSelection?: ReferencePickerSelection;
+  /**
+   * Opens on a new branch starting from this one: the next layer of a stack.
+   * The server records it as the new branch's parent, so its pull request
+   * targets it.
+   */
+  initialSourceBranch?: string;
 }
 
 export function NewWorktreeDialog({
@@ -131,6 +137,7 @@ export function NewWorktreeDialog({
   project,
   onWorktreeCreated,
   initialSelection,
+  initialSourceBranch,
 }: NewWorktreeDialogProps) {
   const { t } = useI18n();
   const { sourceControl, git, linear } = useRuntimeAPIs();
@@ -250,19 +257,31 @@ export function NewWorktreeDialog({
   const worktreeName = mode === 'existing-branch' ? existingBranch.worktreeName : draft.worktreeName;
   const startsNewBranch = mode === 'new-branch' || (mode === 'from-item' && !linkedPr);
 
-  // Start from the branch the project root is on, once branches are known.
+  // A branch on top of another starts from it, once branches are known. One
+  // not fetched here yet starts from its copy on the bound remote, which the
+  // server fetches before creating; it never falls back to the root's branch.
+  const onTopRemote = githubContext && githubContext !== 'missing' ? githubContext.primaryRemote : 'origin';
   React.useEffect(() => {
-    if (!open || !branches?.all || !projectDirectory || sourceBranch) return;
+    if (!open || !initialSourceBranch || !branches?.all || sourceBranch) return;
+    setSourceBranch(resolveBranchOnTopSource(branches.all, initialSourceBranch) || `remotes/${onTopRemote}/${initialSourceBranch}`);
+  }, [open, initialSourceBranch, branches?.all, sourceBranch, onTopRemote]);
+
+  // Start from the bound remote's default branch as it is on the remote, else
+  // the branch the project root is on, once branches are known.
+  React.useEffect(() => {
+    if (!open || initialSourceBranch || !branches?.all || !projectDirectory || sourceBranch) return;
     let cancelled = false;
     void getRootBranch(projectDirectory).catch(() => null).then((rootBranch) => {
       if (cancelled) return;
-      const preferred = resolveDefaultSourceBranch({ branches: branches.all, rootBranch });
+      const defaultBranches = branches.defaultBranches ?? {};
+      const defaultBranch = defaultBranches[onTopRemote] ?? null;
+      const preferred = resolveDefaultSourceBranch({ branches: branches.all, rootBranch, defaultBranch, remote: onTopRemote });
       if (preferred) setSourceBranch((current) => current || preferred);
     });
     return () => {
       cancelled = true;
     };
-  }, [open, branches?.all, projectDirectory, sourceBranch]);
+  }, [open, initialSourceBranch, branches?.all, branches?.defaultBranches, projectDirectory, sourceBranch, onTopRemote]);
 
   // Reset state on each open. Resetting on close would empty the form during
   // the close animation, causing visible flicker.

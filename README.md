@@ -13,7 +13,7 @@
 
 Start agent work, see what changed, and take it through review and release. Your projects and sessions remain available when you switch devices or step away.
 
-![OpenChamber Chat](docs/references/chat_example.png)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/desktop_dark.png"><img src="docs/references/desktop_light.png" alt="OpenChamber desktop app"></picture>
 
 <details>
 <summary>More screenshots</summary>
@@ -21,8 +21,9 @@ Start agent work, see what changed, and take it through review and release. Your
 ![VS Code Extension](packages/vscode/extension.jpg)
 
 <p>
-<img src="docs/references/pwa_chat_example.png" width="45%" alt="OpenChamber PWA chat">
-<img src="docs/references/pwa_diff_example.png" width="45%" alt="OpenChamber PWA diff review">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/mobile/new_session_dark.png"><img src="docs/references/mobile/new_session_light.png" width="30%" alt="OpenChamber mobile new session"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/mobile/chat_dark.png"><img src="docs/references/mobile/chat_light.png" width="30%" alt="OpenChamber mobile chat"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/mobile/context_usage_dark.png"><img src="docs/references/mobile/context_usage_light.png" width="30%" alt="OpenChamber mobile context and usage"></picture>
 </p>
 
 </details>

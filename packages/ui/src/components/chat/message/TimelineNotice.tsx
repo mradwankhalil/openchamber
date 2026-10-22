@@ -8,7 +8,8 @@
  * going through `ChatMessage`. So does a background subagent run, which v2
  * reports as a synthetic message (see `@/lib/opencode/subagent-run`), and the
  * result of a session the agent dispatched with `returnResult` (see
- * `@/lib/opencode/dispatched-session`).
+ * `@/lib/opencode/dispatched-session`), and a session notice that landed
+ * between turns (see `@/lib/opencode/session-notices`).
  */
 
 import React from 'react';
@@ -21,6 +22,8 @@ import ToolPart from './parts/ToolPart';
 import { OPENCODE_TOOLS } from '@/lib/opencode/tools';
 import { isRunningSubagentRunMessage, readSubagentRun, type SubagentRun } from '@/lib/opencode/subagent-run';
 import { readDispatchedSessionResult, type DispatchedSessionResult } from '@/lib/opencode/dispatched-session';
+import { readSessionNotice } from '@/lib/opencode/session-notices';
+import { SessionNoticeBlock } from './SessionNoticeBlock';
 import { openSessionLink } from '@/lib/router/openSessionFromRoute';
 import type { IconName } from '@/components/icon/icons';
 import { useUIStore } from '@/stores/useUIStore';
@@ -127,14 +130,16 @@ const toShellToolPart = (message: Extract<Message, { role: 'shell' }>): ToolPart
     return { ...base, state: { status: 'completed', input, output, time: { start, end } } };
 };
 
-const ShellNotice: React.FC<{ message: Extract<Message, { role: 'shell' }> }> = ({ message }) => {
+// A shell row that opens the session gets the top spacing a first user
+// message has, so `!pwd` as the first prompt does not sit against the top.
+const ShellNotice: React.FC<{ message: Extract<Message, { role: 'shell' }>; isFirstRow: boolean }> = ({ message, isFirstRow }) => {
     const isMobile = useUIStore((state) => state.isMobile);
     const [expanded, setExpanded] = React.useState(false);
     const part = React.useMemo(() => toShellToolPart(message), [message]);
     const toggle = React.useCallback(() => setExpanded((value) => !value), []);
 
     return (
-        <NoticeRow>
+        <NoticeRow spacingClassName={cn('pb-2', isFirstRow && (isMobile ? 'pt-2' : 'pt-4'))}>
             <ToolPart part={part} isExpanded={expanded} onToggle={toggle} isMobile={isMobile} />
         </NoticeRow>
     );
@@ -319,14 +324,22 @@ const SubagentNotice: React.FC<{ message: SyntheticMessage }> = ({ message }) =>
  * The timeline row for a message, or `null` when the caller should render the
  * message itself.
  */
-export const TimelineNotice: React.FC<{ message: Message }> = ({ message }) => {
+export const TimelineNotice: React.FC<{ message: Message; isFirstRow?: boolean }> = ({ message, isFirstRow = false }) => {
+    const notice = readSessionNotice(message);
+    if (notice) {
+        return (
+            <NoticeRow>
+                <SessionNoticeBlock notice={notice} blockId={`notice:${message.id}`} />
+            </NoticeRow>
+        );
+    }
     switch (message.role) {
         case 'synthetic':
             return <SubagentNotice message={message} />;
         case 'compaction':
             return <CompactionNotice message={message} />;
         case 'shell':
-            return <ShellNotice message={message} />;
+            return <ShellNotice message={message} isFirstRow={isFirstRow} />;
         default:
             return null;
     }

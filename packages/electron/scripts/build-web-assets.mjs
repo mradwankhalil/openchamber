@@ -83,8 +83,14 @@ run(bunExe, ['run', 'build'], webDir);
 console.log('[electron] staging packaged resources...');
 await fs.mkdir(resourcesDir, { recursive: true });
 const stagedWebDistDir = await fs.mkdtemp(path.join(resourcesDir, 'web-dist-staging-'));
-await copyDir(webDistDir, stagedWebDistDir);
-await removeDir(resourcesWebDistDir);
-await fs.rename(stagedWebDistDir, resourcesWebDistDir);
+try {
+  await copyDir(webDistDir, stagedWebDistDir);
+  await removeDir(resourcesWebDistDir);
+  await fs.rename(stagedWebDistDir, resourcesWebDistDir);
+} catch (error) {
+  // A failed copy (a full disk, say) must not leave a half-staged dir behind.
+  await removeDir(stagedWebDistDir);
+  throw error;
+}
 
 console.log(`[electron] web assets ready: ${resourcesWebDistDir}`);

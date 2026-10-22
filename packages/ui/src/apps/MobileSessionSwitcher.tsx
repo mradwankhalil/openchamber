@@ -12,8 +12,8 @@ import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { refreshGlobalSessions, resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
-import { useSessionUnseenCount } from '@/sync/notification-store';
-import { useHasSessionActivityDuration } from '@/sync/session-activity-timing';
+import { useSessionUnread } from '@/sync/session-unread';
+import { useHasSessionTurnDuration } from '@/sync/session-turn-duration';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 
 const RECENT_SESSIONS_LIMIT = 10;
@@ -33,11 +33,11 @@ const SwitcherRow: React.FC<{
   onSelect: () => void;
 }> = ({ session, meta, active, onSelect }) => {
   const { t } = useI18n();
-  const unseenCount = useSessionUnseenCount(session.id);
+  const isUnread = useSessionUnread(session.id);
   const turnActivity = useSessionTurnActivity(session.id);
   const isStreaming = turnActivity !== null;
-  const showUnreadDot = !isStreaming && unseenCount > 0 && !active;
-  const hasActivityDuration = useHasSessionActivityDuration(session.id, isStreaming);
+  const showUnreadDot = !isStreaming && isUnread && !active;
+  const hasActivityDuration = useHasSessionTurnDuration(session.id, isStreaming);
   const showActivityDuration = (isStreaming || showUnreadDot) && hasActivityDuration;
   const timeLabel = formatSessionCompactDateLabel(getSessionActivityTime(session));
 

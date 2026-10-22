@@ -14,12 +14,16 @@ Een worktree-sessie werkt in een eigen uitgecheckte kopie van uw repository, op 
    - **nieuwe branch:** geef de branch een naam
    - **bestaande branch:** check een branch uit die al bestaat
    - **PR or issue:** kies er een uit GitHub, Linear of een extensie. De branch krijgt de naam ervan (een PR checkt zijn eigen branch uit) en het item wordt aan uw eerste bericht toegevoegd.
-3. Controleer **Based on** (de branch waarvan een nieuwe branch vertrekt, standaard de huidige branch van het project) en **Folder name**; wijzig ze alleen als dat nodig is.
+3. Controleer **Based on** (de branch waarvan een nieuwe branch vertrekt, standaard de standaardbranch van de remote, zoals `origin/main`) en **Folder name**; wijzig ze alleen als dat nodig is.
 4. Maak de worktree aan. Heeft het project setupcommando's, dan worden ze direct daarna uitgevoerd.
 
 OpenChamber maakt de branch, richt de map in en opent daar een nieuwe sessie, klaar voor uw eerste bericht. U kunt ook direct vanuit een [taak](/nl/notes-todos-plans/) of een [GitHub-issue of PR](/nl/github/) beginnen.
 
 Wil je geen vragen, kies dan **Snelle worktree** in hetzelfde branchmenu: OpenChamber geeft de branch een naam en richt de nieuwe sessie erop.
+
+## Projecten geopend op een map van de repository
+
+Open je een project op een map binnen een repository, zoals `repo/ai`, dan openen nieuwe worktrees ook daar. Een sessie in een nieuwe worktree start in dezelfde map van de checkout, zodat OpenCode de configuratie vindt die daar staat. Een project dat op de hoofdmap van de repository is geopend, start zoals voorheen in de hoofdmap van de worktree. Heeft een branch die map niet, dan start de sessie in de hoofdmap van de worktree en meldt OpenChamber dat.
 
 ## Het werk overnemen
 

@@ -37,10 +37,14 @@ const MAX_ENTRIES = 500;
 const BATCH_LIMIT = { github: 100, gitlab: 50, linear: 50 };
 const LINEAR_SETTLED_TYPES = new Set(['completed', 'canceled']);
 
-// One batch per provider, instance and reading account.
+// One batch per provider, instance and reading account. A GitHub instance is the
+// repository's host (missing means github.com), so one enterprise host's
+// cooldown and failures never touch another host's items.
 const groupOf = (item) => {
   const account = item.accountId ? `@${item.accountId}` : '';
-  return item.provider === 'gitlab' ? `gitlab|${item.instance}${account}` : `${item.provider}${account}`;
+  if (item.provider === 'gitlab') return `gitlab|${item.instance}${account}`;
+  if (item.provider === 'github') return `github|${item.instance ?? 'github.com'}${account}`;
+  return `${item.provider}${account}`;
 };
 const threadRef = (item) => ({ owner: item.owner, repo: item.repo, number: item.number });
 const threadAnswerKey = (ref) => `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase();
@@ -236,9 +240,11 @@ export function createTrackedItemsService({
     const pulls = batch.filter(([, entry]) => entry.item.kind === 'pull').map(([, entry]) => threadRef(entry.item));
     const issues = batch.filter(([, entry]) => entry.item.kind === 'issue').map(([, entry]) => threadRef(entry.item));
     const accountId = first.accountId ?? null;
+    // A GitHub instance is the repository's host; missing means github.com.
+    const instance = first.instance ?? 'github.com';
     return first.provider === 'gitlab'
       ? readers.gitlab({ instance: first.instance, accountId, pulls, issues })
-      : readers.github({ accountId, pulls, issues });
+      : readers.github({ instance, accountId, pulls, issues });
   };
 
   const refreshGroup = async (group, groupEntries, changed) => {
@@ -367,6 +373,32 @@ export function createTrackedItemsService({
       for (const item of items) {
         const key = trackedItemKey(item);
         if (entries.has(key)) forced.add(key);
+      }
+      scheduleNext();
+    },
+
+    /**
+     * One item a user asked to read again, by provider, project and number,
+     * whichever account or kind follows it: its state is asked now.
+     */
+    refreshItem(provider, { owner, repo, number }) {
+      const same = (left, right) => !left || String(left).toLowerCase() === String(right ?? '').toLowerCase();
+      for (const [key, entry] of entries) {
+        const item = entry.item;
+        if (item.provider === provider && item.number === number && same(owner, item.owner) && same(repo, item.repo)) forced.add(key);
+      }
+      scheduleNext();
+    },
+
+    /**
+     * Something changed on a provider through this server (a merge, a comment,
+     * a state change) or the user asked to read it again: its open items on
+     * screen are asked now.
+     */
+    refreshProvider(provider) {
+      for (const key of watchedKeys()) {
+        const entry = entries.get(key);
+        if (entry && entry.item.provider === provider && isLive(entry)) forced.add(key);
       }
       scheduleNext();
     },

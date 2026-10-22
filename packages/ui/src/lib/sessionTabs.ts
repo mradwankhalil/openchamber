@@ -3,13 +3,6 @@ import { useGlobalSessionsStore, resolveGlobalSessionDirectory } from '@/stores/
 import { useSessionUIStore } from '@/sync/session-ui-store';
 
 /**
- * Close one header session tab. Closing the active tab activates its right
- * neighbour (falling back left), or opens a new-session draft when it was the
- * last tab. Only tabs whose session is present in the loaded session list
- * count as neighbours — the same rule the strip uses for rendering. The
- * session itself is never touched.
- */
-/**
  * Activate the nth (0-based) header session tab, counting only tabs whose
  * session is present in the loaded session list — the same rule the strip
  * uses for rendering, so the digit matches what the user sees.
@@ -48,6 +41,13 @@ export const activateAdjacentSessionTab = (delta: -1 | 1): boolean => {
   return true;
 };
 
+/**
+ * Close one header session tab. Closing the active tab activates its right
+ * neighbour (falling back left), or opens a new-session draft when it was the
+ * last tab. Only tabs whose session is present in the loaded session list
+ * count as neighbours — the same rule the strip uses for rendering. The
+ * session itself is never touched.
+ */
 export const closeSessionTabAndActivateNeighbour = (sessionId: string): void => {
   const { tabIds, closeTab } = useSessionTabsStore.getState();
   if (!tabIds.includes(sessionId)) return;

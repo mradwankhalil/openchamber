@@ -15,7 +15,11 @@ import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import type { GitHubPullReference, SourceControlReadContext } from '@/lib/api/types';
 import type { ChangeRequest } from '@/lib/source-control/types';
+import { NewWorktreeDialog } from '@/components/session/NewWorktreeDialog';
+import { useShowTrackerItem } from '@/components/sourceBoard/openTrackerItem';
+import { normalizeProjectPath, resolveProjectForSessionDirectory } from '@/lib/projectResolution';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useSessionUIStore } from '@/sync/session-ui-store';
 
 /**
  * Labels and the comment count the branch status does not carry: GitHub
@@ -80,6 +84,13 @@ export const BranchPullRequestPreview: React.FC<{
 
     const item = { source: 'github' as const, reference };
     const linksDirectory = rootDirectory ?? directory;
+    const stack = detail.status === 'ready' ? detail.value.pull?.stack ?? null : null;
+    // Another layer of the stack opens in the Tracker; a new one starts in a worktree on top of this branch.
+    const showTrackerItem = useShowTrackerItem();
+    const projects = useProjectsStore((state) => state.projects);
+    const worktreesByProject = useSessionUIStore((state) => state.availableWorktreesByProject);
+    const ownProject = resolveProjectForSessionDirectory(projects, worktreesByProject, directory);
+    const [onTopOpen, setOnTopOpen] = React.useState(false);
 
     return (
         <>
@@ -95,7 +106,19 @@ export const BranchPullRequestPreview: React.FC<{
                 onIncludeDiffChange={() => undefined}
                 now={now}
                 // This branch is already checked out here: no new session or worktree from it.
-                footer={<SourceBoardActions item={item} project={null} context={context} onStartWorktree={() => undefined} onChanged={refresh} />}
+                footer={(
+                    <SourceBoardActions
+                        item={item}
+                        project={null}
+                        context={context}
+                        onStartWorktree={() => undefined}
+                        onChanged={refresh}
+                        worktreeAvailable={false}
+                        stack={stack}
+                        onStartOnTop={ownProject ? () => setOnTopOpen(true) : undefined}
+                    />
+                )}
+                onOpenStackLayer={(layer) => { showTrackerItem(layer.url, directory); }}
                 onOpenChecks={() => setChecksOpen(true)}
                 commentAttachments={{ onAttach: attachments.attachComment, onAttachAll: attachments.attachComments }}
                 threadActions={threadActions}
@@ -106,6 +129,7 @@ export const BranchPullRequestPreview: React.FC<{
                     <SourceBoardPullLinks
                         pull={reference}
                         project={{ id: activeProjectId ?? '', path: linksDirectory }}
+                        repository={null}
                         context={context}
                         projectOwnsDirectory={() => true}
                         currentDirectory={linksDirectory}
@@ -119,6 +143,17 @@ export const BranchPullRequestPreview: React.FC<{
                 onOpenChange={setChecksOpen}
                 onAttachFailed={attachments.attachFailedChecks}
             />
+            {ownProject ? (
+                <NewWorktreeDialog
+                    open={onTopOpen}
+                    onOpenChange={setOnTopOpen}
+                    project={{ id: ownProject.id, path: normalizeProjectPath(ownProject.path) ?? ownProject.path }}
+                    initialSourceBranch={reference.head}
+                    onWorktreeCreated={(worktreePath) => {
+                        useSessionUIStore.getState().openNewSessionDraft({ directoryOverride: worktreePath, preserveDirectoryOverride: true });
+                    }}
+                />
+            ) : null}
         </>
     );
 };

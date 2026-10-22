@@ -1,5 +1,5 @@
 import { isPlainObject, isString } from './validation.js';
-import { parseGitLabRemoteUrl } from './repo.js';
+import { parseGitLabRemoteUrl, parseGitLabSshProjectPath } from './repo.js';
 
 const text = (value) => isString(value) ? value : '';
 const integer = (value) => Number.isInteger(value) && value >= 0 ? value : null;
@@ -21,7 +21,7 @@ export function mapGitLabProject(value, identity, remoteName) {
   const matchesProject = (url) => parseGitLabRemoteUrl(url, identity.instance)?.projectPath.toLowerCase() === expectedPath;
   if (!matchesProject(value.web_url)
     || (value.http_url_to_repo != null && !matchesProject(value.http_url_to_repo))
-    || (value.ssh_url_to_repo != null && !matchesProject(value.ssh_url_to_repo))) return null;
+    || (value.ssh_url_to_repo != null && parseGitLabSshProjectPath(text(value.ssh_url_to_repo))?.toLowerCase() !== expectedPath)) return null;
   const project = {
     ...identity,
     id: String(value.id),

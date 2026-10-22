@@ -5,7 +5,7 @@ This module provides notification message preparation utilities for the web serv
 
 ## Entrypoints and structure
 - `packages/web/server/lib/notifications/index.js`: public entrypoint imported by `packages/web/server/index.js`.
-- `packages/web/server/lib/notifications/routes.js`: route registration for push, visibility, and session status/attention endpoints.
+- `packages/web/server/lib/notifications/routes.js`: route registration for push, visibility, and session status endpoints.
 - `packages/web/server/lib/notifications/push-runtime.js`: push subscription persistence, VAPID initialization, and UI visibility runtime.
 - `packages/web/server/lib/notifications/push-seal.js`: end-to-end sealing of native push text. A phone that registers with a `pushKey` (32 bytes, base64; made by the iOS shell in the App Group, by Android's `PushSealKey`) gets each notification as the generic scenario title, an empty body and `data.enc` = `v1.` + base64(nonce || AES-256-GCM ciphertext || tag) of `{ title, body }`. Each such device is its own relay send. The iOS Notification Service Extension and Android's `SealedPushMessagingService` open it; the relay sends a sealed push to Android as a data message (openchamber-website `apps/api/src/lib/fcm.ts`) so that service runs in the background. The sealed text is richer than the clear one: `runtime.js` passes `sealed` = the session name as title and what happened as body (the agent's reply; `Question:`, `Wants to run:` / `Wants to edit:` / `Wants to read:` / `Wants permission:`, `Error:` or the goal title before the detail), capped at 250 characters. When there is no such text, the phone opens the generic text. Phones without a key keep getting the generic text in the clear. Enterprise mode sends no `sealed` text and strips the session name, so the phone shows only the scenario title.
 - `packages/web/server/lib/notifications/session-key.js`: the key both push stores group registrations under, a `sha256:` hash of the UI session token, never the token. Files written before the hashing are rewritten with hashed keys on first read. Both stores are written `0600`.
@@ -14,6 +14,7 @@ This module provides notification message preparation utilities for the web serv
 - `packages/web/server/lib/notifications/emit-route.js`: `POST /api/notifications/emit` for OpenCode plugins.
 - `packages/web/server/lib/notifications/runtime.js`: trigger runtime for OpenCode event-driven notification fanout.
 - `packages/web/server/lib/notifications/template-runtime.js`: notification template variables and session text/title enrichment runtime. Zen-model helpers are retained as compatibility stubs only.
+- `packages/web/server/lib/notifications/template-locales.js`: the notification text OpenChamber writes itself, per interface language. An empty template field means "no custom text", so the notification uses these defaults and the settings page shows them as placeholders. `settings-runtime.js` no longer seeds English template text into an install; it clears the seed older builds wrote. The server keeps its own list because it cannot import `packages/ui`; an unknown tag falls back to English.
 - `packages/web/server/lib/notifications/message.js`: helper implementation module.
 - `packages/web/server/lib/notifications/message.test.js`: unit tests for notification message helpers.
 
@@ -37,11 +38,7 @@ This module provides notification message preparation utilities for the web serv
   - `GET /api/sessions/snapshot`
   - `GET /api/sessions/status`
   - `GET /api/sessions/:id/status`
-  - `GET /api/sessions/attention`
-  - `GET /api/sessions/:id/attention`
-  - `POST /api/sessions/:id/view`
-  - `POST /api/sessions/:id/unview`
-  - `POST /api/sessions/:id/message-sent`
+  - `POST /api/sessions/:id/view` and `POST /api/sessions/:id/message-sent`: only reset the native push badge. Whether a session is unread is OpenCode's own `time.viewed`.
 
 ### Trigger runtime API (runtime.js)
 - `createNotificationTriggerRuntime(dependencies)`: creates runtime-owned debounced trigger handling for OpenCode events.
@@ -52,7 +49,7 @@ This module provides notification message preparation utilities for the web serv
   - session parent cache for subtask suppression
   - no ready notification on a `session.idle` while a subagent of that session is still running (a background-subagent pause; OpenCode runs the parent again with the result and its next idle announces). The check comes from `../opencode/session-activity.js`; when it cannot be made, the idle announces as before
   - an MCP elicitation form (session id `global`, owned by no session) notifies without a session: no session title lookup, and the deep link opens the app
-  - template resolution and fallback behavior
+  - template resolution and fallback behavior: an empty field in `settings.notificationTemplates` resolves to the default for `settings.locale` (`template-locales.js`), so notification text follows the interface language unless the user wrote their own
   - native notification fanout and web push payload fanout
   - push suppression while any fresh UI visibility heartbeat reports a focused client
   - chats of isolated spaces: `maybeSendPushForTrigger(payload, { spaceId })` reads such a chat's record (title, parent, goal), its last reply and its running subagents inside the space, through `spaceFetchFor(spaceId)`, a `fetch` over the spaces dispatcher (`../spaces/space-fetch.js`), and never asks the host's OpenCode or the host's permission policy about it, since neither knows the chat. What comes back is the space's text, shown as it is shown in the sidebar. A space that cannot be asked gives the generic text, as a host chat whose reads fail does. The host's auto-accept is not consulted for a space's permission request, so such a request notifies after the debounce unless its reply arrives first.
@@ -108,7 +105,7 @@ This module provides notification message preparation utilities for the web serv
   - `extractLastMessageText(payload, maxLength?)`
   - `fetchLastAssistantMessageText(sessionId, messageId, maxLength?, source?)`
   - `maybeCacheSessionInfoFromEvent(payload, { spaceId }?)`: caches a host session's title; an event of a space (`spaceId` set) is not cached, and a space's chat is never read from these caches, so a session id a space names cannot set a host chat's title.
-  - `buildTemplateVariables(payload, sessionId, source?)`: `source` (`{ buildOpenCodeUrl, getOpenCodeAuthHeaders, fetchImpl }`, the host's OpenCode by default) is where the session's title and messages are read; `runtime.js` passes the space's for a chat of an isolated space.
+  - `buildTemplateVariables(payload, sessionId, source?)`: `source` (`{ buildOpenCodeUrl, getOpenCodeAuthHeaders, fetchImpl }`, the host's OpenCode by default) is where the session's title and messages are read; `runtime.js` passes the space's for a chat of an isolated space. `{project_name}`, `{worktree}` and `{branch}` come from the event's `directory`, else the session record's `location.directory`; turn-end events carry no location, so they read the record. `{project_name}` is the label of the project the sidebar files that directory under: a directory registered as a project is that project, else its repository's primary worktree (`resolvePrimaryWorktreeRoot`) names it, so a session in a worktree shows its project; a directory under `chatRoots` is `Chats`, since a chat's folder name is a generated id; anything else is its folder name. The project open in the UI is used only when neither names one, as for a form owned by no session, and for a space's chat, whose directory is a path inside the space and is never matched against host projects or run git in on the host.
   - `getCachedZenModels()`
 
 ## Constants
@@ -165,7 +162,7 @@ The web hook preserves `tag`, `sessionId`, `kind`, and the remaining notificatio
 fields so the web notification API recognizes duplicate control-SSE and main-WS
 delivery. Its existing five-second claim suppresses duplicate native alerts.
 Native alerts remain best-effort live events, with no historical replay or
-synthetic catch-up alerts. Authoritative session attention is owned by sync.
+synthetic catch-up alerts. Unread marks are OpenCode session state (`packages/ui/src/sync/session-unread.ts`).
 
 This removes one persistent HTTP connection per browser tab in both main-WS and
 main-SSE modes. Two tabs use two control SSE connections, or four connections

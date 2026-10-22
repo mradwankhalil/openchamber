@@ -161,6 +161,20 @@ describe('OpenCode Go quota provider — legacy API key', () => {
     expect(result).toMatchObject({ ok: false, configured: true, error: 'No active OpenCode Go subscription on the selected Console account' });
   });
 
+  it('names an expired key and the sign-in that replaces it', async () => {
+    const expired = { error: { type: 'authentication_error', code: 'api_key_expired', message: 'This API key has expired.' } };
+    for (const auth of [apiKeyAuth(), { opencode: { type: 'api', key: 'console-key' } }]) {
+      const result = await fetchQuota({ readAuth: async () => auth, fetchImpl: async () => new Response(JSON.stringify(expired), { status: 401 }) });
+      expect(result).toMatchObject({ ok: false, configured: true, error: 'OpenCode Go key expired. Connect an OpenCode Console account on the OpenCode card in Providers.' });
+    }
+  });
+
+  it('keeps a 401 without the expired-key code an authentication failure', async () => {
+    const fetchImpl = async () => new Response(JSON.stringify({ error: { type: 'AuthError', message: 'Unauthorized' } }), { status: 401 });
+    const result = await fetchQuota({ readAuth: async () => apiKeyAuth(), fetchImpl });
+    expect(result.error).toBe('OpenCode Go authentication failed');
+  });
+
   it('reports a rejected Console key as an authentication failure', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
     const result = await fetchQuota({ readAuth: async () => ({ opencode: { type: 'api', key: 'console-key' } }), fetchImpl });
@@ -275,6 +289,17 @@ describe('OpenCode Go quota provider — Console OAuth', () => {
     // when the Console read fails.
     expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([CONSOLE_BILLING_STATUS_URL, CONSOLE_STATUS_URL, 'https://opencode.ai/zen/go/v1/usage']);
     expect(result.usage.windows.credits_balance).toBeUndefined();
+  });
+
+  it('reports the Console error when the fallback key has expired', async () => {
+    const fetchImpl = vi.fn(async (url) => (url === CONSOLE_STATUS_URL
+      ? new Response(JSON.stringify(consolePayload({ product: 'zen' })))
+      : new Response(JSON.stringify({ error: { code: 'api_key_expired' } }), { status: 401 })));
+    const result = await fetchQuota({
+      readAuth: async () => ({ ...consoleAuth(), 'opencode-go': { key: 'test-key' } }),
+      fetchImpl,
+    });
+    expect(result).toMatchObject({ ok: false, configured: true, error: 'No active OpenCode Go subscription on the selected Console account' });
   });
 
   it('reports the Console error when there is no key to fall back to', async () => {

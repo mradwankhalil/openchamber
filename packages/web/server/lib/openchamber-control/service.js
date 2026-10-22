@@ -12,6 +12,8 @@ const MAX_WAIT_TIMEOUT_SECONDS = 86_400;
 const WAIT_POLL_INTERVAL_MS = 500;
 // One service, both capabilities: which tool asked is the caller's concern.
 const CONTROL_ACTIONS = new Set(OPENCHAMBER_ALL_ACTIONS);
+// models.search ranks a favorite 2 and a recent model 1.
+const PREFERENCE_BY_RANK = { 2: 'favorite', 1: 'recent' };
 const SCHEDULE_TASK_ID_ACTIONS = new Set([
   'schedule.update',
   'schedule.run',
@@ -273,10 +275,15 @@ export const createOpenChamberControlService = (dependencies) => {
     });
   };
 
-  // The store answers asynchronously; its archive timestamp, or null.
-  const archivedAt = async (sessionID) => {
-    if (!archiveStore) return null;
-    return (await archiveStore.archivedAt(sessionID)) ?? null;
+  // OpenCode holds archive state; the archive file holds it for sessions whose
+  // directory is gone, and its entry wins: a timestamp archives, null restores.
+  const withArchiveEntry = async (session) => {
+    if (!archiveStore || !session?.id) return session;
+    const entry = await archiveStore.entry(session.id);
+    if (entry === undefined) return session;
+    if (entry !== null) return { ...session, time: { ...session.time, archived: entry } };
+    const { archived: _archived, ...time } = session.time ?? {};
+    return { ...session, time };
   };
 
   const projects = async () => {
@@ -325,6 +332,73 @@ export const createOpenChamberControlService = (dependencies) => {
       defaultAgent: asNonEmptyString(settings?.defaultAgent),
       favoriteModels: Array.isArray(settings?.favoriteModels) ? settings.favoriteModels : [],
       recentModels: Array.isArray(settings?.recentModels) ? settings.recentModels : [],
+    };
+  };
+
+  /**
+   * `models.search`: the catalog of the caller's directory, the way the model
+   * picker sees it. Models the user hid in the picker stay out, favorites and
+   * then recent models come first, and only the newest of a family shows
+   * unless `all` asks for older versions. OpenCode's own `models` tool is
+   * removed from the agent's list in favour of this one.
+   */
+  const searchModels = async (input, contextDirectory) => {
+    const client = await getClient(asNonEmptyString(input.directory) || asNonEmptyString(contextDirectory) || '');
+    const [settings, catalog, providerList] = await Promise.all([
+      readSettingsFromDiskMigrated(),
+      client.model.list(),
+      client.provider.list(),
+    ]);
+    const providerNames = new Map(providerList.data.map((provider) => [provider.id, provider.name]));
+    const refKey = (ref) => `${ref?.providerID}/${ref?.modelID}`;
+    const modelKey = (model) => `${model.providerID}/${model.id}`;
+    const refs = (value) => new Set((Array.isArray(value) ? value : []).map(refKey));
+    const hidden = refs(settings?.hiddenModels);
+    // 2 for a favorite, 1 for a recent model, absent for the rest.
+    const rank = new Map([
+      ...[...refs(settings?.recentModels)].map((key) => [key, 1]),
+      ...[...refs(settings?.favoriteModels)].map((key) => [key, 2]),
+    ]);
+    const provider = asNonEmptyString(input.provider)?.toLowerCase();
+    const terms = (asNonEmptyString(input.query) ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+    const shownFamilies = new Set();
+    const matching = catalog.data
+      .filter((model) => !hidden.has(modelKey(model)))
+      .filter((model) => !provider
+        || model.providerID.toLowerCase() === provider
+        || providerNames.get(model.providerID)?.toLowerCase() === provider)
+      .filter((model) => {
+        const text = `${modelKey(model)} ${model.name}`.toLowerCase();
+        return terms.every((term) => text.includes(term));
+      })
+      .toSorted((left, right) => (rank.get(modelKey(right)) ?? 0) - (rank.get(modelKey(left)) ?? 0)
+        || left.providerID.localeCompare(right.providerID)
+        || right.time.released - left.time.released)
+      // Newest first within a provider, so the first of a family is its newest.
+      .filter((model) => {
+        if (input.all === true || !model.family || rank.has(modelKey(model))) return true;
+        const family = `${model.providerID}/${model.family}`;
+        if (shownFamilies.has(family)) return false;
+        shownFamilies.add(family);
+        return true;
+      });
+    const offset = Number.isSafeInteger(input.offset) && input.offset > 0 ? input.offset : 0;
+    const limit = Number.isSafeInteger(input.limit) && input.limit > 0 ? Math.min(input.limit, 100) : 10;
+    const page = matching.slice(offset, offset + limit);
+    return {
+      models: page.map((model) => ({
+        id: modelKey(model),
+        name: model.name,
+        provider: providerNames.get(model.providerID) ?? model.providerID,
+        // Absent for a model the user has not picked; JSON drops the undefined.
+        preference: PREFERENCE_BY_RANK[rank.get(modelKey(model))],
+        released: model.time.released,
+        variants: model.variants.map((variant) => variant.id),
+        cost: model.cost,
+        status: model.status,
+      })),
+      total: matching.length,
+      next: offset + limit < matching.length ? offset + limit : null,
     };
   };
 
@@ -654,6 +728,19 @@ export const createOpenChamberControlService = (dependencies) => {
       parameters.submit = input.submit === true;
     }
 
+    if (action === 'browser.select') {
+      const selector = asNonEmptyString(input.selector);
+      if (!selector) throw new OpenChamberControlError('selector is required for browser.select', 400);
+      const hasLabel = typeof input.label === 'string';
+      const hasValue = typeof input.value === 'string';
+      if (hasLabel === hasValue) {
+        throw new OpenChamberControlError('browser.select requires exactly one of label or value', 400);
+      }
+      parameters.selector = selector;
+      if (hasLabel) parameters.label = input.label;
+      else parameters.value = input.value;
+    }
+
     if (action === 'browser.scroll') {
       const selector = asNonEmptyString(input.selector);
       const direction = asNonEmptyString(input.direction);
@@ -770,6 +857,7 @@ export const createOpenChamberControlService = (dependencies) => {
       }
       if (action === 'projects.list') return { projects: await projects() };
       if (action === 'models.list') return models();
+      if (action === 'models.search') return searchModels(input, contextDirectory);
       if (action === 'schedule.status') return scheduledTaskService.status();
       if (action.startsWith('schedule.')) {
         const taskID = asNonEmptyString(input.taskId);
@@ -872,12 +960,7 @@ export const createOpenChamberControlService = (dependencies) => {
             if (directory) listInput.directory = directory;
             if (cursor) listInput.cursor = cursor;
             const response = await client.session.list(listInput);
-            // Archive is OpenChamber state; overlay it so callers keep reading
-            // it off the session the way OpenCode used to report it.
-            const page = await Promise.all((Array.isArray(response?.data) ? response.data : []).map(async (session) => {
-              const archived = await archivedAt(session?.id);
-              return archived ? { ...session, time: { ...session.time, archived } } : session;
-            }));
+            const page = await Promise.all((Array.isArray(response?.data) ? response.data : []).map(withArchiveEntry));
             for (const session of page) {
               const id = asNonEmptyString(session?.id);
               if (id) {

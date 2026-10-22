@@ -73,11 +73,14 @@ describe('getPrStatusLabelKey', () => {
       .toBe('sessions.sidebar.group.pr.status.open');
   });
 
-  test('names the reason an orange PR is not good yet', () => {
+  test('names the reason an orange PR needs fixing', () => {
     expect(getPrStatusLabelKey(summary(1, 'blocked', { mergeableState: 'dirty' }))).toBe('sessions.sidebar.group.pr.status.mergeConflicts');
     expect(getPrStatusLabelKey(summary(1, 'blocked', { checks: { state: 'failure', total: 2, success: 1, failure: 1, pending: 0 } })))
       .toBe('sessions.sidebar.group.pr.status.checksFailing');
-    expect(getPrStatusLabelKey(summary(1, 'blocked', { canMerge: true, checks: { state: 'pending', total: 2, success: 1, failure: 0, pending: 1 } })))
+  });
+
+  test('an open PR with checks still running says so, never ready to merge', () => {
+    expect(getPrStatusLabelKey(summary(1, 'open', { canMerge: true, mergeableState: 'clean', checks: { state: 'pending', total: 2, success: 1, failure: 0, pending: 1 } })))
       .toBe('sessions.sidebar.group.pr.status.checksRunning');
   });
 

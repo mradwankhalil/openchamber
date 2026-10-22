@@ -5,6 +5,8 @@ import { registerQuotaRoutes } from '../quota/routes.js';
 import { registerSmallModelRoutes } from '../small-model/routes.js';
 import { registerWalkthroughRoutes } from '../walkthrough/routes.js';
 import { registerSessionGoalRoutes } from '../session-goal/routes.js';
+import { registerSessionWarmingRoutes } from '../session-warming/routes.js';
+import { setWarmingDuration, setWarmingEnabled } from './websearch-config.js';
 import { registerSourceControlRoutes } from '../source-control/routes.js';
 import { registerLinearRoutes } from '../linear/routes.js';
 import { registerGuestRoutes } from '../guests/routes.js';
@@ -68,7 +70,7 @@ import { fetchGitHubRepoMetas } from '../skills-catalog/github-meta.js';
 import crypto from 'node:crypto';
 import { getGitHubAuthByAccountId } from '../github/auth.js';
 import { getGitHubCliCredential } from '../github/octokit.js';
-import { createSourceControlAuthStore } from '../gitlab/auth-storage.js';
+import { createSourceControlAuthStore } from '../source-control/auth-storage.js';
 import { refreshGitLabAccessToken, resolveGitLabClientId } from '../gitlab/device-flow.js';
 import { createGitCredentialResolver, createHttpsCredentialReference, parseGitCredentialReference } from '../git/credential-resolver.js';
 import { createGitRepositoryCredentialRuntime } from '../git/repository-credential-runtime.js';
@@ -79,7 +81,7 @@ import { createManagedSshInventory } from '../git/credentials.js';
 import { createContributorProvenanceStore } from '../git/contributor-provenance-storage.js';
 import { createGitNetworkOperationStore } from '../git/network-operation-storage.js';
 import { readEffectiveGitTransportRevision } from '../git/transport-config.js';
-import { completeWorktreeCheckoutHydration, configureRepositoryTransport } from '../git/service.js';
+import { completeWorktreeCheckoutHydration, configureRepositoryTransport, resolvePrimaryWorktreeRoot, resolveWorktreeTopLevel } from '../git/service.js';
 import { createPrivateRepositoryIdentityResolver } from '../source-control/repository-identity.js';
 import { createSourceControlAuditStore } from '../source-control/audit-storage.js';
 
@@ -201,6 +203,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
   const registerRoutes = async (app, routeDependencies) => {
     const {
       messageSearchRuntime,
+      sessionWarmingRuntime,
       crypto,
       fs,
       os,
@@ -460,8 +463,14 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       await configureRepositoryTransport(directory, { credentialHelper, sshCommand });
     };
     // Shared short-lived answers for provider reads; registered before the
-    // GitHub, GitLab and Linear routes it fronts.
-    const providerReadCache = createProviderReadCache();
+    // GitHub, GitLab and Linear routes it fronts. A change made through them,
+    // or a refresh the user asked for, also reads the followed items again;
+    // the tracked items service is created further down.
+    let trackedItemsService = null;
+    const providerReadCache = createProviderReadCache({
+      onChange: (provider) => trackedItemsService?.refreshProvider(provider),
+      onItemRefresh: (provider, item) => trackedItemsService?.refreshItem(provider, item),
+    });
     app.use(providerReadCache.middleware);
     walkthroughBindingService = registerSourceControlRoutes(app, {
       onRepositoryTransportChanged: syncRepositoryTransport,
@@ -502,7 +511,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       }
       return null;
     };
-    const trackedItemsService = createTrackedItemsService({
+    trackedItemsService = createTrackedItemsService({
       readers: createTrackedItemReaders({ readGitLabLiveSummaries: walkthroughBindingService.readGitLabLiveSummaries }),
       persistence: createTrackedItemsPersistence({ dataDir: openchamberDataDir }),
       isConnectionOpen: (connectionId) => findEventClient(connectionId) !== null,
@@ -689,6 +698,11 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       fsPromises,
       path,
       openchamberDataDir,
+      projectConfigRuntime,
+      readSettingsFromDisk,
+      sanitizeProjects,
+      resolvePrimaryWorktreeRoot,
+      resolveWorktreeTopLevel,
     });
     registerProjectContextRoutes(app, { projectContextRuntime });
     registerProjectDirectoryRoutes(app, {
@@ -702,11 +716,28 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     registerAgentMemoryRoutes(app, { agentMemoryRuntime, isAgentMemoryEnabled });
     registerSessionKnowledgeRoutes(app, { sessionKnowledgeRuntime });
     registerMessageSearchRoutes(app, { messageSearchRuntime });
+    registerSessionWarmingRoutes(app, {
+      sessionWarmingRuntime,
+      setGlobalWarming: setWarmingEnabled,
+      setGlobalWarmingDuration: setWarmingDuration,
+    });
 
     registerSessionFoldersRoutes(app, {
       fsPromises,
       path,
       openchamberDataDir,
+      // Folders are shared by every client of this server; each one reads
+      // them again when told they changed.
+      onChanged: (updatedAt) => {
+        const clients = getOpenChamberEventClients();
+        for (const client of clients) {
+          try {
+            writeSseEvent(client, { type: 'openchamber:session-folders-changed', properties: { updatedAt } });
+          } catch {
+            clients.delete(client);
+          }
+        }
+      },
     });
     // Content search looks for ripgrep on the same PATH user commands get, so
     // a desktop app launched from the Dock still finds a Homebrew install.

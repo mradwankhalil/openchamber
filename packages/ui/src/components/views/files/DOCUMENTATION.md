@@ -106,6 +106,8 @@ indented 12px per level, one faint guide per ancestor level under its
 chevron, a chevron instead of a folder icon, and the git state as a coloured
 letter on the right. A blue dot before the letter marks a file open in a tab;
 it no longer hides the file's git state. Change the look there, not per tree.
+The JSON tree viewer (`components/ui/JsonTreeViewer.tsx`) takes the same
+indent and guides and copies the chevron's look; keep the copy in step.
 
 ## Refreshing after file changes
 
@@ -151,7 +153,10 @@ folders.
 through −/+ steps, Ctrl/⌘ + wheel or trackpad pinch, Safari gesture events,
 a two-finger touch pinch, and double-click between fit and 1:1, anchored at
 the pointer; a zoomed image larger than the viewer pans by mouse drag;
-`imageZoom.ts` holds the scale math), `MediaArtifact` (native audio/video
+`imageZoom.ts` holds the scale math; round arrows fixed to the viewer's
+edges, and the arrow keys while the viewer has focus and the image is at fit,
+show the previous and next image of the same folder, see below),
+`MediaArtifact` (native audio/video
 element, duration and dimensions once metadata loads, a stated failure when
 the runtime cannot decode the codec), `FontArtifact` (a specimen under a
 throwaway `FontFace` family removed when the tab closes), `TableArtifact`
@@ -163,6 +168,20 @@ with an artifact view: each has a per-path preview/source toggle, and opens
 in preview regardless of the text-first setting because an agent-produced
 artifact is opened to be looked at.
 
+Stepping through a folder's images: `FilesView` reads the shown image's folder
+with the tree's hidden and gitignored settings for every image shown, so
+files added or removed meanwhile count, and keeps the last listing's arrows
+on screen while it reads; an image the listing leaves out gets no arrows.
+`imageNeighbors.ts` picks the images before and after it in the tree's order,
+wrapping at the ends. SVG counts, since it opens in the image preview. A step
+opens the neighbour the way a single click in the tree does (`openContextFile`
+with `preview`): on desktop one preview tab follows the steps while the tab
+the user started from stays; on the phone the Files surface shows the
+neighbour in place and Back still leads to the folder being browsed. The
+viewer unmounts while the next image loads, so a step remembers its target and
+the viewer showing it within five seconds takes the focus back for the next
+key. A folder that cannot be read shows no arrows.
+
 Non-text artifacts the browser must own (PDF, audio, video, fonts) are loaded
 through `getRuntimeUrlResolver().authenticatedAsset('/api/fs/raw', …)` with
 the scoped URL token; the server streams byte ranges so playback can seek.
@@ -173,18 +192,45 @@ server for a grant (`POST /api/fs/preview`) and loads the page from
 `/api/fs/preview/<grant>/<path>`; the frame's `sandbox` has no
 `allow-same-origin`, so the page runs as an opaque origin with no session and
 cannot reach the app's API, DOM or terminal. Its neighbouring images, styles
-and scripts load through the grant in the path. VS Code renders `srcDoc` in
-the same sandbox. The server side (read root, CORS, CSP) is described in
+and scripts load through the grant in the path. A page outside the workspace
+asks for its grant with `allowOutsideWorkspace`, and the server scopes it to
+the page's folder. VS Code renders `srcDoc` in the same sandbox. The server
+side (read root, CORS, CSP) is described in
 `packages/web/server/lib/fs/DOCUMENTATION.md`.
 
-The Markdown preview renders the file's raw HTML the way GitHub does
-(`SimpleMarkdownRenderer allowRawHtml`): right after marked, a separate
-DOMPurify instance keeps a GitHub-like allowlist (`markdownSecurity.ts`:
-`picture`/`source`, `img`, `a`, `details`, `sub`/`sup`, `kbd`, aligned
-blocks) and drops author styles, classes, ids, data attributes, handlers,
-forms and embeds. Chat keeps raw HTML inert. A numeric `img height` becomes
-an inline height, because Tailwind preflight's `height: auto` would beat the
-attribute.
+The preview toolbar has the browser panel's "Annotate page" toggle
+(`useHtmlPreviewAnnotation`, a thin use of `components/browser/useFrameAnnotation.ts`,
+which pages in the chat share) on web and desktop; phones and VS Code do not
+show it. The server puts a bridge into every previewed HTML page, and
+`lib/browser/previewFrameHost.ts` turns the frame into an `AnnotationHost`, so
+`runAnnotationSession` runs the same overlay and the result attaches to the
+composer through `useAnnotationAttach`, with an intro naming the file preview.
+Before starting, the host probes the bridge; a page that never answers (it
+navigated away, or its own CSP blocks inline scripts or `eval`) ends in the
+"could not annotate" toast. The prompt names the file path: the preview URL
+carries the grant, which is a credential and stays out of prompts. On desktop
+the screenshot is the on-screen part of the frame's area of the window
+(`visibleFrameArea`, `desktop_capture_page_rect`),
+taken after the overlay has torn itself down; a browser cannot photograph a
+frame, so on web the annotation goes without one. A reload or another file
+ends a running session.
+
+### Why a bridge in the page and not a webview
+
+The browser panel annotates through a `<webview>`, which the app can script
+directly. Showing the preview in a webview on desktop would have reused that
+as is, but left web without annotation and given the Files view two preview
+engines. The bridge works the same in both, and gives the app no reach into
+the page that the page's own scripts lack.
+
+The Markdown preview uses `SimpleMarkdownRenderer allowRawHtml`, sharing
+Streamdown processing with reference descriptions and comments. The policy in
+`chat/markdown/streamdownPlugins.ts` enables raw parsing, a restricted rehype
+sanitizer and Streamdown hardening. It permits document elements such as
+`picture`/`source`, `img`, `a`, `details`, `sub`/`sup`, `kbd` and aligned blocks.
+Author styles, application classes, handlers, forms and embeds are excluded.
+Chat keeps raw HTML inert. Media components own safe image dimensions so an
+HTML height or aspect ratio is not lost to Tailwind preflight.
 
 A Markdown file's frontmatter shows above its body (`SimpleMarkdownRenderer
 frontmatter="properties"`, also used by the plan view): a YAML mapping
@@ -193,21 +239,69 @@ as YAML; TOML (`+++`), invalid YAML and non-mapping YAML show as the block
 was written. The skill editor hides it (`frontmatter="hide"`) because the
 description has its own field there.
 
-`useMarkdownLocalAssets` makes a rendered Markdown file's relative images and
-links work: images and `srcset` candidates are fetched through the runtime
-against the file's own directory (outside the workspace when the file is) and
-swapped for object URLs that are revoked with the preview; relative links
-open the target file through `useUIStore.openContextFile`, which the context
-panel and the mobile files surface both consume. A `<source
-media="(prefers-color-scheme: …)">` follows the app theme, not the OS: the
-feature is rewritten to an always-true or never-true query and re-evaluated
-when the theme changes.
+`useMarkdownLocalAssets` supplies the file path, workspace scope, file-open
+callback and app color scheme before rendering. `MarkdownMediaContext`
+resolves relative images and `srcset` candidates through the runtime against
+the file's own directory, including files outside the workspace. React media
+nodes receive the resulting object URLs; their owner revokes them when the
+preview changes or unmounts. Relative links open through the supplied
+`useUIStore.openContextFile` callback, shared by the context panel and mobile
+files view. Fragment links find a heading within the Markdown root. A source's
+`prefers-color-scheme` condition follows the app theme through its rendered
+`media` prop. Content, file and runtime changes retire older asset results.
+
+### Why document assets resolve before node updates
+
+Media and link components own their resources and cleanup. Rewriting the
+rendered Markdown's `src`, `srcset` or `media` attributes would compete with
+React and could publish an old document's assets after a preview switch.
 
 An agent can ask for a file to be shown (`file.open` on the managed
 `openchamber` tool). The server broadcasts `openchamber:file-open-request`;
 `ContextPanel` answers it with `openContextFile`, `MobileApp` additionally
 opens the files drawer. VS Code has no shared file viewer and no managed
 tool, so the event never reaches it.
+
+## Editor aids
+
+The text editor's helpers live in `lib/codemirror/` and need no language
+server; `FilesView` assembles them. What the syntax tree or git can answer
+is shown, nothing that needs type information.
+
+- **Git changes.** `gitChangeGutter` diffs the document against the file's git
+  baseline after typing pauses. A click on a bar opens that change in place:
+  the changed lines are tinted, the baseline lines show under them, and
+  Revert puts them back as an ordinary edit, so undo, autosave and the
+  external-change guard treat it like typing. Escape or the close button
+  hides it; a later diff keeps it open while the change still exists.
+  Read-only files show no Revert.
+- **Indent guides** draw one faint line per indent step on the lines in view,
+  at multiples of the width the file itself uses (the most common step
+  between lines), so a 4-space file does not get guides every 2 columns.
+- **Sticky scope** (desktop) pins the first line of each function or class
+  whose body fills the top of the editor, up to three, innermost kept.
+- **Import links.** Cmd+click (Ctrl+click elsewhere) on a relative import path
+  in JS/TS opens the file it names, trying the extensions a bundler tries;
+  holding the key underlines the path. Elsewhere that click still adds a
+  cursor.
+- **JSON errors** (`.json`, `.jsonc`, `.geojson`) underline the first place the
+  file stops parsing.
+
+### Why import links stop at relative paths
+
+`./` and `../` paths name a file; aliases (`@/lib/x`) and packages need the
+project's resolver settings, and a jump that guesses was ruled out. Go to
+definition for symbols needs a language server, which was ruled out as too
+heavy; OpenCode's own LSP served the agent only and is not a source for it.
+
+### Why JSON errors accept comments and trailing commas
+
+tsconfig, VS Code settings and `opencode.json` allow them under a `.json`
+name. Flagging them would be wrong far more often than missing a trailing
+comma in a strict file, so the check blanks both before parsing, keeping
+offsets, and reports only the first error: the parser's recovery after it is
+noise. JSON5 and JSON Lines are not checked. The JSON tree view parses every
+file the same way, so a tsconfig opens as a tree.
 
 ## Canvas editors
 
@@ -305,7 +399,9 @@ A move and both rename dialogs (the sidebar tree and `FilesView`'s own tree)
 go through `moveWorkspacePath`. It renames through the runtime and then
 points the context panel file tabs and `useFilesViewTabsStore` (open, selected
 and expanded paths) at the new path with `moveContextFilePaths`. A file tab's
-id comes from its path, so the tab is rebuilt in place and stays active.
+id comes from its path, so the tab is rebuilt in place and stays active. The
+two are kept under different folders in a draft waiting for a new space: the
+tabs under the draft's folder, the tree's paths under the space it shows.
 
 The open editor keeps unsaved edits through a move (`lib/filePathMoves.ts`).
 While the rename request is in flight, `FilesView` refuses saves of paths

@@ -250,6 +250,11 @@ One run is never a result: repeat a scenario and aggregate with
 `node scripts/perf/aggregate-runs.mjs <run directories…>`.
 `perf/code-300cps` and `perf/code-1200cps` stream one 240-line code block,
 because what a growing fence costs does not show in fences of five lines.
+`perf/showcase-20000cps` answers with one of every Markdown construct the chat
+renders (headings, lists, tasks, quotes, a table, inline and display math,
+a disclosure, a Mermaid diagram, fenced code with and without a language,
+raw HTML that must stay text). It is not a timing stimulus: open its session
+on two builds and compare screenshots when a change touches the renderer.
 `perf/think-30s` stays silent for thirty seconds and then answers in one word:
 it holds the app in its working state with nothing streaming, which is what an
 agent thinking or running a tool looks like to the UI.
@@ -258,6 +263,13 @@ each step says a line and calls the `glob` tool, OpenCode runs the tool for
 real, and after the last step the document streams. The turn on screen then
 carries twenty tool parts while the text arrives, which is the shape of a long
 agentic turn and what the cost of re-rendering a turn per delta depends on.
+Each turn counts its calls from its own prompt, so every turn of a long
+session is agentic. `agent-20reads-300cps` reads 1,500-line files instead of
+globbing (`isolated-server.mjs` writes them into the project under
+`perf-read/`), so each step carries the full output a real agent's reads do.
+`agent-100tools-x5-300cps` makes its hundred calls five at a time: twenty
+steps whose messages hold five tool parts each, the turn that windowing by
+messages left fully mounted.
 `perf/unicode-300cps` (and `unicode-1200cps`) streams prose with em dashes,
 curly quotes and whole Cyrillic paragraphs, and a 150-line TypeScript fence
 whose comments and strings carry the same characters. V8 stores a string with
@@ -271,6 +283,21 @@ session with a hundred turns of realistic history in minutes:
 ```bash
 node scripts/perf/seed-long-session.mjs --port 4599 --dir <project directory> --turns 120 --title "perf: long 120"
 ```
+
+A seeded session opens with only its last ten turns in memory, the
+cold-navigation window, so streaming into it measures a short history however
+long the session is. Someone working in one chat holds every turn since they
+opened it. `--grow <turns>` reproduces that: before recording it sends that
+many turns with the page showing the session (`--grow-model`, by default
+`agent-20tools-20000cps`, and the `agent-*-20000cps` models grow agentic
+history in about three seconds a turn), scrolling to the end after each one as
+a reader who follows the chat. The summary reports the message records held
+before and after (`historyRecordsBefore`/`After`). What scales with history is
+small on a fast machine: one agentic turn cost 4.9% of the main thread with 10
+turns held and 6.2% with 100. `--cpu-throttle <rate>` slows the page's CPU
+(`Emulation.setCPUThrottlingRate`) to approximate a slower machine; at 4 the
+same turns cost 14% and 26%, with 28 long tasks instead of 5. The `grow` and
+`grow-short` scenarios of `profile:compare` are those two, throttled.
 
 Run-to-run spread on an unchanged build is one to two points of renderer CPU,
 so a smaller difference is noise.
@@ -583,6 +610,18 @@ synchronously on the Electron main thread during OpenCode bootstrap, although
 Desktop already merged the same probe into `process.env`, so the user's shell
 startup is paid twice.
 
+## JSON tree layout regression
+
+`json-tree-view.browser.test.mjs` loads the real JSON view and UI stylesheet in an isolated Vite fixture. It checks a Files-height container around the 200-row virtualization boundary and at 26,000 entries, tail reachability, collapse/expand, resize, hide/show, toolbar focus, and chat's absolute height caps. Both the fixture server and Chrome's debugging port stay on loopback. It reads no application state and stops the processes it started.
+
+```bash
+node --test scripts/perf/json-tree-view.browser.test.mjs
+# When Chrome is outside the standard locations:
+OPENCHAMBER_TEST_CHROME=/path/to/chrome node --test scripts/perf/json-tree-view.browser.test.mjs
+```
+
+The test reports a skip if Chrome is unavailable. An explicit invalid Chrome path fails. This is layout correctness coverage; measure Files performance in the built app.
+
 ## profile:heap
 
 Reads the JS heap, DOM nodes and listeners three times, each after two forced
@@ -759,6 +798,7 @@ What it does, in order:
 | `stream`, `code`, `unicode`, `agent` | `profile:session` on the `-300cps` fixture (`agent`: `agent-40tools-300cps`) | a new session per run |
 | `long` | `profile:session` streaming into the 120-turn session | the streaming path at scale |
 | `quiet` | `profile:session --quiet 20` on the 120-turn session | the floor `long` stands on |
+| `grow`, `grow-short` | `profile:session --grow 100` / `--grow 10` with `agent-20reads` turns, `--cpu-throttle 4` | a chat worked in for a long time; slow, about ten minutes a run |
 | `cpu` | `profile:session --process-cpu-only --headed` | the process CPU a user sees; opens a visible window |
 | `switch` | `profile:switch` over long, short A and short B, `--cold-reload --repeat <runs>` | one invocation per round |
 | `idle` | `profile:idle`, 30 s with the long session open | |

@@ -189,7 +189,7 @@ const pullDetail = (context: ChangeRequestContext): GitHubReferenceDetail['pull'
         committedAt: commit.committedAt,
         url: commit.url,
     }));
-    return {
+    const pull: NonNullable<GitHubReferenceDetail['pull']> = {
         reviewDecision: null,
         reviewers: (context.reviewers ?? []).map((user) => (user.avatarUrl
             ? { id: user.id, login: user.username, avatarUrl: user.avatarUrl }
@@ -201,6 +201,9 @@ const pullDetail = (context: ChangeRequestContext): GitHubReferenceDetail['pull'
         commits,
         commitTotal: context.commitsComplete === false ? null : commits.length,
     };
+    // Absent when the chain could not be read, which is not the same as in none.
+    if (context.stack !== undefined) pull.stack = context.stack;
+    return pull;
 };
 
 /** A reviewer's approval or change request, placed among the comments like GitHub's. */

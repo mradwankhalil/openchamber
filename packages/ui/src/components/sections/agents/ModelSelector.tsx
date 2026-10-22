@@ -107,6 +107,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
     const labels = React.useMemo(() => ({
         searchPlaceholder: t('settings.agents.modelSelector.searchPlaceholder'),
+        list: t('chat.modelControls.modelListAria'),
         noResults: t('settings.agents.modelSelector.state.noModelsFound'),
         favorites: t('settings.agents.modelSelector.section.favorites'),
         recent: t('settings.agents.modelSelector.section.recent'),
@@ -114,6 +115,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         notSelected: placeholder || t('settings.agents.modelSelector.notSelected'),
         favorite: t('settings.agents.modelSelector.actions.favorite'),
         unfavorite: t('settings.agents.modelSelector.actions.unfavorite'),
+        provider: t('chat.modelControls.provider'),
         capabilities: t('chat.modelControls.capabilities'),
         capabilityToolCalling: t('chat.modelControls.capability.toolCalling'),
         capabilityReasoning: t('chat.modelControls.capability.reasoning'),

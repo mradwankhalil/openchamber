@@ -11,6 +11,7 @@ import { shownContextModes, zoneOfMode } from '@/lib/workspace/zones';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { useCurrentSessionActivity } from '@/hooks/useSessionActivity';
 import { useKeybinds } from '@/hooks/useKeybind';
+import { handleSettingsShortcut } from './useSettingsKeyboardShortcuts';
 import { createWorktreeSession } from '@/lib/worktreeSessionCreator';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { canUseElectronDesktopIPC, getMiniChatRuntimeArgs, invokeDesktop, isVSCodeRuntime } from '@/lib/desktop';
@@ -244,10 +245,7 @@ export const useKeyboardShortcuts = () => {
         if (activeElement && document.contains(activeElement)) activeElement.focus({ preventScroll: true });
       });
     },
-    open_settings: () => {
-      const state = useUIStore.getState();
-      state.setSettingsDialogOpen(!state.isSettingsDialogOpen);
-    },
+    open_settings: handleSettingsShortcut,
     add_selection_to_chat: () => addSelectionToChat({ focusWhenEmpty: false }),
     toggle_sidebar: () => {
       const state = useUIStore.getState();

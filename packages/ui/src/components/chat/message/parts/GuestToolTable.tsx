@@ -9,8 +9,7 @@ const GUEST_TOOL_TABLE_ROWS_MAX = 200;
 /** Characters per cell; the column paths are short by contract, values are not. */
 const GUEST_TOOL_TABLE_CELL_MAX = 200;
 
-// Same classes the markdown decorator puts on assistant tables
-// (`components/chat/markdown/decorate.ts`), minus the copy/download toolbar.
+// Tool-output cells use bounded widths and wrapping without Markdown controls.
 const TABLE_CELL_CLASS = 'min-w-[120px] max-w-[320px] whitespace-normal [overflow-wrap:anywhere] border-e border-border/60 px-4 py-2.5 align-middle last:border-e-0';
 
 interface GuestToolTableProps {

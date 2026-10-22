@@ -14,12 +14,16 @@ Una sesión de worktree se ejecuta en su propia copia del repositorio, en su pro
    - **nueva rama** — nombra la rama
    - **rama existente** — haz checkout de una rama que ya tengas
    - **PR or issue** — elige uno de GitHub, Linear o una extensión; la rama toma su nombre (un PR hace checkout de su propia rama) y el elemento se adjunta a tu primer mensaje
-3. Revisa **Based on** (la rama desde la que parte una nueva; por defecto, la rama actual del proyecto) y **Folder name**; cámbialos solo si lo necesitas.
+3. Revisa **Based on** (la rama desde la que parte una nueva; por defecto, la rama predeterminada del remoto, como `origin/main`) y **Folder name**; cámbialos solo si lo necesitas.
 4. Créala. Si el proyecto tiene comandos de configuración, se ejecutan justo después.
 
 OpenChamber crea la rama, configura la carpeta y abre ahí una nueva sesión, lista para tu primer mensaje. También puedes arrancar una directamente desde una [tarea](/es/notes-todos-plans/) o desde una [issue o PR de GitHub](/es/github/).
 
 Para saltarte las preguntas, elige **Worktree rápido** en el mismo menú de ramas: OpenChamber le pone nombre a la rama y apunta la nueva sesión a ella.
+
+## Proyectos abiertos en una carpeta del repositorio
+
+Si abres un proyecto en una carpeta dentro de un repositorio, como `repo/ai`, los nuevos worktrees se abren también allí. Una sesión en un worktree nuevo empieza en la misma carpeta del checkout, así OpenCode encuentra la configuración que está en ella. Un proyecto abierto en la raíz del repositorio empieza en la raíz del worktree, como antes. Si una rama no tiene esa carpeta, la sesión empieza en la raíz del worktree y OpenChamber te lo indica.
 
 ## Trae el trabajo de vuelta
 

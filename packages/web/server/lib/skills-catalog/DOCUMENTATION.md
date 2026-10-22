@@ -11,6 +11,7 @@ This module provides skill discovery, scanning, and installation capabilities fo
   - `git.js`: Git operations helpers for cloning and auth error detection.
   - `install.js`: Skills installation from git repositories.
   - `installed-sources.js`: Which source and repo subpath each catalog-installed skill came from, for the Installed badge.
+  - `remove-directory.js`: Deletes a clone or skill folder, retrying a delete Windows refuses for a moment.
   - `scan.js`: Skills scanning from git repositories.
   - `source.js`: Source string parsing for git repositories.
 
@@ -64,8 +65,8 @@ The following functions are internal helpers used by exported functions:
 ### Skill Name Validation (used in `install.js`, `scan.js`)
 - `validateSkillName(skillName)`: Validate skill name against pattern `/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/` (1-64 chars, lowercase alphanumeric with hyphens).
 
-### File System Helpers (`install.js`, `scan.js`)
-- `safeRm(dir)`: Safely remove directory recursively (ignores errors).
+### File System Helpers (`install.js`, `scan.js`, `remove-directory.js`)
+- `removeDirectory(dir)` (`remove-directory.js`): Remove a directory recursively, trying again after 250, 500, 1000 and 2000 ms. A delete that still fails logs a warning and leaves the folder; the scan or install still succeeds. `packages/vscode/src/skillsCatalog.ts` uses the same helper.
 - `ensureDir(dirPath)`: Ensure directory exists with recursive creation.
 - `copyDirectoryNoSymlinks(srcDir, dstDir)`: Copy directory contents without symlinks, with path traversal protection.
 - `normalizeUserSkillDir(userSkillDir)`: Normalize the user skill directory path (handles the legacy `skill` directory in the XDG config location, or `~/.config/opencode/skill` when XDG is unset, by selecting the plural `skills` directory when appropriate).
@@ -86,7 +87,7 @@ The following functions are internal helpers used by exported functions:
 - `ok`: Boolean indicating success.
 - `normalizedRepo`: Normalized repo string (`owner/repo`).
 - `effectiveSubpath`: Effective subpath used for scanning (may be from source string or defaultSubpath).
-- `items`: Array of skill items with `{ repoSource, repoSubpath, skillDir, skillName, frontmatterName, description, installable, warnings }`.
+- `items`: Array of skill items with `{ repoSource, repoSubpath, skillDir, skillName, frontmatterName, description, installable, warnings }`. `skillDir` is the directory relative to the repository root and already includes `repoSubpath`, so a consumer that builds a repository path must not prepend the subpath again. `repoSubpath` describes the source (and is what a reinstall passes back), not a prefix to strip from `skillDir`.
 - `error`: Error object with `{ kind, message }` on failure.
 
 ### Install Skills Response
@@ -146,6 +147,9 @@ The following functions are internal helpers used by exported functions:
 - Path traversal protection in `copyDirectoryNoSymlinks`: resolves real paths and checks containment.
 - Symlinks are explicitly rejected to prevent escape from skill directory.
 - Temporary directories are cleaned up in `finally` blocks.
+
+### Why the temp folder delete retries in its own loop and not with `fs.rm` `maxRetries`
+On Windows a virus scanner or git's background maintenance can hold a file of the fresh clone right when the scan deletes it. A single delete with the error swallowed left one folder in the temp directory per catalog refresh (#5405). `fs.rm`'s own `maxRetries` retries again at every folder level, so a file held for good four levels deep in a clone kept one delete retrying for the whole 10 minutes the file stayed held on Windows (Node 24), and the catalog request waited on it. The loop in `remove-directory.js` gives up after about four seconds.
 
 ### Error Handling
 - All exported functions return `{ ok, ... }` result objects, not throw.

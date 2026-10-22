@@ -10,10 +10,12 @@ import { useUIStore } from '@/stores/useUIStore';
 import { formatTimeForPreference } from '@/lib/timeFormat';
 import type { TimeFormatPreference } from '@/stores/useUIStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useProjectsInSidebarOrder } from '@/components/session/sidebar/list/useProjectsInSidebarOrder';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { refreshGlobalSessions, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { subscribeOpenchamberEvents } from '@/lib/openchamberEvents';
+import { openSessionFromRoute } from '@/lib/router/openSessionFromRoute';
 import { PROJECT_ICON_MAP, resolveProjectColor, ProjectIconImage } from '@/lib/projectMeta';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { cn, formatDirectoryName } from '@/lib/utils';
@@ -40,6 +42,7 @@ import { useConfigStore } from '@/stores/useConfigStore';
 import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
 import { CHAT_DRAFT_PROJECT_ID } from '@/lib/chatDirectories';
 import { isVSCodeRuntime } from '@/lib/desktop';
+import { createTaskRequestGate, mayCommitTaskList, mayEndTaskLoad } from './scheduledTasksRequests';
 
 const scheduleTimes = (task: ScheduledTask): string[] => {
   const raw = Array.isArray(task.schedule.times)
@@ -246,12 +249,24 @@ export function ScheduledTasksView({ layout, onLeave }: {
 }) {
   const { t } = useI18n();
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
-  const projects = useProjectsStore((state) => state.projects);
+  const storedProjects = useProjectsStore((state) => state.projects);
+  const projects = useProjectsInSidebarOrder(storedProjects);
   const activeProject = useProjectsStore((state) => state.getActiveProject());
   const homeDirectory = useDirectoryStore((state) => state.homeDirectory);
   const { currentTheme } = useThemeSystem();
 
   const [selectedProjectID, setSelectedProjectID] = React.useState<string>('');
+  // Ownership of the task flow lives in refs, decided in one place:
+  // - `selectedProjectRef` mirrors the selection the moment it changes, so an
+  //   async continuation can compare against it without waiting for a render;
+  // - `listOwnerRef` is the project whose tasks the visible list holds — task
+  //   actions name it instead of re-deriving the project from the selection;
+  // - `taskRequestGate` numbers fetches per project, so a slow older response
+  //   cannot overwrite a newer one (`scheduledTasksRequests.ts`).
+  const selectedProjectRef = React.useRef<string>('');
+  const listOwnerRef = React.useRef<string>('');
+  const [taskRequestGate] = React.useState(createTaskRequestGate);
+  const editorOwnerRef = React.useRef<string>('');
   const [tasks, setTasks] = React.useState<ScheduledTask[]>([]);
   // Start in loading state so the first frame after open shows the spinner,
   // not an empty/select-project flash before the fetch effect runs.
@@ -301,16 +316,42 @@ export function ScheduledTasksView({ layout, onLeave }: {
     );
   }, [homeDirectory, currentTheme.metadata.variant, currentTheme.colors.surface.foreground]);
 
-  const reloadTasks = React.useCallback(async (projectID: string, options?: { silent?: boolean }) => {
-    if (!projectID) {
-      setTasks([]);
+  // Every selection change routes through here once, so the mirror ref and
+  // the state can never disagree about which scope is on screen.
+  const selectProjectScope = React.useCallback((nextProjectID: string) => {
+    selectedProjectRef.current = nextProjectID;
+    setSelectedProjectID(nextProjectID);
+  }, []);
+
+  // The only writer of the task list. It refuses a list that does not belong
+  // to the scope on screen: a project change is the selection's to answer,
+  // and a slow fetch for an earlier project has no say over this view.
+  const commitTaskList = React.useCallback((projectID: string, nextTasks: ScheduledTask[]) => {
+    if (!mayCommitTaskList(projectID, selectedProjectRef.current)) {
       return;
     }
+    listOwnerRef.current = projectID;
+    setTasks(nextTasks);
+  }, []);
+
+  const reloadTasks = React.useCallback(async (projectID: string, options?: { silent?: boolean }) => {
+    // A newer request for the same project supersedes an older one; a
+    // request for another project is answered by the selection, since
+    // commitTaskList refuses anything that is not on screen.
+    if (!projectID) {
+      commitTaskList('', []);
+      setLoading(false);
+      return;
+    }
+    const request = taskRequestGate.begin(projectID);
     if (!options?.silent) {
       setLoading(true);
     }
     try {
       const nextTasks = await fetchScheduledTasks(projectID);
+      if (!taskRequestGate.isLatest(projectID, request)) {
+        return; // A newer fetch for this project owns the list; drop this one.
+      }
       nextTasks.sort((a, b) => {
         if (a.enabled !== b.enabled) {
           return a.enabled ? -1 : 1;
@@ -321,29 +362,36 @@ export function ScheduledTasksView({ layout, onLeave }: {
         }
         return (a.state?.nextRunAt || Number.MAX_SAFE_INTEGER) - (b.state?.nextRunAt || Number.MAX_SAFE_INTEGER);
       });
-      setTasks(nextTasks);
+      commitTaskList(projectID, nextTasks);
     } catch (error) {
+      if (!taskRequestGate.isLatest(projectID, request)) {
+        return;
+      }
       toast.error(error instanceof Error ? error.message : t('sessions.scheduledTasks.dialog.toast.loadFailed'));
       if (!options?.silent) {
-        setTasks([]);
+        commitTaskList(projectID, []);
       }
     } finally {
-      if (!options?.silent) {
+      // The latest load for the scope on screen decides the spinner, silent
+      // or not. A response for another scope is refused by commitTaskList
+      // and must not clear the new selection's pending load either.
+      if (mayEndTaskLoad(taskRequestGate, projectID, request, selectedProjectRef.current)) {
         setLoading(false);
       }
     }
-  }, [t]);
+  }, [commitTaskList, taskRequestGate, t]);
 
+  // Keyed on the stored list: a "Recent" reorder must not reset the chosen scope.
   React.useEffect(() => {
-    const preferredProjectID = activeProject?.id || projects[0]?.id || (chatsAvailable ? CHAT_DRAFT_PROJECT_ID : '');
-    setSelectedProjectID(preferredProjectID);
+    const preferredProjectID = activeProject?.id || storedProjects[0]?.id || (chatsAvailable ? CHAT_DRAFT_PROJECT_ID : '');
+    selectProjectScope(preferredProjectID);
     if (preferredProjectID) {
       void reloadTasks(preferredProjectID);
     } else {
-      setTasks([]);
+      commitTaskList('', []);
       setLoading(false);
     }
-  }, [activeProject, projects, chatsAvailable, reloadTasks]);
+  }, [activeProject, storedProjects, chatsAvailable, reloadTasks, selectProjectScope, commitTaskList]);
 
   React.useEffect(() => {
     let timeoutID: ReturnType<typeof setTimeout> | null = null;
@@ -370,16 +418,30 @@ export function ScheduledTasksView({ layout, onLeave }: {
   }, [selectedProjectID, reloadTasks]);
 
   const handleSaveTask = React.useCallback(async (taskDraft: Partial<ScheduledTask>) => {
-    if (!selectedProjectID) {
+    // An existing task belongs to the scope whose list displayed it; a draft
+    // without an id is created in the selected scope. Acting on the owner
+    // keeps a scope switch made while the editor was open from misfiling a
+    // task into the other project.
+    const projectID = (taskDraft.id ? editorOwnerRef.current : '') || selectedProjectID;
+    if (!projectID) {
       throw new Error(t('sessions.scheduledTasks.dialog.error.chooseProjectFirst'));
     }
-    await upsertScheduledTask(selectedProjectID, taskDraft);
-    await reloadTasks(selectedProjectID);
+    await upsertScheduledTask(projectID, taskDraft);
+    // Refresh what is on screen: normally the scope that was just saved; if
+    // the user switched while the editor was open, the newer scope's list is
+    // what the view belongs to and it must stay consistent.
+    if (selectedProjectID) {
+      await reloadTasks(selectedProjectID);
+    }
     toast.success(t('sessions.scheduledTasks.dialog.toast.saved'));
   }, [selectedProjectID, reloadTasks, t]);
 
   const handleToggleEnabled = React.useCallback(async (task: ScheduledTask, enabled: boolean) => {
-    if (!selectedProjectID) {
+    // The row's own project decides where the mutation lands: a task shown
+    // under a scope belongs to that scope, even if the user has already
+    // switched and the selection now names another project.
+    const projectID = listOwnerRef.current;
+    if (!projectID) {
       return;
     }
     setMutatingTaskID(task.id);
@@ -387,21 +449,22 @@ export function ScheduledTasksView({ layout, onLeave }: {
     setTasks((prev) => prev.map((item) => (item.id === task.id ? { ...item, enabled, loopApproval: undefined } : item)));
     try {
       if (task.loopFile) {
-        await setLoopScheduledTaskEnabled(selectedProjectID, task.id, enabled);
+        await setLoopScheduledTaskEnabled(projectID, task.id, enabled);
       } else {
-        await upsertScheduledTask(selectedProjectID, { ...task, enabled });
+        await upsertScheduledTask(projectID, { ...task, enabled });
       }
-      await reloadTasks(selectedProjectID, { silent: true });
+      await reloadTasks(projectID, { silent: true });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('sessions.scheduledTasks.dialog.toast.updateFailed'));
-      await reloadTasks(selectedProjectID, { silent: true });
+      await reloadTasks(projectID, { silent: true });
     } finally {
       setMutatingTaskID(null);
     }
-  }, [selectedProjectID, reloadTasks, t]);
+  }, [reloadTasks, t]);
 
   const handleDeleteTask = React.useCallback(async (task: ScheduledTask) => {
-    if (!selectedProjectID) {
+    const projectID = listOwnerRef.current;
+    if (!projectID) {
       return;
     }
     const confirmed = window.confirm(task.loopFile
@@ -414,52 +477,65 @@ export function ScheduledTasksView({ layout, onLeave }: {
     setMutatingTaskID(task.id);
     try {
       if (task.loopFile) {
-        await deleteScheduledTaskLoopFile(selectedProjectID, task.id);
+        await deleteScheduledTaskLoopFile(projectID, task.id);
       } else {
-        await deleteScheduledTask(selectedProjectID, task.id);
+        await deleteScheduledTask(projectID, task.id);
       }
-      await reloadTasks(selectedProjectID, { silent: true });
+      await reloadTasks(projectID, { silent: true });
       toast.success(t('sessions.scheduledTasks.dialog.toast.deleted'));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('sessions.scheduledTasks.dialog.toast.deleteFailed'));
     } finally {
       setMutatingTaskID(null);
     }
-  }, [selectedProjectID, reloadTasks, t]);
+  }, [reloadTasks, t]);
 
   const handleEditTask = React.useCallback((task: ScheduledTask) => {
     if (!task.loopFile) {
       setEditorTask(task);
+      // The editor saves into the task's own project, captured now, later
+      // switches of the selected scope must not redirect the save.
+      editorOwnerRef.current = listOwnerRef.current;
       setEditorOpen(true);
       return;
     }
-    if (!selectedProject?.path) {
+    const ownerProject = projects.find((project) => project.id === listOwnerRef.current);
+    if (!ownerProject?.path) {
       return;
     }
-    useFilesViewTabsStore.getState().setSelectedPath(selectedProject.path, task.loopFile, { allowOutsideRoot: true });
-    useUIStore.getState().openContextFile(selectedProject.path, task.loopFile);
+    useFilesViewTabsStore.getState().setSelectedPath(ownerProject.path, task.loopFile, { allowOutsideRoot: true });
+    useUIStore.getState().openContextFile(ownerProject.path, task.loopFile);
     onLeave('file');
-  }, [selectedProject?.path, onLeave]);
+  }, [projects, onLeave]);
 
   // The session of the task's latest run; a run records it as soon as it
-  // creates the session, so a running or failed run has one too.
+  // creates the session, so a running or failed run has one too. The session
+  // owns its directory: one in a linked worktree must not open on the
+  // project root, so the session's own record decides, not the selection.
   const openLastRunSession = React.useCallback((task: ScheduledTask) => {
     const sessionId = task.state?.lastSessionId;
     if (!sessionId) return;
-    const project = projects.find((entry) => entry.id === selectedProjectID);
-    useSessionUIStore.getState().setCurrentSession(sessionId, project?.path ?? null);
+    void openSessionFromRoute(sessionId);
+    // A run can create its session after the global list last loaded; that
+    // list cannot name the folder until it is fetched again.
+    if (!useGlobalSessionsStore.getState().entityById.has(sessionId)) {
+      void refreshGlobalSessions().then(() => openSessionFromRoute(sessionId));
+    }
     onLeave('session');
-  }, [projects, selectedProjectID, onLeave]);
+  }, [onLeave]);
 
   const handleRunNow = React.useCallback(async (task: ScheduledTask) => {
-    if (!selectedProjectID) {
+    // Like every mutation here, the run belongs to the task's own project,
+    // not to whatever the selection has become since the list was rendered.
+    const projectID = listOwnerRef.current;
+    if (!projectID) {
       return;
     }
     setMutatingTaskID(task.id);
     try {
-      const { sessionId, directory, persistError } = await runScheduledTaskNow(selectedProjectID, task.id);
+      const { sessionId, directory, persistError } = await runScheduledTaskNow(projectID, task.id);
       await Promise.all([
-        reloadTasks(selectedProjectID, { silent: true }),
+        reloadTasks(projectID, { silent: true }),
         refreshGlobalSessions(),
       ]);
       if (persistError) {
@@ -469,7 +545,7 @@ export function ScheduledTasksView({ layout, onLeave }: {
       }
       if (sessionId) {
         // Jump straight into the started session.
-        const project = projects.find((entry) => entry.id === selectedProjectID);
+        const project = projects.find((entry) => entry.id === projectID);
         useSessionUIStore.getState().setCurrentSession(sessionId, directory ?? project?.path ?? null);
         onLeave('session');
       }
@@ -490,7 +566,7 @@ export function ScheduledTasksView({ layout, onLeave }: {
     } finally {
       setMutatingTaskID(null);
     }
-  }, [selectedProjectID, projects, reloadTasks, onLeave, t, timeFormatPreference, openLastRunSession]);
+  }, [projects, reloadTasks, onLeave, t, timeFormatPreference, openLastRunSession]);
 
   const chatsLabel = (
     <span className="inline-flex min-w-0 items-center gap-1.5">
@@ -507,11 +583,12 @@ export function ScheduledTasksView({ layout, onLeave }: {
         value={selectedProjectID || '__none'}
         onValueChange={(value) => {
           const nextProjectID = value === '__none' ? '' : value;
-          setSelectedProjectID(nextProjectID);
+          selectProjectScope(nextProjectID);
           if (nextProjectID) {
             void reloadTasks(nextProjectID);
           } else {
-            setTasks([]);
+            commitTaskList('', []);
+            setLoading(false);
           }
         }}
       >
@@ -539,15 +616,17 @@ export function ScheduledTasksView({ layout, onLeave }: {
 
   const openNewTaskEditor = () => {
     setEditorTask(null);
+    editorOwnerRef.current = '';
     setEditorOpen(true);
   };
 
   const selectProject = (nextProjectID: string) => {
-    setSelectedProjectID(nextProjectID);
+    selectProjectScope(nextProjectID);
     if (nextProjectID) {
       void reloadTasks(nextProjectID);
     } else {
-      setTasks([]);
+      commitTaskList('', []);
+      setLoading(false);
     }
   };
 
@@ -809,7 +888,9 @@ export function ScheduledTasksView({ layout, onLeave }: {
       <ScheduledTaskEditorDialog
         open={editorOpen}
         task={editorTask}
-        projectId={selectedProjectID}
+        // The editor works in the task's own scope: an existing task keeps
+        // the project it was captured with even if the selection has moved.
+        projectId={editorOwnerRef.current || selectedProjectID}
         onOpenChange={setEditorOpen}
         onSave={handleSaveTask}
       />

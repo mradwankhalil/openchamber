@@ -49,10 +49,9 @@ same-tag pushes replace one banner while different tags are distinct banners. On
 several banners (`ready-<id>`, `question-<id>`, `permission-<requestKey>` are different tags), so
 counting sessionIds both over- and under-counts the stack; counting tags matches it.
 
-It is deliberately **not** derived from the live attention snapshot (`needsAttention`/`isViewed`):
-that machinery drives in-app indicators on *connected* clients, where a backgrounded client stays
-"viewing" and `needsAttention` is set by a separate `session.status` event that races the push
-trigger. The set self-clears via `clearPendingPushBadge` on any signal that the user is engaging
+It is deliberately **not** derived from the in-app unread marks (OpenCode's `time.viewed`): a
+backgrounded client can still be on the session, and the mark changes on a separate event that
+races the push trigger. The set self-clears via `clearPendingPushBadge` on any signal that the user is engaging
 with the app: the visibility beacon (`updateUiVisibility` wrapper, `visible:true`), **plus** opening
 a session (`POST /api/sessions/:id/view`) and sending a message (`POST /api/sessions/:id/
 message-sent`). The latter two need no auth and fire reliably on the native app when it foregrounds,

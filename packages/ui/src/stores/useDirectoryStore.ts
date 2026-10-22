@@ -4,7 +4,7 @@ import { opencodeClient } from '@/lib/opencode/client';
 import { getNormalizedParentDirectory, normalizePath } from '@/lib/pathNormalization';
 import { getDesktopHomeDirectory, isVSCodeRuntime } from '@/lib/desktop';
 import { getVSCodeBootstrapConfig } from '@/lib/vscodeBootstrap';
-import { subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import { getRuntimeKey, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { getChatsRoot, resolveChatsRootDirectory } from '@/lib/chatDirectories';
 import { useFileSearchStore } from '@/stores/useFileSearchStore';
@@ -177,24 +177,12 @@ const normalizeHomeCandidate = (value?: string | null) => {
   return normalized && normalized !== '/' ? normalized : null;
 };
 
-const persistResolvedHome = (resolved: string) => {
-  cachedHomeDirectory = resolved;
-  if (typeof window !== 'undefined') {
-    safeStorage.setItem('homeDirectory', resolved);
-  }
-  void updateDesktopSettings({ homeDirectory: resolved });
-  return resolved;
-};
-
+// Stores nothing: an answer can arrive after a runtime switch, and only the
+// generation-checked commit in resolveHomeDirectory may store a home.
 const initializeHomeDirectory = async () => {
-  const acceptCandidate = (candidate?: string | null) => {
-    const normalized = normalizeHomeCandidate(candidate);
-    return normalized ? persistResolvedHome(normalized) : null;
-  };
-
   try {
     const fsHome = await opencodeClient.getFilesystemHome();
-    const resolved = acceptCandidate(fsHome);
+    const resolved = normalizeHomeCandidate(fsHome);
     if (resolved) {
       return resolved;
     }
@@ -213,7 +201,7 @@ const initializeHomeDirectory = async () => {
 
   try {
     const info = await opencodeClient.getSystemInfo();
-    const resolved = acceptCandidate(info?.homeDirectory);
+    const resolved = normalizeHomeCandidate(info?.homeDirectory);
     if (resolved) {
       return resolved;
     }
@@ -223,7 +211,7 @@ const initializeHomeDirectory = async () => {
 
   try {
     const desktopHome = await getDesktopHomeDirectory();
-    const resolved = acceptCandidate(desktopHome);
+    const resolved = normalizeHomeCandidate(desktopHome);
     if (resolved) {
       return resolved;
     }
@@ -232,7 +220,7 @@ const initializeHomeDirectory = async () => {
   }
 
   const fallback = getHomeDirectory();
-  const resolvedFallback = acceptCandidate(fallback);
+  const resolvedFallback = normalizeHomeCandidate(fallback);
   if (resolvedFallback) {
     return resolvedFallback;
   }
@@ -371,13 +359,14 @@ export const useDirectoryStore = create<DirectoryStore>()(
       // project stops being the last directory, and nothing is stored in its
       // place, for the same reason as in synchronizeHomeDirectory.
       goToNoProjectDirectory: async () => {
+        const runtimeKey = getRuntimeKey();
         const leaving = get().currentDirectory;
         const [homeDir, chatsRoot] = await Promise.all([
           cachedHomeDirectory || get().homeDirectory || initializeHomeDirectory(),
           resolveChatsRoot(),
         ]);
         // A directory opened while the lookup ran is the user's newer choice.
-        if (get().currentDirectory !== leaving) return;
+        if (getRuntimeKey() !== runtimeKey || get().currentDirectory !== leaving) return;
         const directory = noProjectDirectory(homeDir, chatsRoot);
         opencodeClient.setDirectory(directory);
         invalidateFileSearchCache();
@@ -508,6 +497,8 @@ const resolveHomeDirectory = (): Promise<void> => {
   const resolution: Promise<void> = Promise.all([initializeHomeDirectory(), resolveChatsRoot()])
     .then(([home, chatsRoot]) => {
       if (generation !== homeResolveGeneration) return;
+      const resolvedHome = normalizeHomeCandidate(home);
+      if (resolvedHome) safeStorage.setItem('homeDirectory', resolvedHome);
       useDirectoryStore.getState().synchronizeHomeDirectory(home, chatsRoot);
     })
     .finally(() => {

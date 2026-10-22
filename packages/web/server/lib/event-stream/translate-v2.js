@@ -76,7 +76,7 @@ export function translateWireEvent(payload) {
 
   const sessionID = trimmed(data.sessionID);
 
-  const status = (statusValue) => event('session.status', { sessionID, status: statusValue });
+  const status = (statusValue, extra = {}) => event('session.status', { sessionID, status: statusValue, ...extra });
 
   switch (type) {
     case 'server.connected':
@@ -148,9 +148,11 @@ export function translateWireEvent(payload) {
       if (!sessionID) return [];
       return [status({ type: 'idle' }), event('session.idle', { sessionID })];
 
+    // The one event that marks where a turn begins; every later busy only
+    // says the turn is still running. Its time is the turn's start.
     case 'session.execution.started':
       if (!sessionID) return [];
-      return [status({ type: 'busy' })];
+      return [status({ type: 'busy' }, { turnStartedAt: created })];
 
     // v1 surfaced retries as `session.status {type:'retry'}` and the UI still
     // renders that status (attempt + next-at countdown in the status chip).

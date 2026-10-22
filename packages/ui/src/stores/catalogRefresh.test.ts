@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { QUOTA_PROVIDERS } from "@/lib/quota/providers";
+import { subscribeCredentialChanges } from "@/lib/opencode/integration-catalog";
 import { catalogRefreshTasks } from "./catalogRefresh";
 import { useQuotaStore } from "./useQuotaStore";
 
@@ -18,8 +19,19 @@ describe("catalogRefreshTasks", () => {
     }
   });
 
-  test("a credential change re-reads providers, web search keys and usage", () => {
-    expect(catalogRefreshTasks("credential")).toHaveLength(3);
+  test("a credential change re-reads providers, web search keys, usage and an open provider page", () => {
+    expect(catalogRefreshTasks("credential")).toHaveLength(4);
+  });
+
+  test("a credential change tells an open provider page to read its accounts again", async () => {
+    let notified = 0;
+    const unsubscribe = subscribeCredentialChanges(() => { notified += 1; });
+    try {
+      await catalogRefreshTasks("credential")[3]();
+    } finally {
+      unsubscribe();
+    }
+    expect(notified).toBe(1);
   });
 
   test("projects belong to the sync stores, not to the settings lists", () => {

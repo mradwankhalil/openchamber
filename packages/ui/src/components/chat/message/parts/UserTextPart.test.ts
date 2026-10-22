@@ -38,6 +38,15 @@ describe('prepareUserMarkdownContent', () => {
         expect(content).toContain('not $5 or $other');
     });
 
+    test('links a skill typed with the sigils a CJK IME produces', () => {
+        const content = prepareUserMarkdownContent({
+            textContent: '¥review ￥review ＄review',
+            skillNames: new Set(['review']),
+        });
+
+        expect(content.split(`](${buildSkillHref('review')})`)).toHaveLength(4);
+    });
+
     test('adds hard line breaks outside fences but not inside', () => {
         const content = prepareUserMarkdownContent({
             textContent: 'first\nsecond\n```ts\nconst x = 1\nconst y = 2\n```\nthird',

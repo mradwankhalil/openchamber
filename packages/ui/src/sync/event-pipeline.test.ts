@@ -34,7 +34,7 @@ function statusEvent(type: "busy" | "retry"): OpenCodeEvent {
 }
 
 /** A raw stream payload: wire events, or OpenChamber's own bridge events. */
-type StreamPayload = OpenCodeEvent | { type: string; properties: Record<string, string> }
+type StreamPayload = OpenCodeEvent | { type: string; properties: Record<string, string | boolean | null> }
 
 /** `keepalives` counts SSE comments sent before the events. They are activity without an event. */
 function createSdk(events: StreamPayload[], streamFinished: () => void, keepalives = 0): OpenCodeClient {
@@ -147,6 +147,34 @@ describe("createEventPipeline", () => {
     expect(events[0]).toEqual({ type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" } } })
   })
 
+  // Regression (#5259): the host's start reaches a client whose clock is off.
+  test("bridges the host's turn start onto this device's clock", async () => {
+    const hostNow = Date.now() + 3_600_000
+    const before = Date.now()
+    const { events } = await collect(
+      [{ type: "openchamber:session-status", properties: { sessionID: "ses_1", status: "busy", timestamp: hostNow, turnStartedAt: hostNow - 1_200_000 } as never }],
+      1,
+    )
+    const event = events[0]
+    if (event.type !== "session.status") throw new Error("expected a status event")
+    expect(event.properties.turnStart?.source).toBe("host")
+    expect(event.properties.turnStart?.at).toBeGreaterThanOrEqual(before - 1_200_000)
+    expect(event.properties.turnStart?.at).toBeLessThanOrEqual(Date.now() - 1_200_000)
+  })
+
+  test("keeps the start of a turn that began in the same flush as its next step", async () => {
+    const { events } = await collect(
+      [
+        { ...base, type: "session.execution.started", data: { sessionID: "ses_1" } } as OpenCodeEvent,
+        statusEvent("busy"),
+      ],
+      1,
+    )
+    expect(events).toHaveLength(1)
+    const event = events[0]
+    expect(event.type === "session.status" && event.properties.turnStart?.source).toBe("live")
+  })
+
   test("bridges openchamber archive announcements into session patches", async () => {
     const { events } = await collect(
       [{ type: "openchamber:session-archived", properties: { sessionID: "ses_1", archivedAt: 42 } as never }],
@@ -185,6 +213,18 @@ describe("createEventPipeline", () => {
     )
     expect(events[0]).toEqual({ type: "openchamber.page-waiting", properties: { sessionID: "ses_1", directory: "/repo", page: { id: "call_1", title: "Pick a layout" } } })
     expect(events[1]).toEqual({ type: "openchamber.page-settled", properties: { sessionID: "ses_1", pageID: "call_1" } })
+  })
+
+  test("passes the server's recap wait announcements through typed", async () => {
+    const { events } = await collect(
+      [
+        { type: "openchamber:session-assist", properties: { sessionID: "ses_1", directory: "/chat", pending: true } },
+        { type: "openchamber:session-assist", properties: { sessionID: "ses_1", directory: null, pending: false } },
+      ],
+      2,
+    )
+    expect(events[0]).toEqual({ type: "openchamber.session-assist", properties: { sessionID: "ses_1", directory: "/chat", pending: true } })
+    expect(events[1]).toEqual({ type: "openchamber.session-assist", properties: { sessionID: "ses_1", directory: null, pending: false } })
   })
 
   test("ignores payloads that are neither wire events nor bridge events", async () => {

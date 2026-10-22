@@ -6,6 +6,9 @@ import { toast } from '@/components/ui';
 import { useI18n } from '@/lib/i18n';
 import { clearStagedRevert } from '@/sync/session-actions';
 import { useDirectorySync } from '@/sync/sync-context';
+import { readSubagentRun } from '@/lib/opencode/subagent-run';
+import { attachSyntheticContext } from './lib/attachSyntheticContext';
+import { getPromptPreviewText } from './lib/messagePreview';
 import {
     EMPTY_REVERTED_MESSAGE_DOCK_STATE,
     buildRevertedMessageDockState,
@@ -13,24 +16,18 @@ import {
 } from './revertedMessageDockState';
 
 /**
- * A one-line preview of a reverted message: its text parts joined and
- * collapsed to a single line, falling back to an attached filename and then to
- * a caller-supplied placeholder.
+ * A one-line preview of a reverted prompt, read the way the navigator reads
+ * it: the typed text, else a label for its attached context (a quote, a
+ * terminal selection), else an attached filename, else `fallback`.
  */
-const getRevertedPreview = (parts: Part[], fallback: string): string => {
-    const text = parts
-        .filter((part) => part.type === 'text')
-        .map((part) => (part.type === 'text' ? part.text : ''))
-        .join('\n')
-        .replace(/\s+/g, ' ')
-        .trim();
-
+const getRevertedPreview = (parts: Part[], fallback: string, t: Parameters<typeof getPromptPreviewText>[1]): string => {
+    const text = getPromptPreviewText(parts, t).replace(/\s+/g, ' ').trim();
     if (text) return text;
     const filePart = parts.find((part) => part.type === 'file');
     return filePart?.filename ? `[${filePart.filename}]` : fallback;
 };
 
-const ROW_CLASS = 'flex h-10 min-w-0 items-center gap-2 ps-3 pe-1.5';
+const ROW_CLASS = 'flex oc-composer-row min-w-0 items-center gap-2 ps-3 pe-1.5';
 
 interface RevertedMessagesStripProps {
     sessionId: string | null;
@@ -61,12 +58,17 @@ export const RevertedMessagesStrip: React.FC<RevertedMessagesStripProps> = React
         directory,
     );
     const noTextContent = t('chat.revertPopover.noTextContent');
-    const items = React.useMemo(() => revertedState.records.map((record) => ({
-        id: record.message.id,
-        text: record.message.role === 'synthetic'
-            ? (record.message.description?.trim() || noTextContent)
-            : getRevertedPreview(record.parts, noTextContent),
-    })), [noTextContent, revertedState]);
+    const items = React.useMemo(() => {
+        // Attached context arrives as synthetic messages around its prompt;
+        // folding it back on gives a quote-only prompt its label, and drops
+        // plugin plumbing. A background report stays its own row.
+        const entries = attachSyntheticContext(revertedState.records.map((record) => ({ info: record.message, parts: record.parts })));
+        return entries.flatMap(({ info, parts }) => {
+            if (info.role === 'user') return [{ id: info.id, text: getRevertedPreview(parts, noTextContent, t) }];
+            if (info.role === 'synthetic' && readSubagentRun(info)) return [{ id: info.id, text: info.description?.trim() || noTextContent }];
+            return [];
+        });
+    }, [noTextContent, revertedState, t]);
 
     if (!sessionId || !revertedState.revertMessageID || items.length === 0) return null;
 
@@ -115,7 +117,7 @@ export const RevertedMessagesStrip: React.FC<RevertedMessagesStripProps> = React
     // Restore stays on it, so the decision never hides behind the toggle.
     return (
         <div role="group" className="border-b border-border/60" aria-label={t('chat.revertPopover.title')}>
-            <div className="flex h-10 items-center gap-2 ps-3 pe-1.5">
+            <div className="flex oc-composer-row items-center gap-2 ps-3 pe-1.5">
                 <Button
                     type="button"
                     variant="ghost"

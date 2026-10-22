@@ -14,12 +14,16 @@ Sesja worktree działa we własnej wyewidencjonowanej kopii Twojego repozytorium
    - **new branch** — nazwij gałąź
    - **existing branch** — wyewidencjonuj gałąź, którą już masz
    - **PR or issue** — wybierz element z GitHub, Linear albo rozszerzenia; gałąź dostaje nazwę od niego (PR wyewidencjonowuje własną gałąź), a element zostaje dołączony do twojej pierwszej wiadomości
-3. Sprawdź **Based on** (gałąź, od której startuje nowa, domyślnie bieżąca gałąź projektu) i **Folder name**; zmieniaj je tylko wtedy, gdy trzeba.
+3. Sprawdź **Based on** (gałąź, od której startuje nowa, domyślnie domyślna gałąź zdalnego repozytorium, np. `origin/main`) i **Folder name**; zmieniaj je tylko wtedy, gdy trzeba.
 4. Utwórz go. Jeśli projekt ma polecenia konfiguracyjne, uruchamiają się zaraz potem.
 
 OpenChamber tworzy gałąź, konfiguruje folder i otwiera w nim nową sesję, gotową na Twoją pierwszą wiadomość. Możesz też wystartować jedną prosto z [zadania](/pl/notes-todos-plans/) albo z [issue lub PR na GitHub](/pl/github/).
 
 Bez pytań: wybierz **Szybki worktree** w tym samym menu gałęzi. OpenChamber sam nazwie gałąź i skieruje na nią nową sesję.
+
+## Projekty otwarte na folderze repozytorium
+
+Jeśli otwierasz projekt na folderze wewnątrz repozytorium, na przykład `repo/ai`, nowe worktree otwierają się w tym samym miejscu. Sesja w nowym worktree startuje w tym samym folderze checkoutu, więc OpenCode znajduje konfigurację, która w nim leży. Projekt otwarty na katalogu głównym repozytorium startuje w katalogu głównym worktree, jak dotąd. Jeśli gałąź nie ma takiego folderu, sesja startuje w katalogu głównym worktree, a OpenChamber o tym informuje.
 
 ## Przywróć pracę
 

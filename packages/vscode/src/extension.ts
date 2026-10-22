@@ -12,6 +12,7 @@ import { applyConnectAttemptTimeout } from './networkDefaults';
 import { stopGitProcesses } from './bridge-git-process-runtime';
 import { registerGenerateCommitMessageCommand } from './scmCommitMessage';
 import { createSessionNotifier } from './sessionNotifications';
+import { vscodeSettingsNavigationSchema, type VSCodeSettingsNavigation } from '../../ui/src/lib/settings/vscodeNavigation';
 
 let chatViewProvider: ChatViewProvider | undefined;
 
@@ -675,9 +676,14 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('openchamber.showSettings', () => {
-      chatViewProvider?.showSettings();
+    vscode.commands.registerCommand('openchamber.showSettings', (input?: VSCodeSettingsNavigation) => {
+      const navigation = input === undefined ? undefined : vscodeSettingsNavigationSchema.parse(input);
+      sessionEditorProvider?.showSettings(navigation);
     })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('openchamber.closeSettings', () => sessionEditorProvider?.closeSettings()),
   );
 
   context.subscriptions.push(

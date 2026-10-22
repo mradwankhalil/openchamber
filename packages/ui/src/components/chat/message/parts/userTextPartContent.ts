@@ -8,8 +8,9 @@ import {
 import { findAttachmentCitationRanges } from '../../attachmentCitations';
 
 // Skills are named with `$`; messages sent before that used `/`, which history
-// still shows as a chip.
-export const SKILL_TOKEN_PATTERN = /(^|\s)[$/]([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)/g;
+// still shows as a chip. A CJK IME types `¥`, `￥` or `＄` for the same key, so
+// a hand-typed token can arrive with any of those spellings.
+export const SKILL_TOKEN_PATTERN = /(^|\s)[$/¥￥＄]([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)/g;
 
 const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?```|~~~[\s\S]*?~~~)/g;
 

@@ -102,6 +102,33 @@ describe('generation jobs', () => {
     expect(describeSmallModel.mock.calls.at(-1)[0]).toMatchObject({ directory: '/repo', preferredProviderID: 'anthropic', preferredModelID: 'claude-opus-5' });
   });
 
+  it('runs the saved walkthrough model at its saved thinking level, and a model picked for one review at its own', async () => {
+    const settingsFile = path.join(TEMP_DATA_DIR, 'settings.json');
+    fs.writeFileSync(settingsFile, JSON.stringify({
+      walkthroughModelOverride: 'anthropic/claude-sonnet-5',
+      walkthroughModelVariant: 'high',
+    }));
+    describeSmallModel.mockResolvedValue({
+      providerID: 'anthropic',
+      modelID: 'claude-sonnet-5',
+      variant: 'high',
+      source: 'request',
+      inputCharBudget: 1_000_000,
+      structuredOutput: true,
+    });
+    generateSmallModelText.mockResolvedValue({ text: RESPONSE });
+    try {
+      await generateWalkthrough({ directory: '/repo', source: SOURCE, force: true });
+      expect(describeSmallModel.mock.calls.at(-1)[0]).toMatchObject({ overrideModel: 'anthropic/claude-sonnet-5', overrideVariant: 'high' });
+      expect(generateSmallModelText.mock.calls.at(-1)[0]).toMatchObject({ model: 'anthropic/claude-sonnet-5', variant: 'high' });
+
+      await generateWalkthrough({ directory: '/repo', source: SOURCE, force: true, model: 'openai/gpt-5.6' });
+      expect(describeSmallModel.mock.calls.at(-1)[0]).toMatchObject({ overrideModel: 'openai/gpt-5.6', overrideVariant: undefined });
+    } finally {
+      fs.rmSync(settingsFile, { force: true });
+    }
+  });
+
   it('runs a second request against the same job instead of paying twice', async () => {
     let release;
     generateSmallModelText.mockImplementation(() => new Promise((resolve) => {

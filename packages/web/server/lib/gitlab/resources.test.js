@@ -146,6 +146,41 @@ describe('GitLab resource service', () => {
     expect(result.reviewers).toEqual([expect.objectContaining({ id: '7', username: 'ann' })]);
   });
 
+  it('reads the chain of open merge requests stacked by branch around this one, as far as each link is the only one', async () => {
+    const mergeRequest = (iid, source, target, sourceProject = 2) => ({
+      ...openMR, id: 100 + iid, iid, title: `MR ${iid}`, web_url: `${origin}/team/repo/-/merge_requests/${iid}`,
+      source_branch: source, target_branch: target, source_project_id: sourceProject, target_project_id: 2,
+    });
+    const opened = [
+      // A release merge request out of the default branch is no lower layer.
+      mergeRequest(9, 'main', 'production'),
+      // A fork's branch of the same name is another branch.
+      mergeRequest(10, 'feature', 'other', 1),
+      mergeRequest(4, 'layer-one', 'main'),
+      mergeRequest(5, 'feature', 'layer-one'),
+      mergeRequest(6, 'layer-three', 'feature'),
+      // Two on top of layer-three: the chain forks there and stops.
+      mergeRequest(7, 'fork-a', 'layer-three'),
+      mergeRequest(8, 'fork-b', 'layer-three'),
+    ];
+    const all = vi.fn(async (options) => {
+      const items = opened.filter((item) => (!options.sourceBranch || item.source_branch === options.sourceBranch)
+        && (!options.targetBranch || item.target_branch === options.targetBranch));
+      return options.showExpanded ? { data: items, paginationInfo: { next: null } } : items;
+    });
+    const { service } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, all, allCommits: list([]), show: vi.fn(async () => mergeRequest(5, 'feature', 'layer-one')) },
+      MergeRequestDiscussions: { all: list([]) },
+    });
+
+    const result = await service.changeRequestContext('/repo', 5, { includeTimeline: true });
+    expect(result.stack).toEqual({
+      number: null,
+      base: 'main',
+      layers: [4, 5, 6].map((iid) => expect.objectContaining({ number: iid, state: 'open', head: opened.find((item) => item.iid === iid).source_branch })),
+    });
+  });
+
   it('reads a thread as notes that say which thread they are in and its state', async () => {
     const discussions = [
       { id: 'abc', individual_note: false, notes: [

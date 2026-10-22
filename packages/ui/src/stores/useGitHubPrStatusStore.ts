@@ -793,7 +793,10 @@ export const getBranchTrackedPull = (entry: PrStatusEntry | undefined): TrackedT
   if (!entry || !identity?.accountId || !pr || pr.state !== 'open' || !owner || !repo) return null;
   const thread = { kind: 'pull' as const, owner, repo, number: pr.number, accountId: identity.accountId };
   if (identity.provider === 'gitlab') return identity.instance ? { provider: 'gitlab', instance: identity.instance, ...thread } : null;
-  return identity.provider === 'github' ? { provider: 'github', ...thread } : null;
+  // A GitHub instance is the repo's host; missing means github.com. Carrying it
+  // in the tracked item separates the same owner/repo/number on github.com from
+  // an enterprise host.
+  return identity.provider === 'github' ? { provider: 'github', instance: identity.instance ?? 'github.com', ...thread } : null;
 };
 
 const sameChecks = (left: CISummary | null | undefined, right: CISummary | null | undefined): boolean => (
@@ -828,6 +831,7 @@ const applyLiveSummary = (
     && (pr.mergeable ?? null) === summary.mergeable
     && (pr.mergeableState ?? null) === summary.mergeableState
     && (!summary.headSha || pr.headSha === summary.headSha)
+    && (!summary.base || pr.base === summary.base)
     && sameChecks(getStatusChecks(status), summary.checks);
   if (unchanged) {
     return null;
@@ -837,6 +841,7 @@ const applyLiveSummary = (
     draft: summary.draft,
     title: summary.title,
     headSha: summary.headSha ?? pr.headSha,
+    base: summary.base ?? pr.base,
     mergeable: summary.mergeable,
     mergeableState: summary.mergeableState,
   };
@@ -1584,6 +1589,12 @@ const getCachedPrSummary = (
   }
   prSummaryCacheByKey.set(cacheKey, { sig, summary });
   return summary;
+};
+
+/** The badge of one entry's change request, by its status key; stable while nothing changes. */
+export const selectEntryVisualSummary = (entries: Record<string, PrStatusEntry>, key: string): PrVisualSummary | null => {
+  const entry = entries[key];
+  return getCachedPrSummary(`entry:${key}`, entry?.status, entry?.identity?.provider ?? null);
 };
 
 export const useFreshestSourceControlVisualSummaryForBranch = (

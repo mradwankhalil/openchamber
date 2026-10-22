@@ -31,7 +31,7 @@ Plus everything from the shared OpenChamber UI: branchable timeline, smart tool 
 | `OpenChamber: Open Sidebar` | Open the OpenChamber sidebar |
 | `OpenChamber: Run on Several Models` | Open a new tab set up to run one prompt on several models |
 | `OpenChamber: Open Session in Editor` | Open current or new session in an editor tab |
-| `OpenChamber: Settings` | Open extension settings |
+| `OpenChamber: Settings` | Open Settings in an editor tab. Repeat invocations reveal the same tab and leave the chat sidebar unchanged. |
 | `OpenChamber: Restart API Connection` | Restart the OpenCode API process |
 | `OpenChamber: Show OpenCode Status` | Debug info for development or bug reports |
 | `OpenChamber: Generate Commit Message` | Fill VS Code's Source Control commit box from staged changes, or unstaged if nothing is staged |

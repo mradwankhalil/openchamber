@@ -1276,7 +1276,7 @@ describe("branch PR live state pushed by the server", () => {
     const key = boundKey("feature", "origin", "github.com#7")
     seed(key, openStatus())
     expect(getBranchTrackedPull(useGitHubPrStatusStore.getState().entries[key])).toEqual({
-      provider: "github", kind: "pull", owner: "acme", repo: "app", number: 7, accountId: "github.com#7",
+      provider: "github", kind: "pull", instance: "github.com", owner: "acme", repo: "app", number: 7, accountId: "github.com#7",
     })
     seed(key, openStatus({ pr: { ...openStatus().pr!, state: "merged" } }))
     expect(getBranchTrackedPull(useGitHubPrStatusStore.getState().entries[key])).toBeNull()
@@ -1301,6 +1301,18 @@ describe("branch PR live state pushed by the server", () => {
     const failing = { state: "failure" as const, total: 2, success: 1, failure: 1, pending: 0, inProgress: 0, queued: 0 }
     pushFor(key, liveSummary({ checks: failing }))
     expect(useGitHubPrStatusStore.getState().entries[key]?.status?.checks?.state).toBe("failure")
+  })
+
+  test("a PR retargeted on the host takes its new base, which Changes compares against", () => {
+    const key = boundKey("feature")
+    seed(key, openStatus({ pr: { ...openStatus().pr!, base: "layer-one" } }))
+    pushFor(key, liveSummary({ base: "main" }))
+    const status = useGitHubPrStatusStore.getState().entries[key]?.status
+    expect(status?.pr?.base).toBe("main")
+    // A summary that does not name its base leaves the known one.
+    const before = useGitHubPrStatusStore.getState().entries
+    pushFor(key, liveSummary())
+    expect(useGitHubPrStatusStore.getState().entries).toBe(before)
   })
 
   test("a PR shared by several keys updates every key; another account's entry stays", () => {
@@ -1397,6 +1409,17 @@ describe("linked change request summary URL canonicalization (#4541)", () => {
       gheIdentity,
     )
     expect(summary?.url).toBe("https://ghe.acme.example/acme/app/pull/7")
+    // The badge identity is the tracked item's own host (here a bare enterprise
+    // host), so its URL is that host's, never rewritten to github.com.
+    const bareHostIdentity = { provider: "github" as const, instance: "ghe.acme.example" }
+    const badge = getLinkedChangeRequestVisualSummary(
+      "runtime-a|github|ghe.acme.example|acme/app#7",
+      { ...link, url: "https://github.com/acme/app/pull/7" },
+      state,
+      bareHostIdentity,
+    )
+    expect(badge?.provider).toBe("github")
+    expect(badge?.url).toBe("https://ghe.acme.example/acme/app/pull/7")
   })
 
   test("query and fragment spellings of one GitLab merge request share a stable summary reference", () => {

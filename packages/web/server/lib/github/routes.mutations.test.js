@@ -238,6 +238,19 @@ describe('canonical GitHub mutations', () => {
     });
   });
 
+  it('refuses a created pull request whose base repository lives on another host', async () => {
+    const account = await auth.setGitHubAuth({ accessToken: 'token-one', user: { id: 1, login: 'actor' } });
+    const foreign = pullRequest();
+    foreign.base = { ...foreign.base, repo: { ...foreign.base.repo, html_url: 'https://gitlab.com/acme/app' } };
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(foreign)));
+    const { app, store } = makeApp();
+
+    const response = await request(app).post('/api/source-control/github/pr/create')
+      .send({ ...context(account.accountId), title: 'Title' });
+    expect(response.status).not.toBe(200);
+    expect(store.records.get('request-one')?.result?.number).toBeUndefined();
+  });
+
   it('records the created pull request number and names it in replayed receipts', async () => {
     const account = await auth.setGitHubAuth({ accessToken: 'token-one', user: { id: 1, login: 'actor' } });
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(pullRequest())));
@@ -281,22 +294,24 @@ describe('canonical GitHub mutations', () => {
     vi.stubGlobal('fetch', fetch);
     const { app } = makeApp();
     const payload = { ...context(account.accountId), title: 'Title' };
+    // The create itself, never the reads around it (the stack lookup after it).
+    const creates = () => fetch.mock.calls.filter(([, options]) => options?.method === 'POST').length;
 
     const [owner, duplicate] = await Promise.all([
       request(app).post('/api/source-control/github/pr/create').send(payload),
       request(app).post('/api/source-control/github/pr/create').send(payload),
     ]);
     expect([owner.body.replayed, duplicate.body.replayed].sort()).toEqual([false, true]);
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(creates()).toBe(1);
 
     const replay = await request(app).post('/api/source-control/github/pr/create').send(payload).expect(200);
     expect(replay.body.replayed).toBe(true);
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(creates()).toBe(1);
 
     const conflict = await request(app).post('/api/source-control/github/pr/create')
       .send({ ...payload, title: 'Changed' }).expect(409);
     expect(conflict.body.code).toBe('SOURCE_CONTROL_MUTATION_CONFLICT');
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(creates()).toBe(1);
   });
 
   it.each([500, 502, 504])('records a provider %i after dispatch as outcome-unknown and never repeats it', async (status) => {
@@ -460,6 +475,67 @@ describe('canonical GitHub mutations', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
+  it('stacks a new PR on the open PR whose branch it targets, and says when GitHub would not', async () => {
+    const account = await auth.setGitHubAuth({ accessToken: 'token-one', user: { id: 1, login: 'actor' } });
+    const base = pullRequest().base;
+    const onLower = (overrides) => pullRequest({ base: { ...base, ref: 'lower', repo: { ...base.repo, default_branch: 'main' } }, ...overrides });
+    let existingStack = null;
+    let refuse = false;
+    const writes = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const { pathname, searchParams } = new URL(url);
+      if (options.method === 'POST' && pathname === '/repos/acme/app/pulls') return jsonResponse(onLower({ number: 8 }), 201);
+      if (pathname === '/repos/acme/app/pulls' && searchParams.get('head') === 'acme:lower') {
+        return jsonResponse([pullRequest({ number: 6, head: { ...pullRequest().head, ref: 'lower' } })]);
+      }
+      if (pathname === '/repos/acme/app/stacks' && options.method === 'GET') return jsonResponse(existingStack ? [existingStack] : []);
+      if (pathname.startsWith('/repos/acme/app/stacks') && options.method === 'POST') {
+        writes.push({ path: pathname, body: JSON.parse(options.body) });
+        return refuse ? jsonResponse({ message: 'Validation failed' }, 422) : jsonResponse({ number: 3 }, pathname.endsWith('/add') ? 200 : 201);
+      }
+      return jsonResponse(pullRequest());
+    }));
+    const { app } = makeApp();
+    const create = (key) => request(app).post('/api/source-control/github/pr/create').send({
+      ...context(account.accountId, { idempotencyKey: key, target: { project: { owner: 'acme', name: 'app' }, head: 'feature', base: 'lower' } }),
+      title: 'Title',
+    }).expect(200);
+
+    // No stack yet: the parent and the new PR start one, bottom first.
+    expect((await create('one')).body).toMatchObject({ target: { number: 8 }, result: { stacked: true } });
+    expect(writes.at(-1)).toEqual({ path: '/repos/acme/app/stacks', body: { pull_requests: [6, 8] } });
+
+    // The parent tops a stack: the new PR joins it.
+    existingStack = { number: 3 };
+    expect((await create('two')).body.result).toEqual({ stacked: true });
+    expect(writes.at(-1)).toEqual({ path: '/repos/acme/app/stacks/3/add', body: { pull_requests: [8] } });
+
+    // GitHub refuses: the PR stands on its base, outside the stack.
+    refuse = true;
+    expect((await create('three')).body.result).toEqual({ stacked: false });
+  });
+
+  it('never stacks a PR into the default branch on an open PR out of it, such as a release PR', async () => {
+    const account = await auth.setGitHubAuth({ accessToken: 'token-one', user: { id: 1, login: 'actor' } });
+    const base = pullRequest().base;
+    const paths = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const { pathname } = new URL(url);
+      paths.push(`${options.method} ${pathname}`);
+      if (options.method === 'POST' && pathname === '/repos/acme/app/pulls') {
+        return jsonResponse(pullRequest({ number: 8, base: { ...base, repo: { ...base.repo, default_branch: 'main' } } }), 201);
+      }
+      // An open release PR from main would otherwise read as the parent.
+      if (pathname === '/repos/acme/app/pulls') return jsonResponse([pullRequest({ number: 2, head: { ...pullRequest().head, ref: 'main' } })]);
+      return jsonResponse(pullRequest());
+    }));
+    const { app } = makeApp();
+    const response = await request(app).post('/api/source-control/github/pr/create')
+      .send({ ...context(account.accountId), title: 'Title' }).expect(200);
+    expect(response.body.result).toEqual({});
+    expect(paths.some((path) => path.includes('/stacks'))).toBe(false);
+  });
+
   it('revalidates an existing target once before update and performs one write without another lookup', async () => {
     const account = await auth.setGitHubAuth({ accessToken: 'token-one', user: { id: 1, login: 'actor' } });
     const methods = [];
@@ -477,32 +553,104 @@ describe('canonical GitHub mutations', () => {
     expect(methods).toEqual(['GET', 'PATCH']);
   });
 
-  it('binds merge to the exact head SHA validated before dispatch', async () => {
+  const mergeBody = (accountId) => ({
+    ...context(accountId, {
+      target: {
+        project: { owner: 'acme', name: 'app' }, number: 7,
+        head: 'feature', base: 'main', headSha: 'abc123',
+      },
+    }),
+    method: 'merge',
+  });
+
+  it('binds merge to the exact head SHA validated before dispatch, through the asynchronous merge', async () => {
     const account = await auth.setGitHubAuth({ accessToken: 'token-one', user: { id: 1, login: 'actor' } });
     const requests = [];
-    vi.stubGlobal('fetch', vi.fn(async (_url, options) => {
-      requests.push({ method: options.method, body: options.body ? JSON.parse(options.body) : null });
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      requests.push({ method: options.method, path: new URL(url).pathname, body: options.body ? JSON.parse(options.body) : null });
       return options.method === 'GET'
         ? jsonResponse(pullRequest())
-        : jsonResponse({ merged: true, message: 'Pull Request successfully merged' });
+        : jsonResponse({ status: 'merged', details: { message: 'Merged', sha: 'def456' } });
     }));
     const { app } = makeApp();
 
-    const response = await request(app).post('/api/source-control/github/pr/merge').send({
-      ...context(account.accountId, {
-        target: {
-          project: { owner: 'acme', name: 'app' }, number: 7,
-          head: 'feature', base: 'main', headSha: 'abc123',
-        },
-      }),
-      method: 'merge',
-    }).expect(200);
+    const response = await request(app).post('/api/source-control/github/pr/merge').send(mergeBody(account.accountId)).expect(200);
 
     expect(response.body.result).toEqual({ merged: true });
     expect(requests).toEqual([
-      { method: 'GET', body: null },
-      { method: 'PUT', body: { merge_method: 'merge', sha: 'abc123' } },
+      { method: 'GET', path: '/repos/acme/app/pulls/7', body: null },
+      { method: 'PUT', path: '/repos/acme/app/pulls/7/merge-async', body: { merge_method: 'merge', sha: 'abc123' } },
     ]);
+  });
+
+  it('follows a background merge until it lands, and says so when it joins a merge queue', async () => {
+    const account = await auth.setGitHubAuth({ accessToken: 'token-one', user: { id: 1, login: 'actor' } });
+    let final = 'merged';
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const { pathname } = new URL(url);
+      if (options.method === 'PUT') {
+        return jsonResponse({ status: 'pending', details: { message: 'Merging', uuid: 'u-1', merge_method: 'merge', merge_action: 'default', expected_head_sha: 'abc123' } }, 202);
+      }
+      if (pathname.endsWith('/merge-async/u-1')) return jsonResponse({ status: final, details: { message: 'Done' } });
+      return jsonResponse(pullRequest());
+    }));
+    const { app } = makeApp();
+
+    expect((await request(app).post('/api/source-control/github/pr/merge').send(mergeBody(account.accountId)).expect(200)).body.result)
+      .toEqual({ merged: true });
+    final = 'enqueued';
+    expect((await request(app).post('/api/source-control/github/pr/merge').send({ ...mergeBody(account.accountId), idempotencyKey: 'request-two' }).expect(200)).body.result)
+      .toEqual({ merged: false, outcome: 'queued' });
+  });
+
+  it('reports an accepted merge as running when following it fails, and passes on a refusal GitHub explains', async () => {
+    const account = await auth.setGitHubAuth({ accessToken: 'token-one', user: { id: 1, login: 'actor' } });
+    let refuse = false;
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const { pathname } = new URL(url);
+      if (options.method === 'PUT') {
+        return refuse
+          ? jsonResponse({ message: 'Head branch was modified. Review and try the merge again.' }, 409)
+          : jsonResponse({ status: 'pending', details: { message: 'Merging', uuid: 'u-1' } }, 202);
+      }
+      if (pathname.endsWith('/merge-async/u-1')) return jsonResponse({ message: 'Server Error' }, 502);
+      return jsonResponse(pullRequest());
+    }));
+    const { app } = makeApp();
+
+    expect((await request(app).post('/api/source-control/github/pr/merge').send(mergeBody(account.accountId)).expect(200)).body.result)
+      .toEqual({ merged: false, outcome: 'merging' });
+    refuse = true;
+    const refused = await request(app).post('/api/source-control/github/pr/merge')
+      .send({ ...mergeBody(account.accountId), idempotencyKey: 'request-two' }).expect(409);
+    expect(refused.body).toEqual({ error: 'Head branch was modified. Review and try the merge again.', code: 'SOURCE_CONTROL_MUTATION_REJECTED' });
+  });
+
+  it('answers with GitHub\'s reason when a background merge fails, and merges the classic way on a host without it', async () => {
+    const account = await auth.setGitHubAuth({ accessToken: 'token-one', user: { id: 1, login: 'actor' } });
+    let asyncAvailable = true;
+    const paths = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const { pathname } = new URL(url);
+      paths.push(`${options.method} ${pathname}`);
+      if (options.method === 'GET') return jsonResponse(pullRequest());
+      if (pathname.endsWith('/merge-async')) {
+        return asyncAvailable
+          ? jsonResponse({ status: 'failed', details: { message: 'Required status check "ci" is failing.' } })
+          : jsonResponse({ message: 'Not Found' }, 404);
+      }
+      return jsonResponse({ merged: true, message: 'Pull Request successfully merged' });
+    }));
+    const { app } = makeApp();
+
+    const failed = await request(app).post('/api/source-control/github/pr/merge').send(mergeBody(account.accountId)).expect(422);
+    expect(failed.body).toEqual({ error: 'Required status check "ci" is failing.', code: 'SOURCE_CONTROL_MUTATION_REJECTED' });
+
+    asyncAvailable = false;
+    paths.length = 0;
+    const classic = await request(app).post('/api/source-control/github/pr/merge').send({ ...mergeBody(account.accountId), idempotencyKey: 'request-two' }).expect(200);
+    expect(classic.body.result).toEqual({ merged: true });
+    expect(paths).toEqual(['GET /repos/acme/app/pulls/7', 'PUT /repos/acme/app/pulls/7/merge-async', 'PUT /repos/acme/app/pulls/7/merge']);
   });
 
   it.each([
@@ -556,6 +704,45 @@ describe('canonical GitHub mutations', () => {
       .send({ ...context(account.accountId), title: 'Title' }).expect(status);
     expect(status === 200 ? response.body.status : response.body.code).toBe(expected);
     if (status === 200) expect(response.body.target.number).toBe(7);
+  });
+
+  it('finishes the stacking an interrupted create left undone, and never stacks a PR twice', async () => {
+    const account = await auth.setGitHubAuth({ accessToken: 'token-one', user: { id: 1, login: 'actor' } });
+    const target = {
+      repositoryId: 'repo-one', bindingRevision: 3, primaryRemote: 'origin',
+      project: { id: 'acme/app', owner: 'acme', name: 'app' }, head: 'feature', base: 'lower',
+    };
+    const actor = { provider: 'github', instance: 'github.com', accountId: account.accountId };
+    const input = { kind: 'create', actor, credential: credentialFor(account), target, title: 'Title', headRemote: 'origin' };
+    const running = (key) => ({ key, inputDigest: digestMutationInput(input), kind: 'change-request-create', actor, target, state: 'running' });
+    const base = pullRequest().base;
+    const created = pullRequest({ number: 8, base: { ...base, ref: 'lower', repo: { ...base.repo, default_branch: 'main' } } });
+    let alreadyStacked = true;
+    const writes = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const { pathname, searchParams } = new URL(url);
+      if (pathname === '/repos/acme/app/stacks' && options.method === 'GET') return jsonResponse(alreadyStacked ? [{ number: 3 }] : []);
+      if (pathname.startsWith('/repos/acme/app/stacks')) {
+        writes.push({ path: pathname, body: JSON.parse(options.body) });
+        return jsonResponse({ number: 4 }, 201);
+      }
+      if (searchParams.get('head') === 'acme:lower') return jsonResponse([pullRequest({ number: 6, head: { ...pullRequest().head, ref: 'lower' } })]);
+      return jsonResponse([created]);
+    }));
+    const replay = async (key) => {
+      const { app } = makeApp({ store: makeStore([running(key)]) });
+      return (await request(app).post('/api/source-control/github/pr/create')
+        .send({ ...context(account.accountId, { idempotencyKey: key, target }), title: 'Title' }).expect(200)).body;
+    };
+
+    // GitHub already keeps it in a stack: said so, nothing written.
+    expect(await replay('one')).toMatchObject({ target: { number: 8 }, result: { stacked: true } });
+    expect(writes).toEqual([]);
+
+    // Not stacked yet: it joins the open PR its base belongs to.
+    alreadyStacked = false;
+    expect((await replay('two')).result).toEqual({ stacked: true });
+    expect(writes).toEqual([{ path: '/repos/acme/app/stacks', body: { pull_requests: [6, 8] } }]);
   });
 
   describe('comments and reviews', () => {

@@ -30,7 +30,8 @@ import { ModelEffortMenu } from './ModelEffortMenu';
 import { LaneStatusIcon } from './LaneStatusIcon';
 import { LANE_STATUS_COUNT_KEYS, LANE_STATUS_ORDER, resolveLaneStatus, type LaneStatus } from '@/lib/multirun/laneStatus';
 import { useGlobalBlockingRequestsStore } from '@/sync/global-blocking-requests';
-import { useNotificationStore } from '@/sync/notification-store';
+import { isSessionUnread } from '@/sync/session-unread';
+import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 
 type BarMode =
   | { kind: 'idle' }
@@ -124,7 +125,7 @@ function RunOverviewContent({ runKey }: { runKey: string }): React.ReactNode {
   const projects = useProjectsStore((state) => state.projects);
   const activeSessionIds = useGlobalSessionStatusStore((state) => state.activeSessionIds);
   const blockingBySession = useGlobalBlockingRequestsStore((state) => state.bySession);
-  const unseenCountBySession = useNotificationStore((state) => state.index.session.unseenCount);
+  const globalSessionById = useGlobalSessionsStore((state) => state.entityById);
   // Phones get the overview, fusion and Keep, but never launch lanes (no header back arrow either).
   const isMobile = useUIStore((state) => state.isMobile);
   const [bar, setBar] = React.useState<BarMode>({ kind: 'idle' });
@@ -337,7 +338,7 @@ function RunOverviewContent({ runKey }: { runKey: string }): React.ReactNode {
         isFusion={isFusion}
         busy={activeSessionIds.has(member.sessionId)}
         status={statusOf(member.sessionId) ?? 'notStarted'}
-        unread={(unseenCountBySession[member.sessionId] ?? 0) > 0}
+        unread={isSessionUnread(globalSessionById.get(member.sessionId))}
         summary={summaries.get(member.sessionId)}
         fuseSource={bar.kind === 'fuse' && !isFusion
           ? { checked: finished && !bar.excluded.has(member.sessionId), selectable: finished }

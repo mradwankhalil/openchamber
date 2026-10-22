@@ -243,12 +243,14 @@ export const ModelMultiSelect: React.FC<ModelMultiSelectProps> = ({
 
   const labels = React.useMemo(() => ({
     searchPlaceholder: t('multirun.modelMultiSelect.search.placeholder'),
+    list: t('chat.modelControls.modelListAria'),
     noResults: t('multirun.modelMultiSelect.search.noResults'),
     favorites: t('multirun.modelMultiSelect.sections.favorites'),
     recent: t('multirun.modelMultiSelect.sections.recent'),
     keyboardHint: t('multirun.modelMultiSelect.keyboard.hint'),
     favorite: t('settings.agents.modelSelector.actions.favorite'),
     unfavorite: t('settings.agents.modelSelector.actions.unfavorite'),
+    provider: t('chat.modelControls.provider'),
     capabilities: t('chat.modelControls.capabilities'),
     capabilityToolCalling: t('chat.modelControls.capability.toolCalling'),
     capabilityReasoning: t('chat.modelControls.capability.reasoning'),

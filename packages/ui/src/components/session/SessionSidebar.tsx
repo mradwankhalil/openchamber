@@ -138,7 +138,6 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
   const setAboutDialogOpen = useUIStore((state) => state.setAboutDialogOpen);
   const setSessionSwitcherOpen = useUIStore((state) => state.setSessionSwitcherOpen);
   const setWorktreesPageProjectId = useUIStore((state) => state.setWorktreesPageProjectId);
-  const notifyOnSubtasks = useUIStore((state) => state.notifyOnSubtasks);
 
   const normalizedSessionSearchQuery = React.useMemo(
     () => sessionSearchQuery.trim().toLowerCase(),
@@ -694,7 +693,6 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
             resetSessionSearch,
           },
           alwaysShowActions: alwaysShowSidebarActions,
-          notifyOnSubtasks,
           setActiveProjectIdOnly,
           setSessionSwitcherOpen,
           openNewSessionDraft: openNewSessionDraftFromTree,

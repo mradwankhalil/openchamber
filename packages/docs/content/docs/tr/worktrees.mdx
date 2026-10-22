@@ -14,12 +14,16 @@ Bir worktree oturumu, repo'nuzun kendi checkout edilmiş kopyasında ve kendi br
    - **new branch** — branch'e ad verin
    - **existing branch** — zaten sahip olduğunuz bir branch'i checkout edin
    - **PR or issue** — GitHub, Linear veya bir eklentiden birini seçin; branch adı ondan gelir (bir PR kendi branch'ini checkout eder) ve öğe ilk mesajınıza eklenir
-3. **Based on** (yeni branch'in başlayacağı branch; varsayılan olarak projenin mevcut branch'i) ve **Folder name** alanlarını kontrol edin; yalnızca gerekirse değiştirin.
+3. **Based on** (yeni branch'in başlayacağı branch; varsayılan olarak uzak deponun varsayılan branch'i, örneğin `origin/main`) ve **Folder name** alanlarını kontrol edin; yalnızca gerekirse değiştirin.
 4. Oluşturun. Projede kurulum komutları varsa hemen ardından çalışırlar.
 
 OpenChamber branch'i oluşturur, klasörü hazırlar ve orada ilk mesajınızı bekleyen yeni bir oturum açar. Bunu bir [todo](/notes-todos-plans/) ya da [GitHub issue veya PR](/github/) üzerinden de başlatabilirsiniz.
 
 Soruları atlamak için aynı dal menüsünden **Hızlı worktree** seçin: OpenChamber dala bir ad verir ve yeni oturumu ona yönlendirir.
+
+## Deponun bir klasöründe açılan projeler
+
+Bir projeyi `repo/ai` gibi deponun içindeki bir klasörde açtıysanız, yeni worktree'ler de orada açılır. Yeni bir worktree'deki oturum checkout içindeki aynı klasörde başlar; böylece OpenCode orada duran yapılandırmayı bulur. Deponun kök dizininde açılan bir proje eskisi gibi worktree kök dizininde başlar. Bir dalda bu klasör yoksa oturum worktree kök dizininde başlar ve OpenChamber sizi bilgilendirir.
 
 ## Çalışmayı geri alın
 

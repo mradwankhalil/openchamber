@@ -2,7 +2,7 @@
   "name": "openchamber",
   "displayName": "OpenChamber",
   "description": "%extension.description%",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "publisher": "fedaykindev",
   "private": true,
   "repository": {
@@ -175,6 +175,20 @@
         "label": "OpenChamber"
       }
     ],
+    "keybindings": [
+      {
+        "command": "openchamber.showSettings",
+        "key": "ctrl+,",
+        "mac": "cmd+,",
+        "when": "openchamber.settingsShortcutTarget == chat && !inQuickOpen"
+      },
+      {
+        "command": "openchamber.closeSettings",
+        "key": "ctrl+,",
+        "mac": "cmd+,",
+        "when": "openchamber.settingsShortcutTarget == settings && !inQuickOpen"
+      }
+    ],
     "menus": {
       "scm/title": [
         {
@@ -296,7 +310,7 @@
   "devDependencies": {
     "@types/vscode": "^1.85.0",
     "@vitejs/plugin-react": "^5.0.0",
-    "@vscode/vsce": "^3.2.1",
+    "@vscode/vsce": "^4.0.0",
     "concurrently": "^9.2.1",
     "esbuild": "^0.28.0",
     "typescript": "~7.0.2",
@@ -304,7 +318,7 @@
   },
   "dependencies": {
     "@openchamber/ui": "workspace:*",
-    "@opencode/client": "2.0.32",
+    "@opencode/client": "2.1.2",
     "adm-zip": "^0.6.0",
     "jsonc-parser": "^3.3.1",
     "react": "^19.1.1",

@@ -15,7 +15,7 @@ import {
   writeCachedWalkthrough,
   writePointer,
 } from './store.js';
-import { readWalkthroughModelOverride } from './model-settings.js';
+import { readWalkthroughModelOverride, readWalkthroughModelVariant } from './model-settings.js';
 import { loadSourceSections, parseSource, sourceKey, WalkthroughSourceError } from './sources.js';
 
 // Walkthrough generation is always user-initiated and never automatic: it costs
@@ -202,13 +202,20 @@ const modelLabel = (model) => `${model.providerID}/${model.modelID}`;
 // own choosing, the walkthrough stays on that provider rather than on
 // whichever provider happens to be connected, and on that model when the
 // provider has no small one.
-const resolveModel = (directory, explicitModel, providerID, modelID) => describeSmallModel({
-  directory,
-  outputReserveTokens: walkthroughOutputTokens,
-  overrideModel: explicitModel || readWalkthroughModelOverride(),
-  preferredProviderID: providerID || undefined,
-  preferredModelID: modelID || undefined,
-});
+// The saved thinking level goes with the saved model only: a model picked for
+// one review runs at its own default level.
+const resolveModel = (directory, explicitModel, providerID, modelID) => {
+  const savedModel = readWalkthroughModelOverride();
+  const overrideModel = explicitModel || savedModel;
+  return describeSmallModel({
+    directory,
+    outputReserveTokens: walkthroughOutputTokens,
+    overrideModel,
+    overrideVariant: overrideModel && overrideModel === savedModel ? readWalkthroughModelVariant() : undefined,
+    preferredProviderID: providerID || undefined,
+    preferredModelID: modelID || undefined,
+  });
+};
 
 export const __testing = { generationTimeoutMs, walkthroughOutputTokens };
 
@@ -520,6 +527,7 @@ async function runGeneration({ directory, source, repoRoot, key, force, explicit
     directory,
     sessionID: `openchamber-walkthrough-${cacheKey}`,
     model: `${model.providerID}/${model.modelID}`,
+    variant: model.variant,
     responseSchema: options.responseSchema,
     onOverflow: 'error',
     timeoutMs: generationTimeoutMs(hunkCount),

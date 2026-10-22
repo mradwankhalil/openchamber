@@ -37,7 +37,7 @@ import { useSessionTabsStore } from '@/stores/useSessionTabsStore';
 import { closeSessionTabAndActivateNeighbour } from '@/lib/sessionTabs';
 import { useGlobalSessionsStore, resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
-import { useSessionUnseenCount } from '@/sync/notification-store';
+import { useSessionUnread } from '@/sync/session-unread';
 import { useIsSessionAiRenamePending } from '@/sync/use-session-ai-rename';
 import { useMultiRunMemberIds } from '@/lib/multirun/useMultiRuns';
 import { SessionProjectIcon } from './SessionProjectIcon';
@@ -135,8 +135,8 @@ const SessionTabItem: React.FC<{
   const isAiRenaming = useIsSessionAiRenamePending(tab.id, resolveGlobalSessionDirectory(tab.session));
   const turnActivity = useSessionTurnActivity(tab.id);
   const isStreaming = turnActivity !== null;
-  const unseenCount = useSessionUnseenCount(tab.id);
-  const showUnread = unseenCount > 0 && !isActive && !isStreaming;
+  const isUnread = useSessionUnread(tab.id);
+  const showUnread = isUnread && !isActive && !isStreaming;
   const showDot = isStreaming || showUnread;
 
   const menuArgsFor = (components: SessionTabMenuComponents): SessionTabMenuArgs => ({
