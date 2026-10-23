@@ -11,6 +11,7 @@ import { toolDisplayStyles } from '@/lib/typography';
 import { getLanguageFromExtension } from '@/lib/toolHelpers';
 import { useOptionalThemeSystem } from '@/contexts/useThemeSystem';
 import { ensurePierreThemeRegistered } from '@/lib/shiki/appThemeRegistry';
+import { DIFFS_HIGHLIGHTER, toDiffsLanguage } from '@/lib/shiki/diffsHighlighter';
 import { getDefaultTheme } from '@/lib/theme/themes';
 import {
     renderGrepOutput,
@@ -499,6 +500,7 @@ const DialogUnifiedDiff: React.FC<{
                     overflow: 'wrap',
                     theme: pierreThemeConfig.theme,
                     themeType: pierreThemeConfig.themeType,
+                    preferredHighlighter: DIFFS_HIGHLIGHTER,
                     unsafeCSS: TOOL_DIFF_UNSAFE_CSS,
                 }}
                 className="block w-full"
@@ -570,13 +572,14 @@ const DialogReadContent: React.FC<{
                 file={{
                     name: filePath,
                     contents: fileContents,
-                    lang: detectedLanguage || undefined,
+                    lang: toDiffsLanguage(detectedLanguage),
                 }}
                 options={{
                     disableFileHeader: true,
                     overflow: 'wrap',
                     theme: pierreThemeConfig.theme,
                     themeType: pierreThemeConfig.themeType,
+                    preferredHighlighter: DIFFS_HIGHLIGHTER,
                 }}
                 className="block w-full"
             />
@@ -1037,13 +1040,14 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                                                 file={{
                                                     name: writeTarget || 'new-file',
                                                     contents: getInputValue('content')!,
-                                                    lang: getLanguageFromExtension(writeTarget) || undefined,
+                                                    lang: toDiffsLanguage(getLanguageFromExtension(writeTarget)),
                                                 }}
                                                 options={{
                                                     disableFileHeader: true,
                                                     overflow: 'wrap',
                                                     theme: pierreThemeConfig.theme,
                                                     themeType: pierreThemeConfig.themeType,
+                                                    preferredHighlighter: DIFFS_HIGHLIGHTER,
                                                 }}
                                                 className="block w-full"
                                             />

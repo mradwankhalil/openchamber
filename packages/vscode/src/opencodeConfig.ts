@@ -49,6 +49,7 @@ import {
   formatModelSelection,
   writeWebSearchSelection,
   writeWarmingEnabled,
+  writeSkillDisabled,
   findWebSearchProjectOverride,
   type AgentEntity,
   type CommandEntity,
@@ -1910,6 +1911,49 @@ export const setWarmingEnabled = (enabled: boolean): { changed: boolean } => {
   return { changed };
 };
 
+/** A config file to clear a skill's deny from, or null when it cannot be parsed: it is skipped, never rewritten. */
+const readConfigFileForSkillSwitch = (filePath: string) => {
+  try {
+    return readConfigFile(filePath);
+  } catch (error) {
+    console.warn(`[skills] could not read ${filePath} to switch a skill on:`, error instanceof Error ? error.message : String(error));
+    return null;
+  }
+};
+
+/**
+ * Mirror of the web server's `setSkillEnabled`
+ * (`packages/web/server/lib/opencode/skill-switch.js`): off writes an exact
+ * deny where the skill lives, on removes the exact deny from every config file
+ * OpenCode reads for the directory. Returns the files it changed.
+ */
+export const setSkillEnabled = (input: {
+  id: string;
+  enabled: boolean;
+  scope: 'user' | 'project';
+  directory?: string;
+}) => {
+  const layers = readConfigLayers(input.directory);
+
+  if (!input.enabled) {
+    const target = getJsonWriteTarget(layers, input.scope === 'project' ? AGENT_SCOPE.PROJECT : AGENT_SCOPE.USER);
+    const changed = writeSkillDisabled(target.config, input.id, true);
+    if (changed) writeConfig(target.config, target.path);
+    return { changed: changed ? [target.path] : [] };
+  }
+
+  const { userPath, userOverridePath, customPath } = layers.paths;
+  const files = [...new Set([customPath, userPath, userOverridePath, ...getFolderConfigPaths(input.directory)])]
+    .filter((filePath): filePath is string => Boolean(filePath));
+  const changed = files.filter((filePath) => {
+    const config = readConfigFileForSkillSwitch(filePath);
+    if (!config || !writeSkillDisabled(config, input.id, false)) return false;
+    writeConfig(config, filePath);
+    return true;
+  });
+  return { changed };
+};
+
 /** Mirror of the web server's `getWebSearchSource`: the project config that overrides a Settings write, if any. */
 export const getWebSearchSource = (workingDirectory?: string) => ({
   projectPath: findWebSearchProjectOverride(readConfigLayers(workingDirectory), readProjectConfigFiles(workingDirectory)),
@@ -2892,6 +2936,8 @@ export type SkillConfigSources = {
 };
 
 export type DiscoveredSkill = {
+  /** OpenCode's id, sent for built-in skills, whose path does not carry it. */
+  id?: string;
   name: string;
   path: string;
   scope: SkillScope;

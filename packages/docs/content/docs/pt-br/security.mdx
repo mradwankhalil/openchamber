@@ -170,7 +170,7 @@ Para conferir se funcionou, abra Configurações → Provedores: um aviso de mod
 - A leitura em voz alta pela OpenAI fica desativada. Um servidor próprio de fala ou de transcrição precisa rodar na mesma máquina. Vozes locais e modelos locais de ditado continuam funcionando.
 - As notificações push para celulares e navegadores levam só um título genérico como "Agent response is ready", sem o texto da mensagem nem o nome da sessão. As notificações do desktop ficam na sua máquina e mantêm o texto completo.
 - As verificações de atualização continuam rodando, então as correções de segurança ainda chegam até você, mas elas nunca reportam uso, nem mesmo o ID de instalação anônimo.
-- Os [túneis externos](/pt-br/tunnels/) (Cloudflare, ngrok) ficam desativados. Um provedor de túnel descriptografa o tráfego na borda dele e vê cada requisição em texto puro.
+- Os [túneis externos](/pt-br/tunnels/) (Cloudflare, ngrok, Tailscale) ficam desativados. Cloudflare e ngrok descriptografam o tráfego na borda deles e veem cada requisição em texto puro; o Tailscale Serve e o Funnel abrem esta máquina para outros dispositivos.
 - Diagramas `.drawio` abrem como texto XML. O editor de diagramas é uma página do diagrams.net, e abrir um diagrama nele entrega o arquivo a essa página.
 - O catálogo de integrações na barra lateral fica oculto. Ele instala serviços externos de uma lista que vem com o OpenChamber. Adicionar servidores MCP, plugins e skills nas Configurações funciona como antes.
 - Fontes de interface e de código que carregam de uma CDN pública passam para as fontes do sistema. Sua escolha fica guardada para quando o modo estiver desligado.

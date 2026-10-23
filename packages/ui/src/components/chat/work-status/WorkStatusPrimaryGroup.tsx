@@ -29,7 +29,8 @@ import {
 import { useReportWorkStatusPresence } from './presenceContext';
 import { WorkStatusWarmingToggle } from './WorkStatusWarmingToggle';
 import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
-import { formatChangeRequestReference } from '@/lib/source-control/identity';
+import { formatChangeRequestReference } from '@/lib/source-control/providers/terminology';
+import { useSourceControlProvider } from '@/lib/source-control/providers/registry';
 import { ProjectActionsButton } from '@/components/layout/ProjectActionsButton';
 import { OpenInAppButton } from '@/components/desktop/OpenInAppButton';
 import { useProjectActionsContext } from '@/hooks/useProjectActionsContext';
@@ -167,6 +168,8 @@ export const WorkStatusPrimaryGroup: React.FC<Props> = ({ sessionId, directory, 
   // here would multiply GitHub requests per open session, which is exactly the
   // fan-out the PR-status concurrency gate exists to prevent.
   const prSummary = useFreshestSourceControlVisualSummaryForBranch(gitDirectory, branch);
+  const prDescriptor = useSourceControlProvider(prSummary?.provider);
+  const prTerm = prDescriptor.terminology.changeRequest;
 
   const sessionMessages = useSessionMessages(sessionId ?? '', directory ?? undefined);
   const { context: contextLimit } = useContextWindowLimits(sessionId, directory ?? undefined);
@@ -283,7 +286,7 @@ export const WorkStatusPrimaryGroup: React.FC<Props> = ({ sessionId, directory, 
               />
               <WorkStatusMeter percent={usagePercent ?? 0} color={meterColor} />
               {contextUsage.state === 'compacted' ? (
-                <p className="mx-1 mb-1 text-[11px] leading-4 text-muted-foreground">
+                <p className="mx-1 mb-1 text-[0.6875rem] leading-4 text-muted-foreground">
                   {t('contextUsage.compacted.description')}
                 </p>
               ) : null}
@@ -291,7 +294,7 @@ export const WorkStatusPrimaryGroup: React.FC<Props> = ({ sessionId, directory, 
                   than reporting a reading of its own, so it carries no icon
                   and no label column. */}
               {showCostBreakdown ? (
-                <p className="mx-1 mb-1 truncate text-[11px] leading-4 text-muted-foreground tabular-nums">
+                <p className="mx-1 mb-1 truncate text-[0.6875rem] leading-4 text-muted-foreground tabular-nums">
                   {t('chat.workStatus.cost.breakdown', {
                     session: formatCost(ownCost),
                     subagents: formatCost(subagentCost),
@@ -372,15 +375,15 @@ export const WorkStatusPrimaryGroup: React.FC<Props> = ({ sessionId, directory, 
               <WorkStatusRow
                 icon="git-pull-request"
                 onClick={directory ? () => openSurface('pr') : undefined}
-                ariaLabel={t(changeRequestCopy('chat.workStatus.action.openPr', prSummary.provider))}
+                ariaLabel={t(changeRequestCopy('chat.workStatus.action.openPr', prTerm))}
                 iconColor={`var(--pr-${prSummary.visualState})`}
-                label={prSummary.title ?? t(changeRequestCopy('chat.workStatus.pr.untitled', prSummary.provider))}
+                label={prSummary.title ?? t(changeRequestCopy('chat.workStatus.pr.untitled', prTerm))}
                 value={(
                   <WorkStatusPill
                     color={`var(--pr-${prSummary.visualState})`}
                     background={`color-mix(in srgb, var(--pr-${prSummary.visualState}) 18%, transparent)`}
                   >
-                    {prSummary.draft ? t('chat.workStatus.pr.draft') : formatChangeRequestReference(prSummary.provider, prSummary.number)}
+                    {prSummary.draft ? t('chat.workStatus.pr.draft') : formatChangeRequestReference(prDescriptor, prSummary.number)}
                   </WorkStatusPill>
                 )}
               />
@@ -388,7 +391,7 @@ export const WorkStatusPrimaryGroup: React.FC<Props> = ({ sessionId, directory, 
                 <WorkStatusRow
                   icon="checkbox-circle"
                   onClick={directory ? () => openSurface('pr') : undefined}
-                  ariaLabel={t(changeRequestCopy('chat.workStatus.action.openPr', prSummary.provider))}
+                  ariaLabel={t(changeRequestCopy('chat.workStatus.action.openPr', prTerm))}
                   label={t('chat.workStatus.pr.checks')}
                   muted
                   value={(

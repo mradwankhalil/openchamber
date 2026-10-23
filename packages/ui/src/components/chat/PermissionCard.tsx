@@ -22,7 +22,7 @@ const PERMISSION_BASH_CUSTOM_STYLE: React.CSSProperties = {
   padding: '0.5rem',
   fontSize: 'var(--text-meta)',
   lineHeight: '1.25rem',
-  background: 'rgb(var(--muted) / 0.3)',
+  background: 'color-mix(in srgb, var(--muted) 30%, transparent)',
   borderRadius: '0.25rem',
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-word',
@@ -43,7 +43,7 @@ const PERMISSION_JSON_CUSTOM_STYLE: React.CSSProperties = {
   padding: '0.5rem',
   fontSize: 'var(--text-meta)',
   lineHeight: '1.25rem',
-  background: 'rgb(var(--muted) / 0.3)',
+  background: 'color-mix(in srgb, var(--muted) 30%, transparent)',
   borderRadius: '0.25rem',
 };
 
@@ -400,19 +400,13 @@ export const PermissionActions: React.FC<{
     "flex items-center gap-1.5 sm:gap-1 px-3 sm:px-2 py-1.5 sm:py-1 typography-meta font-medium rounded transition-all min-h-[32px] sm:min-h-0 w-full sm:w-auto",
     "disabled:opacity-50 disabled:cursor-not-allowed",
   );
-  const hover = (idle: string, active: string) => ({
-    onMouseEnter: (event: React.MouseEvent<HTMLButtonElement>) => { event.currentTarget.style.backgroundColor = active; },
-    onMouseLeave: (event: React.MouseEvent<HTMLButtonElement>) => { event.currentTarget.style.backgroundColor = idle; },
-  });
 
   return (
     <div className="px-2 pb-2 sm:pb-1.5 pt-1.5 sm:pt-1 flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-1.5 border-t border-border/20">
       <button
         onClick={() => onRespond('once')}
         disabled={isResponding}
-        className={rowClass}
-        style={{ backgroundColor: 'rgb(var(--status-success) / 0.1)', color: 'var(--status-success)' }}
-        {...hover('rgb(var(--status-success) / 0.1)', 'rgb(var(--status-success) / 0.2)')}
+        className={cn(rowClass, 'bg-[var(--status-success)]/10 text-[var(--status-success)] hover:bg-[var(--status-success)]/20')}
       >
         <Icon name="check" className="h-3.5 w-3.5 sm:h-3 sm:w-3 flex-shrink-0" />
         {t('chat.permissionCard.allowOnce')}
@@ -424,9 +418,7 @@ export const PermissionActions: React.FC<{
           onClick={() => onRespond('always')}
           disabled={isResponding}
           title={always.full}
-          className={rowClass}
-          style={{ backgroundColor: 'rgb(var(--muted) / 0.5)', color: 'var(--muted-foreground)' }}
-          {...hover('rgb(var(--muted) / 0.5)', 'rgb(var(--muted) / 0.7)')}
+          className={cn(rowClass, 'bg-[var(--muted)]/50 text-muted-foreground hover:bg-[var(--muted)]/70')}
         >
           <Icon name="time" className="h-3.5 w-3.5 sm:h-3 sm:w-3 flex-shrink-0" />
           <span className="truncate max-w-[180px]">{always.label}</span>
@@ -437,9 +429,7 @@ export const PermissionActions: React.FC<{
       <button
         onClick={() => onRespond('reject')}
         disabled={isResponding}
-        className={rowClass}
-        style={{ backgroundColor: 'rgb(var(--status-error) / 0.1)', color: 'var(--status-error)' }}
-        {...hover('rgb(var(--status-error) / 0.1)', 'rgb(var(--status-error) / 0.2)')}
+        className={cn(rowClass, 'bg-[var(--status-error)]/10 text-[var(--status-error)] hover:bg-[var(--status-error)]/20')}
       >
         <Icon name="close" className="h-3.5 w-3.5 sm:h-3 sm:w-3 flex-shrink-0" />
         {t('chat.permissionCard.deny')}

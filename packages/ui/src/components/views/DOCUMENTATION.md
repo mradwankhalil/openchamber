@@ -58,12 +58,13 @@ and jump to Branch when the base arrived). The Git view and the pull request
 view take the same base for a new pull request and for updates
 (`useBranchPullRequestBase`): a base chosen for the branch, its open pull
 request's target, or the parent it was made on (a lower layer of a stack),
-and the worktree's own guess only when none of those answers. Changes, mobile Changes and
-Walkthrough each ask for the branch's pull request themselves
-(`hooks/useBranchPullRequestRequest.ts`) while shown: the base prefers its
-target, and without asking a stacked branch checked out in the same worktree
-compared against the default branch until the Git view or the sidebar happened
-to ask. Entry points that name what they show keep
+and the worktree's own guess only when none of those answers. The Git view,
+Changes, mobile Changes and Walkthrough each ask for the branch's pull request
+themselves (`hooks/useBranchPullRequestRequest.ts`) while shown: the base
+prefers its target, and the Git header's pull request chip reads the same
+status. Without asking, a stacked branch checked out in the same worktree
+compared against the default branch, and a project's own checkout (which has no
+sidebar worktree row) showed no chip, until some other surface happened to ask. Entry points that name what they show keep
 their scope: the work-status Changes row counts working-tree changes and opens
 `working`, and a file opened from the Git panel or a tool card opens its own
 working or staged diff.
@@ -74,6 +75,24 @@ re-reads its patch only when its own `revision` from that listing moved
 command costs no patch reads, and an edit costs one for the edited file. A
 listing without revisions falls back to the status revision for every file.
 Desktop Changes and mobile Changes share this.
+
+## Pushing for review
+
+Where the repository's host creates changes by pushing for review
+(`features.createByPush`), the Git panel's change section replaces the pull
+request form: the tip commit's subject read only (the commit message is the
+description), topic, hashtags, work in progress (sharing the draft choice's
+remembered value) and private, and one action, Push for review. It shows on
+the target branch itself too, the usual way to work on such a host. Before it
+is enabled the commits between the target and HEAD are read
+(`git/changeIdPreflight.ts`): none to send, or an older commit without a
+Change-Id, holds it back; the checked-out commit alone without one offers Add
+Change-Id, which amends it after a confirmation (`GitAPI.addChangeIdToHead`).
+With an open change, a strip above it offers Upload patchset while the
+status's `localRevision.uploadedAs` is null. The push is a tracked network
+operation through `useBranchPush().pushForReview`, never Publish. The Git
+header's change chip shows its place in the status's chain
+(`stacks.preview.position`).
 
 ## Nested repositories
 
@@ -219,11 +238,23 @@ A percentage max-height inside auto-height wrappers let the inner viewport grow 
 
 DiffView, mobile Changes and walkthrough share `PullRequestComparisonSelector`
 and the selection owned by `usePullRequestComparison`. PR mode reads the
-published patch of a GitHub pull request or a GitLab merge request through
-`/api/walkthrough/pr-diff`, always through the checkout's bound read context;
-without one, PR mode is not offered and reads nothing. On GitLab projects the
-mode, picker and messages use merge-request wording and `!` numbers through
-`changeRequestCopy`. It includes no local edits
+published patch of a change request through `/api/walkthrough/pr-diff`, always
+through the checkout's bound read context, and only for a provider the server
+serves (`useSourceControlProviderServing`); for a provider the server does
+not serve, PR mode is not offered and reads nothing. While the provider list
+is unknown (first visit, the first read out or failed and being retried) PR
+mode stays offered and the picker shows loading: an unknown list is never read
+as "not served" or "not connected". A served provider whose descriptor has
+`features.changeRequestPatch` off lists and opens its change requests but does
+not serve their diff (`usePullRequestComparison().diffUnavailable`): Changes
+and mobile Changes keep the PR mode and picker, read no diff and say so with
+`ChangeRequestDiffUnavailable` (no retry, since nothing failed); the Walkthrough
+does not offer the PR scope, and a PR handed to it shows that note in place of
+generation and loads nothing; the board's Changes and Walkthrough links are
+left out. The scope picker shows a count only once it is known, so an unread
+PR never reads as one with 0 files. The mode, picker and messages use the provider's
+term (`changeRequestCopy(key, term)`: merge-request wording on GitLab) and
+its reference prefix (`!` on GitLab). It includes no local edits
 or unpushed commits. `lib/diff/pullRequestDiff.ts` splits the response once;
 `useGitComparison` serves file patches from that same snapshot. Snapshot revisions
 invalidate the view's patch cache atomically, including edits with unchanged
@@ -250,7 +281,7 @@ on panel switches; opening the picker or changing search still refreshes it.
 Working-tree mutations are unavailable for PR snapshots, and "Load full files"
 does not apply to them. Expanding collapsed context on one file works: the
 expander asks `useGitComparison.fetchFullFile`, which reads both sides of that
-file from GitHub through `/api/walkthrough/pr-file` (merge base and PR head),
+file from the provider through `/api/walkthrough/pr-file` (merge base and PR head),
 never from disk, so local edits and unfetched fork commits cannot leak in or
 block it. Existing inline comment controls still attach selected code to chat.
 Changes hands its PR source to walkthrough; walkthrough's Changes action opens
@@ -269,7 +300,7 @@ return to the panel's project (`lib/surfaces/DOCUMENTATION.md`, Tracker).
 
 Mobile Changes uses the same expansion for branch, commit and PR files: the
 patch opens with 3 lines of context, and expanding reads that file in full once
-(git with whole-file context, or both PR sides from GitHub), then replays the
+(git with whole-file context, or both PR sides from the provider), then replays the
 expansion. A failed read toasts and keeps the patch. Working-tree files there
 already load both full sides, so they expand without a read.
 

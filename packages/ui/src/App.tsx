@@ -22,6 +22,7 @@ import { usePushVisibilityBeacon } from '@/hooks/usePushVisibilityBeacon';
 import { useWebNotificationStream } from '@/hooks/useWebNotificationStream';
 import { useAgentMemorySync } from '@/hooks/useAgentMemorySync';
 import { useBrowserProviderSync } from '@/hooks/useBrowserProviderSync';
+import { useSourceControlProviderSync } from '@/hooks/useSourceControlProviderSync';
 import { useLimitFailoverNotices } from '@/hooks/useLimitFailoverNotices';
 import { useEnterprisePolicySync } from '@/hooks/useEnterprisePolicySync';
 import { useRelayLimitToast } from '@/hooks/useRelayLimitToast';
@@ -31,7 +32,7 @@ import { usePwaInstallPrompt } from '@/hooks/usePwaInstallPrompt';
 import { useWindowTitle } from '@/hooks/useWindowTitle';
 import { useRootScrollLock } from '@/hooks/useRootScrollLock';
 import { useConfigStore } from '@/stores/useConfigStore';
-import { isDesktopLocalOriginActive, isDesktopShell, restartDesktopApp, invokeDesktop, getMiniChatRuntimeArgs, openHostSession, takePendingDesktopSessionLinks } from '@/lib/desktop';
+import { isDesktopLocalOriginActive, isDesktopShell, restartDesktopApp, invokeDesktop, getMiniChatRuntimeArgs, openSessionInOwningHostWindow, takePendingDesktopSessionLinks } from '@/lib/desktop';
 import { isDesktopSafeStart } from '@/lib/desktopSafeStart';
 import { runPendingDesktopHostActions } from '@/lib/desktopHostActions';
 import {
@@ -60,7 +61,8 @@ import { RuntimeAPIProvider } from '@/contexts/RuntimeAPIProvider';
 import { registerRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { useUIStore } from '@/stores/useUIStore';
 import { useSourceControlAuthStore } from '@/stores/useSourceControlAuthStore';
-import { useLinearAuthStore } from '@/stores/useLinearAuthStore';
+import { useSourceControlProviderRegistry } from '@/lib/source-control/providers/registry';
+import { refreshTrackers } from '@/stores/useTrackerAuthStore';
 import type { RuntimeAPIs } from '@/lib/api/types';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
@@ -228,7 +230,7 @@ function App({ apis }: AppProps) {
   const isSwitchingDirectory = useDirectoryStore((state) => state.isSwitchingDirectory);
   const [showMemoryDebug, setShowMemoryDebug] = React.useState(false);
   const refreshSourceControlAuth = useSourceControlAuthStore((state) => state.refreshAll);
-  const refreshLinearAuthStatus = useLinearAuthStore((state) => state.refreshStatus);
+  const refreshSourceControlProviders = useSourceControlProviderRegistry((state) => state.refresh);
   const [isVSCodeRuntime, setIsVSCodeRuntime] = React.useState<boolean>(() => apis.runtime.isVSCode);
   const [initRetryExhausted, setInitRetryExhausted] = React.useState(false);
   const [initRetryEpoch, setInitRetryEpoch] = React.useState(0);
@@ -340,14 +342,15 @@ function App({ apis }: AppProps) {
       return;
     }
 
+    void refreshSourceControlProviders(apis.sourceControl);
     void refreshSourceControlAuth(apis.sourceControl, { force: true });
-    void refreshLinearAuthStatus(apis.linear, { force: true });
+    void refreshTrackers(apis.trackers);
     // `apis` is the same object across an instance switch, so without the epoch
     // this ran once for the whole app session and both statuses kept describing
     // whichever instance happened to be connected at startup. `isConnected` is
     // here to re-ask, not to gate: both integrations answer independently of
     // OpenCode, but a switch can race the transport and the retry is deduped.
-  }, [apis.sourceControl, apis.linear, isConnected, refreshSourceControlAuth, refreshLinearAuthStatus, runtimeEndpointEpoch]);
+  }, [apis.sourceControl, apis.trackers, isConnected, refreshSourceControlAuth, refreshSourceControlProviders, runtimeEndpointEpoch]);
 
   useAppFontEffects();
 
@@ -525,18 +528,13 @@ function App({ apis }: AppProps) {
       const directory = typeof detail?.directory === 'string' && detail.directory.trim().length > 0
         ? detail.directory.trim()
         : null;
-      // A notification click names the runtime that owns the session. When
-      // this window is on another instance, the desktop shell opens the
-      // session in a window for the owning one.
-      const runtimeKey = String(detail?.runtimeKey ?? '').trim();
-      if (runtimeKey && runtimeKey !== getRuntimeKey() && openHostSession(runtimeKey, sessionId)) {
-        return;
-      }
+      const messageId = typeof detail?.messageId === 'string' ? detail.messageId.trim() || null : null;
+      if (openSessionInOwningHostWindow(sessionId, String(detail?.runtimeKey ?? '').trim(), messageId)) return;
       // A link (a desktop deep link, a link to this window's instance) carries
       // no directory; the route opener resolves it from the global session
       // list, as for a web link.
       if (!directory) {
-        void openSessionLink(sessionId, typeof detail?.messageId === 'string' ? detail.messageId.trim() : null);
+        void openSessionLink(sessionId, messageId);
         return;
       }
       void useSessionUIStore.getState().setCurrentSession(sessionId, directory);
@@ -547,7 +545,10 @@ function App({ apis }: AppProps) {
     // desktop shell keeps it until the window asks. Taking is one-shot, so a
     // cleanup must not drop links already taken (Strict Mode re-runs this).
     void takePendingDesktopSessionLinks().then((links) => {
-      for (const link of links) void openSessionLink(link.sessionId, link.messageId);
+      for (const link of links) {
+        if (openSessionInOwningHostWindow(link.sessionId, link.runtimeKey, link.messageId)) continue;
+        void openSessionLink(link.sessionId, link.messageId);
+      }
     });
     return () => window.removeEventListener('openchamber:open-session', handler as EventListener);
   }, []);
@@ -684,6 +685,7 @@ function App({ apis }: AppProps) {
   // Project notes sent every message with no memory index at all.
   useAgentMemorySync(currentDirectory || null);
   useBrowserProviderSync();
+  useSourceControlProviderSync(apis.sourceControl);
   useLimitFailoverNotices();
   useRoutingSync();
   useEnterprisePolicySync();

@@ -181,10 +181,11 @@ export default defineConfig({
           }
 
           // Split @pierre/diffs by usage as well: the eager tool renderer needs
-          // only its pure patch parser, while the Shiki-importing render stack
+          // only its pure patch parser, while the highlighting render stack
           // must stay loadable on demand. One merged vendor chunk would make
-          // the parser import download the whole stack eagerly.
-          if (packageName === '@pierre/diffs') {
+          // the parser import download the whole stack eagerly. Highlights
+          // ships its themes as separately imported modules, like Shiki's.
+          if (packageName === '@pierre/diffs' || packageName === '@pierre/highlights') {
             return undefined;
           }
 

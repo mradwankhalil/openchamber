@@ -1,12 +1,17 @@
 import * as React from 'react';
 
-import { BUILT_IN_SOURCE_CONTROL_IDENTITIES } from '@/components/references/referenceSources';
+import { trackerOfSource, trackerReferenceSource } from '@/components/references/referencePickerItems';
+import { defaultSourceControlIdentities } from '@/lib/source-control/identity';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import type { GitRemote, SourceControlIdentity } from '@/lib/api/types';
 import { normalizePath } from '@/lib/pathNormalization';
 import { useRepositoryBindings } from '@/lib/source-control/repository-binding';
 import { repositoryLinkFromRemotes } from '@/lib/source-control/repositoryUrl';
+import type { SourceControlProviderDescriptor } from '@/lib/source-control/providers/descriptor';
+import { useSourceControlProviders } from '@/lib/source-control/providers/registry';
+import { useRepositoryUrlMatcher } from '@/lib/source-control/repositoryUrlMatcher';
 import { useGitStore, useIsGitRepo, useNestedRepos, type NestedRepoDiscovery } from '@/stores/useGitStore';
+import type { SourceBoardTab } from '@/stores/useSourceBoardStore';
 import { useSourceControlAuthStore } from '@/stores/useSourceControlAuthStore';
 import { normalizeContextPanelDirectoryKey } from '@/stores/useUIStore';
 
@@ -80,6 +85,37 @@ export const choiceForFocus = (choice: RepositoryChoice, focusPending: boolean):
 export const shouldRememberAll = (resolution: BoardRepository, storedAll: boolean | undefined, focusPending: boolean): boolean => (
     focusPending && resolution.all && storedAll !== true
 );
+
+/**
+ * The tab the board shows, or null for its loading or no-source screen, both
+ * of which keep the project pickers. A chosen tracker tab stays while that
+ * tracker is connected. Otherwise the repository tab when the project has
+ * one. Without one the board waits until the folder says whether it holds a
+ * repository and until the trackers' statuses arrive, then turns to the first
+ * connected tracker, or to the no-source note when none is: a tracker nobody
+ * signed in to lists nothing. A chosen tracker whose status is still out is
+ * waited for too, so the board does not flash the repository tab first.
+ */
+export function resolveBoardTab(options: {
+    chosen: SourceBoardTab;
+    hasRepository: boolean;
+    repositoryStatus: BoardRepository['status'];
+    trackers: {
+        /** Ids of the trackers with a tab: served and signed in. */
+        connected: readonly string[];
+        /** A served tracker's status has not arrived yet. */
+        pending: boolean;
+    };
+}): SourceBoardTab | null {
+    const { chosen, hasRepository, repositoryStatus, trackers } = options;
+    const chosenTracker = trackerOfSource(chosen);
+    if (chosenTracker && trackers.connected.includes(chosenTracker)) return chosen;
+    if (chosenTracker && trackers.pending) return null;
+    if (hasRepository) return 'repository';
+    if (repositoryStatus === 'pending' || trackers.pending) return null;
+    const first = trackers.connected[0];
+    return first === undefined ? null : trackerReferenceSource(first);
+}
 
 /** A repository's path below the project's root, as the pickers name it. */
 export const repositoryLabel = (repository: string, root: string): string => {
@@ -174,7 +210,7 @@ function useFolderRepositories(root: string | null) {
  */
 export function useBoardRepository(root: string | null, choice: RepositoryChoice): BoardRepository & { retry: () => void } {
     const { sourceControl } = useRuntimeAPIs();
-    const acrossAvailable = Boolean(sourceControl.githubReferencesAcross);
+    const acrossAvailable = Boolean(sourceControl.referencesAcross);
     const { rootIsGitRepo, nestedRepos, retry } = useFolderRepositories(root);
     const resolution = React.useMemo(
         () => resolveBoardRepository(root, rootIsGitRepo, nestedRepos, { path: choice.path, all: choice.all }, acrossAvailable),
@@ -196,8 +232,9 @@ export function folderOfRepository(
     repositoryUrl: string,
     folders: readonly FolderRemotes[],
     identities: readonly SourceControlIdentity[],
+    descriptors: readonly SourceControlProviderDescriptor[],
 ): string | 'none' | null {
-    const names = (remote: GitRemote) => repositoryLinkFromRemotes([remote], identities)?.url.replace(/\/+$/, '').toLowerCase() === repositoryUrl;
+    const names = (remote: GitRemote) => repositoryLinkFromRemotes([remote], identities, descriptors)?.url.replace(/\/+$/, '').toLowerCase() === repositoryUrl;
     const byOrigin = folders.find((folder) => folder.remotes?.some((remote) => remote.name === 'origin' && names(remote)));
     if (byOrigin) return byOrigin.directory;
     if (folders.some((folder) => folder.remotes === null)) return null;
@@ -220,7 +257,9 @@ export function useLinkRepository(root: string, url: string): LinkRepository {
     const candidates = rootIsGitRepo === false && Array.isArray(nestedRepos) ? nestedRepos : NO_FOLDERS;
     const bindings = useRepositoryBindings(candidates, sourceControl);
     const knownIdentities = useSourceControlAuthStore((state) => state.identities);
-    const repositoryUrl = repositoryUrlOfItemLink(url);
+    const descriptors = useSourceControlProviders();
+    const urls = useRepositoryUrlMatcher();
+    const repositoryUrl = repositoryUrlOfItemLink(url, urls);
     const match = React.useMemo(() => {
         if (!repositoryUrl || candidates.length === 0) return 'none';
         const folders = candidates.map((directory, index): FolderRemotes => {
@@ -233,8 +272,8 @@ export function useLinkRepository(root: string, url: string): LinkRepository {
             }
             return { directory, remotes: binding?.status === 'error' ? [] : null };
         });
-        return folderOfRepository(repositoryUrl, folders, [...knownIdentities, ...BUILT_IN_SOURCE_CONTROL_IDENTITIES]);
-    }, [bindings, candidates, knownIdentities, repositoryUrl]);
+        return folderOfRepository(repositoryUrl, folders, [...knownIdentities, ...defaultSourceControlIdentities(descriptors)], descriptors);
+    }, [bindings, candidates, descriptors, knownIdentities, repositoryUrl]);
 
     if (rootIsGitRepo === null || (rootIsGitRepo === false && nestedRepos === undefined)) return { status: 'pending', directory: root, retry };
     if (rootIsGitRepo === false && nestedRepos === null) return { status: 'failed', directory: root, retry };

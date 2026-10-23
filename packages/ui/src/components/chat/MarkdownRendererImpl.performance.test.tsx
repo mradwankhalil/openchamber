@@ -204,14 +204,22 @@ test('confirmed fenced paths span syntax tokens and survive repeat highlight wit
 
 test('Plan-style document assets resolve relative media while raw HTML stays inert', async () => {
   const before = requests.length;
-  await act(() => root.render(<I18nProvider><MarkdownContent content={'![plan](./diagram.png)\n\n<div>inert HTML</div>'}
-    allowRawHtml={false} enableFileReferences={false} directory="/project"
-    documentAssets={{ filePath: '/plans/current/plan.md', workspaceRoot: '/project', colorScheme: 'light', onOpenFile: () => undefined }} />
-  </I18nProvider>));
-  for (let attempt = 0; attempt < 30 && !requests.slice(before).some((url) => url.includes('/api/fs/raw')); attempt++) {
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  // happy-dom's observer never reports, and a document image waits until it is near the view.
+  const observer = Object.getOwnPropertyDescriptor(browser, 'IntersectionObserver');
+  Object.defineProperty(browser, 'IntersectionObserver', { configurable: true, value: undefined });
+  try {
+    await act(() => root.render(<I18nProvider><MarkdownContent content={'![plan](./diagram.png)\n\n<div>inert HTML</div>'}
+      allowRawHtml={false} enableFileReferences={false} directory="/project"
+      documentAssets={{ filePath: '/plans/current/plan.md', workspaceRoot: '/project', colorScheme: 'light', onOpenFile: () => undefined }} />
+    </I18nProvider>));
+    for (let attempt = 0; attempt < 30 && !requests.slice(before).some((url) => url.includes('/api/fs/raw')); attempt++) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    }
+    const raw = requests.slice(before).find((url) => url.includes('/api/fs/raw'));
+    expect(raw ? new URL(raw, 'http://localhost').searchParams.get('path') : null).toBe('/plans/current/diagram.png');
+    expect(host.textContent).toContain('<div>inert HTML</div>');
+  } finally {
+    if (observer) Object.defineProperty(browser, 'IntersectionObserver', observer);
+    else Reflect.deleteProperty(browser, 'IntersectionObserver');
   }
-  const raw = requests.slice(before).find((url) => url.includes('/api/fs/raw'));
-  expect(raw ? new URL(raw, 'http://localhost').searchParams.get('path') : null).toBe('/plans/current/diagram.png');
-  expect(host.textContent).toContain('<div>inert HTML</div>');
 });

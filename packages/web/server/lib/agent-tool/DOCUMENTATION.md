@@ -197,8 +197,11 @@ default and when to set it. Field names and JSON types carry the rest.
 - `parameters.link` for `session.link` can arrive as a JSON string even though
   the schema declares an object (#4591). The generated entry parses it once
   before the merge and keeps the result only when it is a plain object;
-  anything else reaches `linkInputSchema` unchanged. No other field is
-  revived, so prompts and titles that happen to look like JSON stay text.
+  anything else reaches `linkInputSchema` unchanged. The knowledge tool's
+  `dependsOn` gets the same treatment, kept only when the parse is an array: a
+  model sent it as a JSON string beside the action, where the schema gives it
+  no type. No other field is revived, so prompts and titles that happen to look
+  like JSON stay text.
 - The description draws the line against OpenCode's own `subagent` tool:
   `subagent` when the agent delegates part of its own task and wants the
   answer for itself, `session.*` when the user asks for a separate session

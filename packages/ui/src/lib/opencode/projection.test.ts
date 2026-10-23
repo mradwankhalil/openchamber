@@ -5,6 +5,7 @@ import { partIds, type ConfigDocument } from "./model"
 import {
   configModelIdentifier,
   deniesAnyProvider,
+  findIntegrationPolicy,
   isIntegrationDenied,
   mergeConfigDocuments,
   projectAgent,
@@ -371,6 +372,7 @@ describe("integration policies", () => {
     ])
     expect(isIntegrationDenied(policies, "mcp:github-enterprise")).toBe(true)
     expect(isIntegrationDenied(policies, "skill:deploy")).toBe(true)
+    expect(findIntegrationPolicy(policies, "skill:deploy")).toEqual({ resource: "skill:deploy", effect: "deny", path: "/repo/opencode.json" })
     expect(isIntegrationDenied(policies, "skill:deploy-docs")).toBe(false)
     expect(isIntegrationDenied(policies, "mcp:linear")).toBe(false)
   })

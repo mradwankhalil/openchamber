@@ -151,6 +151,9 @@ The following functions are internal helpers used by exported functions:
 ### Why the temp folder delete retries in its own loop and not with `fs.rm` `maxRetries`
 On Windows a virus scanner or git's background maintenance can hold a file of the fresh clone right when the scan deletes it. A single delete with the error swallowed left one folder in the temp directory per catalog refresh (#5405). `fs.rm`'s own `maxRetries` retries again at every folder level, so a file held for good four levels deep in a clone kept one delete retrying for the whole 10 minutes the file stayed held on Windows (Node 24), and the catalog request waited on it. The loop in `remove-directory.js` gives up after about four seconds.
 
+### Why the sparse listing names the subpath
+After the sparse checkout the scan lists SKILL.md files with `git ls-files`. The index also holds the files the sparse checkout left out, and every one of those has no file on disk, so the scan read it with its own `git show`, and in a partial clone each of those fetches its blob from the remote. A source with a subpath in a large repository started thousands of Git processes per scan: 114 for Cursor's `pstack/skills`, about 5,700 for `sickn33/agentic-awesome-skills` with `skills` (#5446). It also listed skills from outside the subpath. `ls-files -- <subpath>` lists only what the checkout wrote, the same set the `ls-tree` fallback reads. `packages/vscode/src/skillsCatalog.ts` does the same.
+
 ### Error Handling
 - All exported functions return `{ ok, ... }` result objects, not throw.
 - Error kinds: `authRequired`, `networkError`, `conflicts`, `invalidSource`, `unknown`.

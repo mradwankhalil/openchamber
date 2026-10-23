@@ -39,6 +39,8 @@ interface ProviderOAuthMethodsProps {
   className?: string;
   /** Start the only sign-in method on mount, for a sign-in the user just asked for elsewhere. */
   autoStart?: boolean;
+  /** Off when a surrounding card already names the method. */
+  showMethodLabels?: boolean;
 }
 
 type Flow =
@@ -78,6 +80,7 @@ export const ProviderOAuthMethods: React.FC<ProviderOAuthMethodsProps> = ({
   directory,
   className,
   autoStart = false,
+  showMethodLabels = true,
 }) => {
   const { t } = useI18n();
   const sdk = React.useCallback(
@@ -357,7 +360,7 @@ export const ProviderOAuthMethods: React.FC<ProviderOAuthMethodsProps> = ({
         return (
           <div key={method.id} className="space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="typography-ui-label text-foreground">{method.label}</div>
+              {showMethodLabels ? <div className="typography-ui-label text-foreground">{method.label}</div> : null}
               <Button
                 variant="outline"
                 size="xs"

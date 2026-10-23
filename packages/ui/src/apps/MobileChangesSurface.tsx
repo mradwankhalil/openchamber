@@ -53,6 +53,7 @@ import { useBranchPullRequestRequest } from '@/hooks/useBranchPullRequestRequest
 import { useCommitComparison } from '@/hooks/useCommitComparison';
 import { usePullRequestComparison } from '@/hooks/usePullRequestComparison';
 import { PullRequestComparisonSelector } from '@/components/views/git/PullRequestComparisonSelector';
+import { ChangeRequestDiffUnavailable } from '@/components/views/git/ChangeRequestDiffUnavailable';
 import { useGitComparison, type GitComparisonSource } from '@/hooks/useGitComparison';
 import { useGitBaseBranchStore } from '@/stores/useGitBaseBranchStore';
 import { usePullRequestSelectionStore } from '@/stores/usePullRequestSelectionStore';
@@ -70,6 +71,7 @@ import type { GitStatus, GitSubmoduleState } from '@/lib/api/types';
 import { GitPathUnavailableError } from '@/lib/api/git-path-diff';
 import { SubmoduleDiffSummary } from '@/components/views/SubmoduleDiffSummary';
 import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
+import { useChangeRequestTerm } from '@/lib/source-control/providers/registry';
 import { useI18n } from '@/lib/i18n';
 import { generateCommitMessage, stageGitFile, stageGitFiles, unstageGitFile, unstageGitFiles } from '@/lib/gitApi';
 import type { GitRemote } from '@/lib/gitApi';
@@ -356,6 +358,7 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
     setNavigation({ ownerKey, mode: 'pr', route: LIST_ROUTE });
   }, [ownerKey, requestedPr]);
   const prComparison = usePullRequestComparison(currentDirectory || null, currentBranch, binding.contexts[0] ?? null, visible && mode === 'pr' && isGitRepo === true, requestedPr);
+  const prChangeRequestTerm = useChangeRequestTerm(prComparison.provider);
   const selectedPr = prComparison.selectedSource;
   // Taken once the branch is known: the selection it landed in is the real one.
   React.useEffect(() => {
@@ -379,11 +382,11 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
   }, [onNavigatedToChat]);
   const reviewFlow = useReviewFlowStart(currentSessionId, rootDirectory, closeReviewDialog);
   const comparisonSource = React.useMemo<GitComparisonSource | null>(() => {
-    if (mode === 'pr') return selectedPr;
+    if (mode === 'pr') return prComparison.diffUnavailable ? null : selectedPr;
     if (mode === 'branch' && currentBranch && branchComparison.base) return { kind: 'branch', baseRef: branchComparison.base, headRef: currentBranch };
     if (mode === 'commit' && selectedCommitHash) return { kind: 'commit', hash: selectedCommitHash };
     return null;
-  }, [branchComparison.base, currentBranch, mode, selectedCommitHash, selectedPr]);
+  }, [branchComparison.base, currentBranch, mode, prComparison.diffUnavailable, selectedCommitHash, selectedPr]);
   const comparisonRevision = mode === 'branch' ? branchComparison.revision : '';
   const comparison = useGitComparison(currentDirectory || null, comparisonSource, visible && isGitRepo === true, comparisonRevision, prComparison.readContext, prComparison.provider);
   const { fetchDiff: loadComparisonDiff, fetchFullFile: loadComparisonFullFile } = comparison;
@@ -1153,7 +1156,7 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
     );
   }
 
-  const modeLabel = mode === 'pr' ? t(changeRequestCopy('session.githubIntegration.tabs.pullRequests', prComparison.provider)) : mode === 'branch' ? t('diffView.scope.branch') : mode === 'commit' ? t('commitComparison.mode') : mode === 'turn' ? t('diffView.scope.lastTurn') : t('mobile.nav.changes');
+  const modeLabel = mode === 'pr' ? t(changeRequestCopy('session.githubIntegration.tabs.pullRequests', prChangeRequestTerm)) : mode === 'branch' ? t('diffView.scope.branch') : mode === 'commit' ? t('commitComparison.mode') : mode === 'turn' ? t('diffView.scope.lastTurn') : t('mobile.nav.changes');
   const sourceLabel = mode === 'branch' && branchComparison.base
     ? branchRefLabel(branchComparison.base)
     : mode === 'commit' ? selectedCommitHash?.slice(0, 8) : mode === 'pr' && selectedPr ? `#${selectedPr.number}` : null;
@@ -1192,10 +1195,11 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
   }
 
   const renderComparison = () => {
+    if (mode === 'pr' && prComparison.diffUnavailable) return <ChangeRequestDiffUnavailable provider={prComparison.provider} className="h-full" />;
     if (mode === 'pr' && !selectedPr) return <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
       <MobileChangesState loading={prComparison.loading} message={prComparison.error ?? (prComparison.loading
-        ? t(changeRequestCopy('session.githubPrPicker.loading.pullRequests', prComparison.provider))
-        : t(changeRequestCopy('pullRequestComparison.select', prComparison.provider)))} />
+        ? t(changeRequestCopy('session.githubPrPicker.loading.pullRequests', prChangeRequestTerm))
+        : t(changeRequestCopy('pullRequestComparison.select', prChangeRequestTerm)))} />
       {!prComparison.loading && <PullRequestComparisonSelector mobile comparison={prComparison} />}
     </div>;
     if (mode === 'branch' && !branchComparison.base) {
@@ -1276,7 +1280,7 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
               <DropdownMenuRadioItem value="turn" className="min-h-8 items-center">{t('diffView.scope.lastTurn')}</DropdownMenuRadioItem>
               {showBranchOption && <DropdownMenuRadioItem value="branch" className="min-h-8 items-center">{t('diffView.scope.branch')}</DropdownMenuRadioItem>}
               <DropdownMenuRadioItem value="commit" className="min-h-8 items-center">{t('commitComparison.mode')}</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="pr" className="min-h-8 items-center">{t(changeRequestCopy('session.githubIntegration.tabs.pullRequests', prComparison.provider))}</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="pr" className="min-h-8 items-center">{t(changeRequestCopy('session.githubIntegration.tabs.pullRequests', prChangeRequestTerm))}</DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>

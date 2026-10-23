@@ -1,6 +1,6 @@
 {
   "name": "@openchamber/web",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "private": false,
   "type": "module",
   "main": "./server/index.js",
@@ -22,7 +22,7 @@
     "build:diag": "bun ../../scripts/build-builtin-extensions.mjs && NODE_OPTIONS=--max-old-space-size=6144 vite build --config vite.diag.config.ts",
     "build:watch": "bun ../../scripts/build-builtin-extensions.mjs && vite build --watch",
     "prepack": "bun ../../scripts/build-builtin-extensions.mjs",
-    "type-check": "tsc -b",
+    "type-check": "bun check -b",
     "lint": "oxlint -c ../../oxlint.config.ts --report-unused-disable-directives src",
     "test": "vitest run",
     "start": "node bin/cli.js serve"
@@ -32,8 +32,8 @@
     "@gitbeaker/rest": "43.8.0",
     "@octokit/rest": "^22.0.1",
     "@openchamber/sdk": "workspace:*",
-    "@opencode/client": "2.1.2",
-    "@opencode/schema": "2.1.2",
+    "@opencode/client": "2.1.3",
+    "@opencode/schema": "2.1.3",
     "@simplewebauthn/server": "13.3.3",
     "@vscode/ripgrep": "^1.18.0",
     "bun-pty": "0.5.1",

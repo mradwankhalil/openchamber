@@ -22,6 +22,7 @@ export const createBootstrapRuntime = (dependencies) => {
       serverStartedAt,
       gracefulShutdown,
       getHealthSnapshot,
+      readOpenCodeLoad,
       getServerPort,
       getTunnelUrl,
       verboseRequestLogs,
@@ -96,6 +97,7 @@ export const createBootstrapRuntime = (dependencies) => {
       getTunnelUrl,
       tunnelAuthController,
       uiAuthController,
+      readOpenCodeLoad,
     });
 
     registerCommonRequestMiddleware(app, { express, verboseRequestLogs, skipBodyParsing });

@@ -17,10 +17,11 @@ export const providerName = 'OpenCode Go';
 const aliases = ['opencode-go'];
 
 // OpenCode Go has two credential shapes. An API key, stored under the
-// `opencode-go` integration or the shared `opencode` one, uses the legacy usage
-// API. A Console sign-in lives on the shared `opencode` integration and its
-// OAuth access token is not interchangeable with that key, so it uses the
-// Console Go status endpoint.
+// `opencode-go` integration or the shared `opencode` one, reads the Console Go
+// status and falls back to the legacy usage API. A Console sign-in lives on the
+// shared `opencode` integration and its OAuth access token is not
+// interchangeable with that key; it reads the Console Go status with its
+// organization.
 const API_KEY_USAGE_URL = 'https://opencode.ai/zen/go/v1/usage';
 const CONSOLE_STATUS_URL = 'https://opencode.ai/console/api/go/status';
 // The Go status response carries only the three meters. The spendable credit
@@ -156,6 +157,34 @@ export const fetchOpenCodeGoUsage = async (apiKey, fetchImpl = fetch, { consoleK
   return windows;
 };
 
+/**
+ * An API key also opens the Console Go status, without `x-org-id`: the key
+ * belongs to one workspace. Its meters carry the exact fraction the Console
+ * page rounds, while the usage API reports a floored integer percent that sits
+ * up to a point below the page. Best-effort: any failure returns null and the
+ * usage API answers instead, so its error messages stay the API-key contract.
+ */
+const fetchConsoleGoUsageWithKey = async (apiKey, fetchImpl = fetch) => {
+  try {
+    const response = await fetchImpl(CONSOLE_STATUS_URL, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'User-Agent': 'OpenChamber quota provider',
+      },
+      redirect: 'error',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => null);
+    if (!asObject(payload) || !CONSOLE_PRODUCTS.has(payload.product)) return null;
+    const windows = parseConsoleGoUsage(payload);
+    return Object.keys(windows).length > 0 ? windows : null;
+  } catch {
+    return null;
+  }
+};
+
 const isConsoleSignInExpired = (expires) => expires !== null && expires > 0 && expires <= Date.now();
 
 export const fetchConsoleGoUsage = async ({ access, orgID, expires }, fetchImpl = fetch) => {
@@ -289,11 +318,12 @@ export const fetchQuota = async ({ readAuth = readOpenCodeCredentials, fetchImpl
       }
     }
     if (!apiKey) return buildResult({ providerId, providerName, ok: false, configured: false, error: 'Not configured' });
-    const windows = await fetchOpenCodeGoUsage(apiKey.key, fetchImpl, { consoleKey: apiKey.consoleKey }).catch((keyError) => {
-      // The expired-key advice is to connect a Console account; with one
-      // already connected, its own failure is the actionable error.
-      throw consoleFailure && keyError.message === API_KEY_EXPIRED ? consoleFailure : keyError;
-    });
+    const windows = await fetchConsoleGoUsageWithKey(apiKey.key, fetchImpl)
+      ?? await fetchOpenCodeGoUsage(apiKey.key, fetchImpl, { consoleKey: apiKey.consoleKey }).catch((keyError) => {
+        // The expired-key advice is to connect a Console account; with one
+        // already connected, its own failure is the actionable error.
+        throw consoleFailure && keyError.message === API_KEY_EXPIRED ? consoleFailure : keyError;
+      });
     return buildResult({ providerId, providerName, ok: true, configured: true, usage: { windows } });
   } catch (error) {
     return buildResult({ providerId, providerName, ok: false, configured: true, error: error instanceof Error ? error.message : 'Request failed' });

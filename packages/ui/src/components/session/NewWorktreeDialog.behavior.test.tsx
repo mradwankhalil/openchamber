@@ -23,16 +23,17 @@ let confirmReference: ReferenceConfirm | null = null;
 
 const projectStoreState = { getActiveProject: () => project };
 const githubAuthState = { status: { connected: true }, hasChecked: true };
-const linearAuthState = { status: null, hasChecked: true };
 const uiState = { isMobile: false };
 const gitState = { fetchBranches: async () => undefined };
 let worktreeCreations = 0;
 let lastSetupCommands: string[] | undefined;
 let lastCreateNames: { branchName?: string; worktreeName?: string } | undefined;
+let validatedNames: Array<{ branchName?: string; worktreeName?: string }> = [];
+let referenceProvider = 'github';
+let readContext: import('@/lib/api/types').SourceControlReadContext | null = null;
 
 const selectProjectState = <T,>(selector: (state: typeof projectStoreState) => T): T => selector(projectStoreState);
 const selectSourceControlAuthEntry = () => githubAuthState;
-const selectLinearAuthState = <T,>(selector: (state: typeof linearAuthState) => T): T => selector(linearAuthState);
 const selectUIState = <T,>(selector: (state: typeof uiState) => T): T => selector(uiState);
 const selectGitState = <T,>(selector: (state: typeof gitState) => T): T => selector(gitState);
 
@@ -109,7 +110,6 @@ mock.module('@/lib/utils', () => ({ cn: (...values: Array<string | false | null 
 
 const actualProjectsStore = await import('@/stores/useProjectsStore');
 const actualSourceControlAuthStore = await import('@/stores/useSourceControlAuthStore');
-const actualLinearAuthStore = await import('@/stores/useLinearAuthStore');
 const actualUIStore = await import('@/stores/useUIStore');
 const actualGitStore = await import('@/stores/useGitStore');
 
@@ -120,10 +120,6 @@ mock.module('@/stores/useProjectsStore', () => ({
 mock.module('@/stores/useSourceControlAuthStore', () => ({
   ...actualSourceControlAuthStore,
   useSourceControlAuthEntry: selectSourceControlAuthEntry,
-}));
-mock.module('@/stores/useLinearAuthStore', () => ({
-  ...actualLinearAuthStore,
-  useLinearAuthStore: selectLinearAuthState,
 }));
 mock.module('@/stores/useUIStore', () => ({
   ...actualUIStore,
@@ -140,7 +136,7 @@ mock.module('@/sync/session-actions', () => ({
   updateSessionTitle: async () => undefined,
 }));
 mock.module('@/hooks/useRuntimeAPIs', () => ({
-  useRuntimeAPIs: () => ({ sourceControl: {}, git: null, linear: null }),
+  useRuntimeAPIs: () => ({ sourceControl: {}, git: null }),
 }));
 mock.module('@/stores/useGitStore', () => ({
   ...actualGitStore,
@@ -150,7 +146,10 @@ mock.module('@/stores/useGitStore', () => ({
 }));
 mock.module('@/lib/worktrees/worktreeManager', () => ({
   ...actualWorktreeManager,
-  validateWorktreeCreate: async () => ({ ok: true, errors: [] }),
+  validateWorktreeCreate: async (_project: unknown, args: { branchName?: string; worktreeName?: string }) => {
+    validatedNames.push({ branchName: args.branchName, worktreeName: args.worktreeName });
+    return { ok: true, errors: [] };
+  },
 }));
 mock.module('@/lib/worktrees/worktreeCreate', () => ({ createWorktreeWithDefaults: async (_project: { id: string; path: string }, args: { setupCommands?: string[]; branchName?: string; worktreeName?: string }) => {
   worktreeCreations += 1;
@@ -175,12 +174,13 @@ mock.module('@/lib/git/branchNameGenerator', () => ({
 }));
 
 const actualReferenceSources = await import('@/components/references/referenceSources');
-// The project's GitHub read context comes from its binding; these tests never
-// reach a PR, so no binding is read.
+// The project's read context comes from its binding; a test that reaches a
+// change request sets it here instead.
 mock.module('@/components/references/referenceSources', () => ({
   ...actualReferenceSources,
-  useGitHubReadContext: () => null,
-  useRepositoryReferenceProvider: () => 'github',
+  useRepositoryReadContext: () => readContext,
+  useRepositorySourceStatus: () => 'ready',
+  useRepositoryReferenceProvider: () => referenceProvider,
 }));
 mock.module('@/components/references/ReferencePickerDialog', () => ({
   ReferencePickerDialog: ({ onConfirm }: { onConfirm: ReferenceConfirm }) => {
@@ -337,10 +337,11 @@ describe('NewWorktreeDialog behavior', () => {
             open
             onOpenChange={() => undefined}
             initialSelection={{
-              source: 'github',
+              source: 'repository',
               includeDiff: false,
               reference: {
                 kind: 'issue',
+                provider: 'github',
                 number: 7,
                 title: 'Started from the board',
                 url: 'https://github.com/acme/project/issues/7',
@@ -367,6 +368,50 @@ describe('NewWorktreeDialog behavior', () => {
     }
   });
 
+  test('a change from a review host gets a branch named after the change, not its patchset ref', async () => {
+    const { useSourceControlProviderRegistry } = await import('@/lib/source-control/providers/registry');
+    const { githubLikeDescriptor, changeHostDescriptor } = await import('@/lib/source-control/providers/descriptor.fixture');
+    const previousRegistry = useSourceControlProviderRegistry.getState();
+    const ordered = [githubLikeDescriptor(), changeHostDescriptor()];
+    useSourceControlProviderRegistry.setState({ ordered, byId: new Map(ordered.map((entry) => [entry.id, entry])), status: 'ready', holdsList: true });
+    referenceProvider = 'review-host';
+    readContext = {
+      provider: 'review-host', instance: 'https://review.example.com', directory: project.path, repositoryId: 'repo', accountId: 'review#1', bindingRevision: 1, primaryRemote: 'origin',
+    };
+    validatedNames = [];
+    const dom = installDom();
+    const root = createRoot(dom.container);
+    try {
+      await act(async () => root.render(
+        <I18nProvider>
+          <NewWorktreeDialog
+            open
+            onOpenChange={() => undefined}
+            initialSelection={{
+              source: 'repository',
+              includeDiff: false,
+              reference: {
+                kind: 'pull', provider: 'review-host', number: 1234, title: 'A change', url: 'https://review.example.com/c/tools/app/+/1234',
+                body: '', bodyTruncated: false, createdAt: null, updatedAt: null, author: null, labels: [], commentCount: 0,
+                sourceRepo: { owner: 'tools', repo: 'app', source: 'origin' },
+                state: 'open', draft: false, head: 'refs/changes/34/1234/5', base: 'main', headSha: 'a'.repeat(40), headRepo: null,
+              },
+            }}
+          />
+        </I18nProvider>,
+      ));
+      const branchInput = dom.container.querySelector<HTMLInputElement>('input[placeholder="feature/my-awesome-feature"]');
+      expect(branchInput?.value).toBe('change-1234');
+      expect(validatedNames).toEqual([{ branchName: 'change-1234', worktreeName: 'change-1234' }]);
+    } finally {
+      await act(async () => root.unmount());
+      dom.restore();
+      referenceProvider = 'github';
+      readContext = null;
+      useSourceControlProviderRegistry.setState(previousRegistry);
+    }
+  });
+
   test('preserves selected issue values when available worktree names change', async () => {
     const dom = installDom();
     const root = createRoot(dom.container);
@@ -379,17 +424,19 @@ describe('NewWorktreeDialog behavior', () => {
         </I18nProvider>,
       ));
       await clickButton(dom.container, (button) => button.getAttribute('role') === 'button' && Boolean(button.textContent?.startsWith('PR or issue')), 'PR or issue option');
-      const startFromGitHub = dom.container.querySelector<HTMLButtonElement>('button[aria-label="A GitHub issue or pull request"]');
+      // The registry is empty here, so the provider reads by its id.
+      const startFromGitHub = dom.container.querySelector<HTMLButtonElement>('button[aria-label="A github issue or pull request"]');
       if (!startFromGitHub) throw new Error('Missing start-from-GitHub button');
       await act(async () => startFromGitHub.click());
       if (!confirmReference) throw new Error('Expected the reference picker to open');
 
       await act(async () => {
         await confirmReference?.([{
-          source: 'github',
+          source: 'repository',
           includeDiff: false,
           reference: {
             kind: 'issue',
+            provider: 'github',
             number: 42,
             title: 'Keep the selected issue',
             url: 'https://github.com/acme/project/issues/42',

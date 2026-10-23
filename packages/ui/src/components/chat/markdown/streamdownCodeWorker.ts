@@ -3,7 +3,8 @@ import { isVSCodeRuntime } from '@/stores/utils/vscodeRuntime';
 import { streamTuning } from '../lib/streamTuningFlags';
 import { contentFingerprint, HighlightResultCache, utf16Bytes } from './highlightResultCache';
 import { HIGHLIGHT_REQUEST_TIMEOUT_MS } from './markdown-worker-timeout';
-import { unpackCodeTokens } from './streamdown-code-protocol';
+import { highlightsNow, highlightsSettled, highlightsTokens, loadHighlights } from './highlightsEngine';
+import { packCodeTokens, unpackCodeTokens } from './streamdown-code-protocol';
 import type { StreamdownCodeRequest, StreamdownCodeResponse } from './streamdown-code-protocol';
 
 const cacheKey = (code: string, language: string) => `highlight:${language}:${contentFingerprint(code)}`;
@@ -17,7 +18,7 @@ type Job = {
 };
 type WorkerConnection = { worker: Worker; objectUrl?: string };
 
-function sharedLineCount(base: Snapshot, code: string): number {
+function sharedLineCount(base: Pick<Snapshot, 'code' | 'result'>, code: string): number {
   if (code.startsWith(base.code)) return base.result.tokens.length - 1;
   const end = Math.min(base.code.length, code.length);
   let index = 0;
@@ -29,7 +30,20 @@ function sharedLineCount(base: Snapshot, code: string): number {
   return lines;
 }
 
-/** The pre-migration cache and timeout policy, with React tokens as the payload. */
+type Row = HighlightResult['tokens'][number];
+
+const sameRow = (a: Row, b: Row): boolean => a.length === b.length && a.every((token, index) => {
+  const other = b[index];
+  return token.content === other.content && token.offset === other.offset && token.color === other.color
+    && token.bgColor === other.bgColor && JSON.stringify(token.htmlStyle) === JSON.stringify(other.htmlStyle);
+});
+
+/**
+ * Languages with a Highlights lexer tokenize on the main thread, synchronously,
+ * so a block paints highlighted in its first frame: Highlights takes about a
+ * millisecond per 100 KB. Other languages go to the Shiki worker with the
+ * pre-migration cache and timeout policy. Both return React tokens.
+ */
 export class StreamdownCodeWorker {
   private worker: Worker | null = null;
   private workerUrl: string | null = null;
@@ -43,6 +57,11 @@ export class StreamdownCodeWorker {
   private disposed = false;
   private sequence = 0;
   private lineage = 0;
+  private mainThreadPrevious: Array<{ code: string; language: string; result: HighlightResult }> = [];
+
+  constructor() {
+    void loadHighlights();
+  }
 
   cached(code: string, language: string, isIncomplete = false): HighlightResult | undefined {
     const key = cacheKey(code, language);
@@ -50,7 +69,30 @@ export class StreamdownCodeWorker {
     if (settled) return 'result' in settled ? settled.result : undefined;
     const recent = this.recent.find((entry) => entry.key === key)?.result;
     if (recent && !isIncomplete) this.remember(key, recent);
-    return recent;
+    return recent ?? this.highlightOnMainThread(key, code, language, isIncomplete);
+  }
+
+  private highlightOnMainThread(key: string, code: string, language: string, isIncomplete: boolean): HighlightResult | undefined {
+    const target = highlightsNow(language);
+    if (!target || this.disposed) return undefined;
+    const result = unpackCodeTokens(code, packCodeTokens(highlightsTokens(target, code)));
+    // A streaming block grows by appended lines; rows that did not change keep
+    // their identity so React skips them, as with the worker's prefix reuse.
+    let base: { code: string; result: HighlightResult } | undefined;
+    let shared = 0;
+    for (const candidate of this.mainThreadPrevious) {
+      if (candidate.language !== language) continue;
+      const count = sharedLineCount(candidate, code);
+      if (count > shared) { shared = count; base = candidate; }
+    }
+    for (let line = 0; base && line < shared; line++) {
+      if (sameRow(base.result.tokens[line], result.tokens[line])) result.tokens[line] = base.result.tokens[line];
+    }
+    this.mainThreadPrevious = [{ code, language, result }, ...this.mainThreadPrevious.filter((entry) => entry !== base)].slice(0, 4);
+    if (isIncomplete) {
+      this.recent = [{ key, result }, ...this.recent.filter((entry) => entry.key !== key)].slice(0, 4);
+    } else this.remember(key, result);
+    return result;
   }
 
   private remember(key: string, result: HighlightResult): void {
@@ -71,6 +113,14 @@ export class StreamdownCodeWorker {
     const key = cacheKey(code, language);
     const cached = this.cached(code, language, isIncomplete);
     if (cached) return Promise.resolve(cached);
+    // Only the first blocks wait for the import; afterwards the worker call is
+    // direct, so identical requests keep coalescing into one promise.
+    if (highlightsSettled()) return this.highlightInWorker(key, code, language, isIncomplete);
+    return loadHighlights().then(() => this.cached(code, language, isIncomplete) ?? this.highlightInWorker(key, code, language, isIncomplete));
+  }
+
+  private highlightInWorker(key: string, code: string, language: string, isIncomplete: boolean): Promise<HighlightResult | null> {
+    if (this.disposed) return Promise.resolve(null);
     const entry = this.completed.get(key);
     if (entry && 'failed' in entry) return Promise.resolve(null);
     // Streaming steps retain only recent results. Only completed requests
@@ -233,6 +283,7 @@ export class StreamdownCodeWorker {
     this.completed.clear();
     this.recent = [];
     this.snapshots = [];
+    this.mainThreadPrevious = [];
   }
 }
 

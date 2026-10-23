@@ -27,6 +27,62 @@ The transcript is a LegendList (`@legendapp/list`) owned by `useChatTimelineScro
 
 - **A side column's width animation holds the end on every frame and defers the rest to its end.** While the session sidebar or the right slot animates its width (`lib/layoutAnimation.ts`, 240 ms), the transcript re-wraps on every frame. The pinned-end write runs on each of them, through the same measured end as a window resize, offset by where the reader sat relative to that end when the animation began (a reader on the document's end sits a few px below it, and the text hopped by that much at every toggle): deferred to the end of the animation, as it once was, the end slid down out of view (over 1000 px as a 640 px panel opened beside a long reply) and jumped back when the animation ended. The active-turn spy, markdown table relayout and the scroll-shadow check each forced a transcript layout per frame; they queue with `runWhenLayoutSettled` and run once, at the final width, one frame after the animation ends, and the end is asserted once more then. Markdown tables are the exception among those: they refit on every frame from column widths measured once (`stabilizeMarkdownTableWidths` with `cachedOnly`), so they move with the prose; only a table that needs measuring waits for the end.
 
+## Connected scroll work
+
+Effect cleanup cancels follow frames and clears their scheduling sentinel, and
+clears the return-to-end reassert timers. Retained hook state can schedule a new
+frame after setup without changing the reader's follow intent. A cancelled
+follow callback cannot consume a later connection's pending frame.
+
+History navigation belongs to the controller's current connected lifetime as
+well as its session identity. Cleanup retires that lifetime, releases local
+render waiters and stops the mobile prepend watchdog. An authoritative loader
+request already sent may still publish its page, but its obsolete local search
+cannot request another batch or finish navigation after reconnect. MessageList
+owns one pending navigation alignment loop; replacement navigation, input,
+session change and layout cleanup cancel its frame and listeners.
+
+### Why cleanup retires navigation without cancelling the loader
+
+The loader owns shared history coverage and request reconciliation. A viewport
+owns only its navigation continuation, so ending that viewport's effects stops
+local movement and subsequent demand without discarding a valid shared read.
+
+## Session list retention
+
+`ChatViewport` keeps up to four `MessageList` subtrees, including the visible
+one, through `KeepAlive`; the mobile surface keeps only the visible one, because
+a phone's web view is killed under memory pressure. Entries are keyed by
+session ID: the composite session key also carries the directory, which settles
+after a session opens, and keying the pool by it retained a hidden second copy
+of the open session. Inside an entry the list still remounts on a session key
+change. The shown selection drives the LRU; loading, error,
+empty and draft placeholders hide the pool without replacing its host. Leaving
+the chat column releases the pool. Each stored JSX entry supplies its own
+`ChatColumnSessionContext`, so hidden messages retain their session identity.
+
+The scroll hook and timeline controller remain shared by the column. List
+registration names the composite session key; a late detach from a hidden list
+cannot clear the selected list. MessageList's imperative ref cleanup clears
+only its own handle, and DOM navigation resolves only its own scroller.
+Scroll-shadow cleanup clears the outgoing node's attributes because hidden
+scrollers remain siblings of the shared fade and still match its CSS selector.
+Restoration and reveal continue through the existing column logic.
+
+The UI pool does not pin histories or change loader retention. Returning to an
+entry supplies current authoritative messages through its existing props.
+Loader request generations do not control UI identity: a tail refresh can
+advance them without replacing history. Runtime changes replace the pool. Hidden JSX
+can retain old message references until LRU eviction or column teardown, so
+the entry limit is a count bound, not a byte budget.
+
+### Why the pool sits at MessageList
+
+This is the existing session-keyed replacement point. Retaining it preserves
+the list, turn state and mounted Markdown without duplicating the composer or
+the column's scroll controller. KeepAlive renders entries in stable key order;
+LRU promotion changes visibility without moving retained iframe DOM.
+
 ## Row identity
 
 - **A row keeps its React tree when it becomes or stops being the live tail.** Every row renders through `TimelineRowContent` in `MessageList.tsx`; only the tail subscribes to streaming parts. The tail moves on every send and on a revert. When the tail had its own component type, the moving row remounted, its state reset for one commit (a long user message lost its "Show full message" link, 28 px), and LegendList measured that commit in its layout effect. The `ResizeObserver` never corrects such a size, because the short height was never painted, so the row below sat that much too high until a later re-measure: 40-80 ms after a send, and from the revert until 200 ms into the next send. Anything that remounts or resets state inside a mounted row has the same effect.

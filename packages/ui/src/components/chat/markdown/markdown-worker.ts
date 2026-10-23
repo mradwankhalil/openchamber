@@ -6,8 +6,9 @@ import {
   HighlightResultCache,
   utf16Bytes,
 } from './highlightResultCache';
-import type { MarkdownTokenRun, MarkdownWorkerRequest, MarkdownWorkerResponse } from './markdown-worker-protocol';
+import type { CodeTokenTheme, MarkdownTokenRun, MarkdownWorkerRequest, MarkdownWorkerResponse } from './markdown-worker-protocol';
 import { HIGHLIGHT_REQUEST_TIMEOUT_MS } from './markdown-worker-timeout';
+import { highlightsBlockHtml, highlightsLineHtml, highlightsNow, highlightsSettled, loadHighlights } from './highlightsEngine';
 import { streamTuning } from '../lib/streamTuningFlags';
 
 // Main-thread Shiki worker client for non-Markdown code views and CodeMirror.
@@ -243,6 +244,26 @@ const cacheKeyFor = (kind: string, lang: string, code: string, themeName?: strin
   return themeName === undefined ? `${kind}:${lang}:${fp}` : `${kind}:${themeName}:${lang}:${fp}`;
 };
 
+// Languages with a Highlights lexer render HTML on the main thread: a block
+// takes about a millisecond per 100 KB, less than a worker round trip, so a
+// view that asks synchronously paints highlighted in its first frame. Results
+// share the cache with worker results. The worker keeps Shiki languages.
+const highlightCodeNow = (key: string, code: string, lang: string): string | null => {
+  const target = highlightsNow(lang);
+  if (!target) return null;
+  const entry: CachedHighlight = { type: 'highlight', html: highlightsBlockHtml(target, code) };
+  resultCache.set(key, entry, entryBytes(key, entry));
+  return entry.html;
+};
+
+const highlightLinesNow = (key: string, code: string, lang: string): string[] | null => {
+  const target = highlightsNow(lang);
+  if (!target) return null;
+  const entry: CachedHighlight = { type: 'highlightLines', lines: highlightsLineHtml(target, code) };
+  resultCache.set(key, entry, entryBytes(key, entry));
+  return entry.lines;
+};
+
 /** Test-only: clear client-side highlight memoization. */
 export const resetMarkdownWorkerClientCacheForTests = (): void => {
   resultCache.clear();
@@ -261,6 +282,9 @@ export const highlightCodeInWorker = async (
   const cached = resultCache.get(key);
   if (cached?.type === 'highlight') return cached.html;
   if (cached?.type === 'failed') return null;
+  if (!highlightsSettled()) await loadHighlights();
+  const now = highlightCodeNow(key, code, lang);
+  if (now) return now;
   const result = await coalesce(key, async () => {
     const fullPass = !streamTuning.incrementalHighlight();
     const outcome = await request((id) => ({ type: 'highlight', id, code, lang, fullPass }));
@@ -283,6 +307,9 @@ export const highlightLinesInWorker = async (code: string, lang: string): Promis
   const cached = resultCache.get(key);
   if (cached?.type === 'highlightLines') return cached.lines;
   if (cached?.type === 'failed') return null;
+  if (!highlightsSettled()) await loadHighlights();
+  const now = highlightLinesNow(key, code, lang);
+  if (now) return now;
 
   const result = await coalesce(key, async () => {
     const outcome = await request((id) => ({ type: 'highlightLines', id, code, lang }));
@@ -295,23 +322,36 @@ export const highlightLinesInWorker = async (code: string, lang: string): Promis
   return result?.type === 'highlightLines' ? result.lines : null;
 };
 
-/** Return an already-tokenized line result without scheduling a worker request. */
+/**
+ * Return a line result without scheduling a worker request: a cached one, or
+ * one rendered now for a Highlights language.
+ */
 export const getCachedHighlightedLines = (code: string, lang: string): string[] | null => {
-  const cached = resultCache.get(cacheKeyFor('highlightLines', lang, code));
-  return cached?.type === 'highlightLines' ? cached.lines : null;
+  const key = cacheKeyFor('highlightLines', lang, code);
+  const cached = resultCache.get(key);
+  if (cached?.type === 'highlightLines') return cached.lines;
+  return cached ? null : highlightLinesNow(key, code, lang);
+};
+
+/** Whole-block HTML without scheduling a worker request, like `getCachedHighlightedLines`. */
+export const getCachedHighlightedCode = (code: string, lang: string): string | null => {
+  const key = cacheKeyFor('highlight', lang, code);
+  const cached = resultCache.get(key);
+  if (cached?.type === 'highlight') return cached.html;
+  return cached ? null : highlightCodeNow(key, code, lang);
 };
 
 /**
- * Tokenize `code` with the given resolved TextMate theme and return per-line
- * styled runs with offsets — for building CodeMirror decorations that match the
- * Shiki file view exactly. The full theme object is shipped only the first time
+ * Tokenize `code` with the given app theme and return per-line styled runs
+ * with offsets — for building CodeMirror decorations that match the file view
+ * exactly. The full theme object is shipped only the first time
  * a theme name is seen by the live worker. Resolves to `null` on failure.
  */
 export const highlightTokensInWorker = async (
   code: string,
   lang: string,
   themeName: string,
-  theme: unknown,
+  theme: CodeTokenTheme,
 ): Promise<MarkdownTokenRun[][] | null> => {
   const key = cacheKeyFor('highlightTokens', lang, code, themeName);
   const cached = resultCache.get(key);

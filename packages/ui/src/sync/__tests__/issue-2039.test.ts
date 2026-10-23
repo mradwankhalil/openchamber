@@ -214,6 +214,7 @@ mock.module("@/stores/useSkillsStore", () => ({
     }),
   },
   selectSkillsForDirectory: () => [],
+  selectAvailableSkillsForDirectory: () => [],
 }))
 
 mock.module("@/components/ui", () => ({

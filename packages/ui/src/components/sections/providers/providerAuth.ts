@@ -176,6 +176,20 @@ export const getProviderCardStatus = (input: {
   return connections === undefined ? null : { kind: 'signInNeeded' };
 };
 
+/**
+ * Judged over all of a provider's accounts, which the page splits across
+ * cards. With a single usable account there is nothing to switch between, so
+ * it carries no Use button; the Active mark still shows when idle ones sit next
+ * to it.
+ */
+export const getAccountSwitching = (connections: readonly ConnectionInfo[], unusedIds: ReadonlySet<string>) => {
+  const credentials = connections.filter((connection) => connection.type === 'credential');
+  return {
+    canSwitch: credentials.filter((connection) => !unusedIds.has(connection.id)).length > 1,
+    showActive: credentials.length > 1,
+  };
+};
+
 export const shouldShowModelsSection = (input: {
   modelCount: number;
   /** False while the integration list is still loading. */
@@ -190,19 +204,3 @@ export const shouldShowModelsSection = (input: {
 }): boolean =>
   input.modelCount > 0 &&
   (!input.integrationsLoaded || input.hasCredentials || Boolean(input.isEditableCustomProvider));
-
-export const shouldAutoOpenAuthPanel = (input: {
-  integrationsLoaded: boolean;
-  hasCredentials: boolean;
-  userDismissed: boolean;
-  /**
-   * Config-defined custom providers do not auto-open the auth panel: the
-   * provider is editable directly in the form, and a stale `Credentials
-   * missing` summary would be misleading.
-   */
-  isEditableCustomProvider?: boolean;
-}): boolean =>
-  input.integrationsLoaded &&
-  !input.hasCredentials &&
-  !input.userDismissed &&
-  !input.isEditableCustomProvider;

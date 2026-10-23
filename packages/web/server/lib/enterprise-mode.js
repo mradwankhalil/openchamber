@@ -37,7 +37,8 @@ import { z } from 'zod';
  *   routes and stays allowed.
  * - Jev classification is off, unless the administrator pinned their own
  *   endpoint (`routing/runtime.js`).
- * - External tunnels are refused: their provider sees plain text (`tunnels`).
+ * - External tunnels are refused: Cloudflare and ngrok see plain text, and
+ *   Tailscale opens this machine to other devices (`tunnels`).
  * - The private relay runs only on a pinned self-hosted endpoint
  *   (`relay/service.js`).
  * - Speech and transcription go only to servers on this machine (`tts`,

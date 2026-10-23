@@ -65,7 +65,7 @@ export const jsonSyntaxLint = (message: string, colors: JsonLintTheme): Extensio
       borderRadius: '8px',
       overflow: 'hidden',
     },
-    '.cm-diagnostic': { fontFamily: 'var(--font-sans)', fontSize: '12px', padding: '4px 8px' },
+    '.cm-diagnostic': { fontFamily: 'var(--font-sans)', fontSize: '0.75rem', padding: '4px 8px' },
     '.cm-diagnostic-error': { borderLeft: `3px solid ${colors.error}` },
   }),
 ];

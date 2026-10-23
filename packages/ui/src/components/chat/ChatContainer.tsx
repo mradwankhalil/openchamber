@@ -22,6 +22,7 @@ import { useInputStore } from '@/sync/input-store';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { Skeleton } from '@/components/ui/skeleton';
+import { KeepAlive } from '@/components/ui/KeepAlive';
 import ChatEmptyState from './ChatEmptyState';
 import { useGlobalSyncStore } from '@/sync/global-sync-store';
 import MessageList, { type MessageListHandle } from './MessageList';
@@ -116,6 +117,7 @@ import { PermissionDock } from './PermissionDock';
 import { FormDock } from './FormDock';
 import { ensureSpaceArchives, useSpaceArchiveOf } from '@/lib/spaces/space-archives';
 import { getRuntimeKey } from '@/lib/runtime-switch';
+import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { createFirstVisibleSessionPerformanceTracker } from '@/sync/session-load-performance';
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
 
@@ -206,6 +208,8 @@ type HydratingToolSkeletonRow = {
 };
 
 type ChatViewportProps = {
+    /** Loading, error, draft or empty content; undefined shows the transcript. */
+    placeholder: React.ReactNode;
     currentSessionId: string;
     currentSessionKey: string;
     isDesktopExpandedInput: boolean;
@@ -219,7 +223,7 @@ type ChatViewportProps = {
     directory?: string;
     scrollRef: React.RefObject<HTMLDivElement | null>;
     messageListRef: React.RefObject<MessageListHandle | null>;
-    registerList: (list: TimelineListHandle | null) => void;
+    registerList: (list: TimelineListHandle | null, sessionKey?: string) => void;
     onIsAtEndChange: (isAtEnd: boolean) => void;
     onListMetricsChange: (metrics: { readonly footerSize: number }) => void;
     onTimelineDataChange: () => void;
@@ -253,7 +257,14 @@ type ChatViewportProps = {
     onLoadEarlierPrompts: () => void;
 };
 
+// Sessions kept mounted per chat column, the open one included, so returning
+// to a recent one reuses its timeline. Each retained timeline costs a few MB
+// of DOM, and a phone's web view is killed under memory pressure, so the
+// mobile surface keeps only the open session.
+const retainedTimelines = () => (isMobileSurfaceRuntime() ? 1 : 4);
+
 const ChatViewport = React.memo(({
+    placeholder,
     currentSessionId,
     currentSessionKey,
     isDesktopExpandedInput,
@@ -290,6 +301,14 @@ const ChatViewport = React.memo(({
     onLoadEarlierPrompts,
 }: ChatViewportProps) => {
     const { t } = useI18n();
+    const session = React.useMemo<ChatColumnSession>(() => ({
+        sessionId: currentSessionId,
+        directory: directory ?? null,
+    }), [currentSessionId, directory]);
+    const registerSessionList = React.useCallback((list: TimelineListHandle | null) => {
+        registerList(list, currentSessionKey);
+    }, [currentSessionKey, registerList]);
+    const showingTranscript = placeholder === undefined;
     const promptPreviewsByTurnIdRef = React.useRef<Map<string, Part[]>>(new Map());
     const promptPreviewsByTurnId = React.useMemo(() => {
         const next = buildPromptPreviewsByTurnId(renderedMessages);
@@ -423,7 +442,7 @@ const ChatViewport = React.memo(({
     revealWaitedRef.current = revealWaited;
     React.useLayoutEffect(() => {
         const root = timelineRootRef.current;
-        if (!root) return;
+        if (!root || !showingTranscript) return;
         root.setAttribute('data-timeline-reveal', 'pending');
         let finished = false;
         let timer: number | null = null;
@@ -504,7 +523,7 @@ const ChatViewport = React.memo(({
             if (fadeTimer !== null) window.clearTimeout(fadeTimer);
             revealGate.onEmpty = null;
         };
-    }, [revealGate, scrollRef]);
+    }, [revealGate, scrollRef, showingTranscript]);
 
     const scrollContainerProps = React.useMemo(() => ({
         className: 'absolute inset-0 overflow-y-auto overflow-x-hidden z-0 chat-scroll overlay-scrollbar-target',
@@ -517,70 +536,89 @@ const ChatViewport = React.memo(({
     }), [focusScrollContainer]);
 
     return (
-        <div
-            className={cn(
-                'relative min-h-0',
-                isDesktopExpandedInput
-                    ? 'absolute inset-0 opacity-0 pointer-events-none'
-                    : 'flex-1',
-            )}
-            ref={timelineRootRef}
-            aria-hidden={isDesktopExpandedInput}
-        >
-            <div className="absolute inset-0">
-                <MessageList
-                    key={currentSessionKey}
-                    ref={messageListRef}
-                    sessionKey={currentSessionId}
-                    messages={renderedMessages}
-                    sessionIsWorking={sessionIsWorking}
-                    activeStreamingMessageId={streamingMessageId}
-                    activeStreamingPhase={activeStreamingPhase}
-                    retryOverlay={retryOverlay}
-                    isLoadingOlder={isLoadingOlder}
-                    scrollToBottom={scrollToBottom}
-                    endPinningReleased={endPinningReleased}
-                    directory={directory}
-                    registerList={registerList}
-                    // Zero end inset: the footer spacer already reserves the
-                    // zone the floating status row covers; adding its height
-                    // again produced a double-tall blank band at rest.
-                    composerOverlayHeight={0}
-                    onIsAtEndChange={onIsAtEndChange}
-                    onListMetricsChange={onListMetricsChange}
-                    onTimelineDataChange={onTimelineDataChange}
-                    listHeader={listHeader}
-                    listFooter={listFooter}
-                    scrollContainerProps={scrollContainerProps}
-                />
-                {/* The transcript's edge fades: bands in the chat background
-                    over the scroller, shown by its scroll-shadow attributes
-                    (index.css `.chat-scroll-fade`). They must stay later
-                    siblings of the scroller. */}
-                <div aria-hidden="true" className="chat-scroll-fade chat-scroll-fade--top" />
-                <div
-                    ref={registerComposerInsetReader}
-                    aria-hidden="true"
-                    className="chat-scroll-fade chat-scroll-fade--end"
-                    style={endFadeStyle}
-                />
-                <OverlayScrollbar containerRef={scrollRef} disableHorizontal suppressVisibility={isProgrammaticFollowActive} userIntentOnly observeMutations={false} onThumbDragStart={onScrollbarDrag} />
-                {showPromptNavigator && promptTurnIds.length >= 2 ? (
-                    <PromptNavigatorRail
-                        turnIds={promptTurnIds}
-                        previewsByTurnId={promptPreviewsByTurnId}
-                        activeTurnId={railActiveTurnId}
-                        onSelectTurn={onSelectTurn}
-                        canLoadEarlier={canLoadEarlierPrompts}
-                        isLoadingOlder={isLoadingOlderPrompts}
-                        onLoadEarlier={onLoadEarlierPrompts}
+        <>
+            {placeholder}
+            <div
+                className={cn(
+                    'relative min-h-0',
+                    isDesktopExpandedInput
+                        ? 'absolute inset-0 opacity-0 pointer-events-none'
+                        : 'flex-1',
+                )}
+                ref={timelineRootRef}
+                style={showingTranscript ? undefined : { display: 'none' }}
+                aria-hidden={isDesktopExpandedInput}
+            >
+                <div className="absolute inset-0">
+                    {/* Retained by session ID: the session key also holds the
+                        directory, which settles after the session opens, and
+                        a key change left a hidden second copy of the open
+                        session. The list still remounts on a key change. */}
+                    <KeepAlive
+                        key={getRuntimeKey()}
+                        cacheKey={showingTranscript ? currentSessionId : null}
+                        capacity={retainedTimelines()}
+                    >
+                        <ChatColumnSessionContext.Provider value={session}>
+                            <MessageList
+                                key={currentSessionKey}
+                                ref={messageListRef}
+                                sessionKey={currentSessionId}
+                                messages={renderedMessages}
+                                sessionIsWorking={sessionIsWorking}
+                                activeStreamingMessageId={streamingMessageId}
+                                activeStreamingPhase={activeStreamingPhase}
+                                retryOverlay={retryOverlay}
+                                isLoadingOlder={isLoadingOlder}
+                                scrollToBottom={scrollToBottom}
+                                endPinningReleased={endPinningReleased}
+                                directory={directory}
+                                registerList={registerSessionList}
+                                // The footer already reserves the composer's band.
+                                composerOverlayHeight={0}
+                                onIsAtEndChange={onIsAtEndChange}
+                                onListMetricsChange={onListMetricsChange}
+                                onTimelineDataChange={onTimelineDataChange}
+                                listHeader={listHeader}
+                                listFooter={listFooter}
+                                scrollContainerProps={scrollContainerProps}
+                            />
+                        </ChatColumnSessionContext.Provider>
+                    </KeepAlive>
+                    {/* The transcript's edge fades must follow the scroller. */}
+                    <div aria-hidden="true" className="chat-scroll-fade chat-scroll-fade--top" />
+                    <div
+                        ref={registerComposerInsetReader}
+                        aria-hidden="true"
+                        className="chat-scroll-fade chat-scroll-fade--end"
+                        style={endFadeStyle}
                     />
-                ) : null}
+                    <OverlayScrollbar
+                        containerRef={scrollRef}
+                        disableHorizontal
+                        suppressVisibility={isProgrammaticFollowActive}
+                        userIntentOnly
+                        observeMutations={false}
+                        onThumbDragStart={onScrollbarDrag}
+                    />
+                    {showPromptNavigator && promptTurnIds.length >= 2 ? (
+                        <PromptNavigatorRail
+                            turnIds={promptTurnIds}
+                            previewsByTurnId={promptPreviewsByTurnId}
+                            activeTurnId={railActiveTurnId}
+                            onSelectTurn={onSelectTurn}
+                            canLoadEarlier={canLoadEarlierPrompts}
+                            isLoadingOlder={isLoadingOlderPrompts}
+                            onLoadEarlier={onLoadEarlierPrompts}
+                        />
+                    ) : null}
+                </div>
             </div>
-        </div>
+        </>
     );
 }, (prev, next) => {
     return prev.currentSessionId === next.currentSessionId
+        && prev.placeholder === next.placeholder
         && prev.currentSessionKey === next.currentSessionKey
         && prev.isDesktopExpandedInput === next.isDesktopExpandedInput
         && prev.isMobile === next.isMobile
@@ -1446,7 +1484,9 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
         void navigation.scrollToTurnId(turnId, { behavior: 'auto' });
     }, [navigation]);
     const canLoadEarlierPrompts = timelineController.historySignals.canLoadEarlier;
+    // The mini chat window is too narrow to give the rail its gutter.
     const promptRailEnabled = !isMobile
+        && chatSurfaceMode !== 'mini-chat'
         && !isDesktopExpandedInput
         && promptNavigatorEnabled;
     const showPromptNavigator = promptRailEnabled
@@ -1700,7 +1740,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 		);
 	}
 
-    const sessionSurface = (() => {
+    const sessionPlaceholder = (() => {
         if (draftOpen || draftPresentationExiting) {
             if (!useCompactDraftLayout || isDesktopExpandedInput) {
                 return null;
@@ -1765,45 +1805,48 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
             );
         }
 
-        return (
-            <ChatViewport
-                currentSessionId={currentSessionId ?? ''}
-                currentSessionKey={currentSessionKey ?? currentSessionId ?? ''}
-                isDesktopExpandedInput={isDesktopExpandedInput}
-                isMobile={isMobile}
-                floatingComposer={floatingComposer}
-                statusRowClearance={sessionIsWorking ? composerOverlayHeight : 0}
-                directory={effectiveSessionDirectory}
-                scrollRef={scrollRef}
-                registerList={registerList}
-                onIsAtEndChange={onIsAtEndChange}
-                onListMetricsChange={onListMetricsChange}
-                onTimelineDataChange={onTimelineDataChange}
-                messageListRef={messageListRef}
-                renderedMessages={timelineController.renderedMessages}
-                isLoadingOlder={timelineController.isLoadingOlder}
-                sessionIsWorking={sessionIsWorking}
-                streamingMessageId={streamingMessageId}
-                activeStreamingPhase={activeStreamingPhase}
-                retryOverlay={retryOverlay}
-                scrollToBottom={resumeToLatestInstant}
-                onScrollbarDrag={onManualNavigation}
-                endPinningReleased={userOwnsScroll}
-                revealWaited={revealWaited}
-                revealGate={revealGate}
-                isProgrammaticFollowActive={isFollowingProgrammatically}
-                showLoadOlderButton={showLoadOlderButton}
-                onLoadOlder={handleLoadOlderClick}
-                turnIds={timelineController.turnIds}
-                activeTurnId={timelineController.activeTurnId}
-                onSelectTurn={handlePromptNavigatorSelect}
-                showPromptNavigator={showPromptNavigator}
-                canLoadEarlierPrompts={canLoadEarlierPrompts}
-                isLoadingOlderPrompts={timelineController.isLoadingOlder}
-                onLoadEarlierPrompts={handleLoadOlderClick}
-            />
-        );
+        return undefined;
     })();
+
+    const sessionSurface = (
+        <ChatViewport
+            placeholder={sessionPlaceholder}
+            currentSessionId={currentSessionId ?? ''}
+            currentSessionKey={currentSessionKey ?? currentSessionId ?? ''}
+            isDesktopExpandedInput={isDesktopExpandedInput}
+            isMobile={isMobile}
+            floatingComposer={floatingComposer}
+            statusRowClearance={sessionIsWorking ? composerOverlayHeight : 0}
+            directory={effectiveSessionDirectory}
+            scrollRef={scrollRef}
+            registerList={registerList}
+            onIsAtEndChange={onIsAtEndChange}
+            onListMetricsChange={onListMetricsChange}
+            onTimelineDataChange={onTimelineDataChange}
+            messageListRef={messageListRef}
+            renderedMessages={timelineController.renderedMessages}
+            isLoadingOlder={timelineController.isLoadingOlder}
+            sessionIsWorking={sessionIsWorking}
+            streamingMessageId={streamingMessageId}
+            activeStreamingPhase={activeStreamingPhase}
+            retryOverlay={retryOverlay}
+            scrollToBottom={resumeToLatestInstant}
+            onScrollbarDrag={onManualNavigation}
+            endPinningReleased={userOwnsScroll}
+            revealWaited={revealWaited}
+            revealGate={revealGate}
+            isProgrammaticFollowActive={isFollowingProgrammatically}
+            showLoadOlderButton={showLoadOlderButton}
+            onLoadOlder={handleLoadOlderClick}
+            turnIds={timelineController.turnIds}
+            activeTurnId={timelineController.activeTurnId}
+            onSelectTurn={handlePromptNavigatorSelect}
+            showPromptNavigator={showPromptNavigator}
+            canLoadEarlierPrompts={canLoadEarlierPrompts}
+            isLoadingOlderPrompts={timelineController.isLoadingOlder}
+            onLoadEarlierPrompts={handleLoadOlderClick}
+        />
+    );
 
 	return (
 		<div

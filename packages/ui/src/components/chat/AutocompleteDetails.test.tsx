@@ -68,7 +68,7 @@ beforeEach(async () => {
     loadCommands: async () => true,
   });
   useSkillsStore.setState({
-    skillsByDirectory: { [directory]: [{ name: 'oc-scroll', description: 'First details', scope: 'project', source: 'agents', path: `${directory}/skills/oc-scroll/SKILL.md` }] },
+    skillsByDirectory: { [directory]: [{ id: 'oc-scroll', name: 'oc-scroll', description: 'First details', scope: 'project', source: 'agents', path: `${directory}/skills/oc-scroll/SKILL.md` }] },
     loadSkills: async () => true,
   });
   selections = [];

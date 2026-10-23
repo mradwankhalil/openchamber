@@ -41,7 +41,8 @@ export type OverviewDoneSignal = 'merged' | 'issueClosed' | 'issueDropped' | 'hi
 export type OverviewVeto = 'failed' | 'suggestion' | 'uncommitted';
 
 export type OverviewSessionRow =
-  | { section: 'waiting'; session: Session; reason: OverviewWaitingReason }
+  /** `pr` is the blocked change request behind a `conflict` or `checks` reason, so the page can open it. */
+  | { section: 'waiting'; session: Session; reason: OverviewWaitingReason; pr: PrVisualSummary | null }
   | { section: 'running'; session: Session; activity: OverviewActivity }
   | { section: 'done'; session: Session; signal: OverviewDoneSignal }
   /** In work and idle, with no done signal or a veto against it. `stalled` once nothing happened for days. */
@@ -53,10 +54,10 @@ const sessionKind = (session: Session): string | null => kindSchema.safeParse(se
 
 // Orange means failed checks or a conflict (`prVisualStateOf`); a blocked PR
 // whose checks did not fail is one GitHub cannot merge.
-const blockedReason = (prs: readonly PrVisualSummary[]): 'checks' | 'conflict' | null => {
+const blockedReason = (prs: readonly PrVisualSummary[]): { reason: 'checks' | 'conflict'; pr: PrVisualSummary } | null => {
   const blocked = prs.find((pr) => pr.visualState === 'blocked');
   if (!blocked) return null;
-  return blocked.mergeableState !== 'dirty' && blocked.checks?.state === 'failure' ? 'checks' : 'conflict';
+  return { reason: blocked.mergeableState !== 'dirty' && blocked.checks?.state === 'failure' ? 'checks' : 'conflict', pr: blocked };
 };
 
 /**
@@ -102,19 +103,19 @@ export function classifyOverviewSession(
   // A `/btw` side question belongs to the session it was asked in.
   if (session.parentID || session.time.archived !== undefined || kind === 'btw') return null;
 
-  if (facts.blocking) return { section: 'waiting', session, reason: facts.blocking };
+  if (facts.blocking) return { section: 'waiting', session, reason: facts.blocking, pr: null };
   if (facts.activity) return { section: 'running', session, activity: facts.activity };
 
   const inWork = context.workEnabled && isSessionInWork(session);
   const followed = isOverviewFollowed(session, context);
   const unread = isSessionUnread(session);
   if (unread && session.outcome === 'failed' && (followed || kind === 'scheduled')) {
-    return { section: 'waiting', session, reason: 'error' };
+    return { section: 'waiting', session, reason: 'error', pr: null };
   }
   if (!followed) return null;
   const blocked = blockedReason(facts.prs);
-  if (blocked) return { section: 'waiting', session, reason: blocked };
-  if (unread) return { section: 'waiting', session, reason: 'finished' };
+  if (blocked) return { section: 'waiting', session, reason: blocked.reason, pr: blocked.pr };
+  if (unread) return { section: 'waiting', session, reason: 'finished', pr: null };
   if (!inWork) return null;
 
   const signal = doneSignalOf(facts);

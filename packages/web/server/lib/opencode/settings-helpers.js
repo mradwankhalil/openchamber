@@ -632,6 +632,9 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.tunnelMode === 'string') {
       result.tunnelMode = normalizeTunnelMode(candidate.tunnelMode);
     }
+    if (Number.isInteger(candidate.tunnelHttpsPort) && candidate.tunnelHttpsPort >= 1 && candidate.tunnelHttpsPort <= 65535) {
+      result.tunnelHttpsPort = candidate.tunnelHttpsPort;
+    }
     if (candidate.managedLocalTunnelConfigPath === null) {
       result.managedLocalTunnelConfigPath = null;
     } else if (typeof candidate.managedLocalTunnelConfigPath === 'string') {

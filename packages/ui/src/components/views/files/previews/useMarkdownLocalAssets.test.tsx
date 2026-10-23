@@ -62,6 +62,8 @@ describe('document Markdown asset integration', () => {
   });
   test('the Files and personal Plan caller contract resolves media before exposing a browser src', async () => {
     const dom = new Window({ url: 'https://app.test' });
+    // happy-dom's observer never reports, and a document image waits until it is near the view.
+    Object.defineProperty(dom, 'IntersectionObserver', { configurable: true, value: undefined });
     Object.assign(globalThis, { window: dom, document: dom.document, IS_REACT_ACT_ENVIRONMENT: true });
     configureRuntimeUrlResolver({ apiBaseUrl: 'https://runtime.test' });
     const originalFetch = globalThis.fetch;

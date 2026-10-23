@@ -1008,7 +1008,7 @@ interface UIStore {
   openLinksInBrowserPanel: boolean;
   /** How many of the user's browser tabs keep their page loaded, across projects (desktop only). */
   liveBrowserTabLimit: number;
-  /** Plain clicks on issue, PR and Linear links in chat open them on the issues and PRs board. */
+  /** Plain clicks on issue, PR and tracker item links in chat open them on the issues and PRs board. */
   openTrackerLinksOnBoard: boolean;
   autoDeleteAfterDays: number;
   sessionRetentionAction: SessionRetentionAction;
@@ -1177,7 +1177,7 @@ interface UIStore {
   openContextSurface: (directory: string, mode: ContextPanelMode) => void;
   openContextPanelTab: (directory: string, tab: ContextPanelTabDescriptor, options?: { reveal?: boolean }) => void;
   /**
-   * Opens an issue, pull or merge request or Linear issue in the panel's
+   * Opens an issue, pull or merge request or tracker item in the panel's
    * Tracker surface, one tab per item (`key` names the item, whatever page of
    * it the link opens). `targetDirectory` is the project it is read through.
    * Answers the tab's id.
@@ -1185,7 +1185,8 @@ interface UIStore {
   openTrackerItem: (directory: string, item: { url: string; key: string; label: string; targetDirectory: string | null }) => string | null;
   openContextDiff: (directory: string, filePath: string, staged?: boolean, scope?: PendingDiffScope | null) => void;
   /** `preview` opens it as the replaceable preview tab (a files-tree click). */
-  openContextFile: (directory: string, filePath: string, options?: { preview?: boolean }) => void;
+  /** `expanded` also spreads the file's zone over the chat. */
+  openContextFile: (directory: string, filePath: string, options?: { preview?: boolean; expanded?: boolean }) => void;
   /** Turns a preview file tab into a regular one. */
   pinContextPanelTab: (directory: string, tabID: string) => void;
   openContextFileAtLine: (directory: string, filePath: string, line: number, column?: number, options?: { preview?: boolean }) => void;
@@ -1745,9 +1746,11 @@ export const useUIStore = create<UIStore>()(
             return;
           }
 
-          // The file surface's entry point is its file tree: reopening it
-          // always lands on the tree even when it was last left toggled off.
-          if (mode === 'file' && !state.contextEditorTreeVisible) {
+          // A hidden tree stays hidden while a file is open, so the editor
+          // shows alone. With no file open the tree is all the surface has,
+          // and it comes back.
+          if (mode === 'file' && !state.contextEditorTreeVisible
+            && !tabs.some((tab) => tab.mode === 'file' && tab.targetPath)) {
             set({ contextEditorTreeVisible: true });
           }
 
@@ -1875,6 +1878,13 @@ export const useUIStore = create<UIStore>()(
           openFileTab(get(), normalizedDirectory, normalizedFilePath, options?.preview === true);
           get().setPendingFileFocusPath(normalizedFilePath);
           get().setPendingFileNavigation(null);
+          if (options?.expanded) {
+            const zone = zoneOfMode(get().contextSurfaceZones, 'file');
+            const panel = get().contextPanelByDirectory[normalizedDirectory];
+            if (panel && !getZoneView(panel, zone).expanded) {
+              get().toggleContextPanelExpanded(normalizedDirectory, zone);
+            }
+          }
         },
 
         openContextFileAtLine: (directory, filePath, line, column, options) => {

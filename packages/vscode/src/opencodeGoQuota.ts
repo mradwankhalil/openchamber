@@ -128,7 +128,31 @@ const parseConsoleUsage = (payload: OpenCodeGoConsoleStatus) => {
   return windows;
 };
 
+// An API key also opens the Console Go status, without `x-org-id`: the key
+// belongs to one workspace. Its meters carry the exact fraction the Console page
+// rounds, while the usage API reports a floored integer percent that sits up to
+// a point below the page. Best-effort: any failure returns null and the usage
+// API answers instead, so its error messages stay the API-key contract.
+const fetchConsoleUsageWithKey = async (apiKey: string) => {
+  try {
+    const response = await fetch(CONSOLE_STATUS_URL, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${apiKey}` },
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return null;
+    const parsed = consoleStatusSchema.safeParse(await response.json().catch(() => null));
+    if (!parsed.success || !parsed.data.product || !CONSOLE_PRODUCTS.has(parsed.data.product)) return null;
+    const windows = parseConsoleUsage(parsed.data);
+    return Object.keys(windows).length ? windows : null;
+  } catch {
+    return null;
+  }
+};
+
 const fetchApiKeyUsage = async (credential: OpenCodeGoApiKeyCredential) => {
+  const consoleWindows = await fetchConsoleUsageWithKey(credential.apiKey);
+  if (consoleWindows) return consoleWindows;
   const response = await fetch(API_KEY_USAGE_URL, { headers: { Accept: 'application/json', Authorization: `Bearer ${credential.apiKey}`, 'x-opencode-session': 'openchamber-usage' }, signal: AbortSignal.timeout(15_000) });
   // The usage API accepts any key of a Console workspace and answers 403 when
   // that workspace has no Go subscription, so for a Console key a 403 is an

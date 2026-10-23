@@ -1,6 +1,7 @@
 import React from 'react';
 import type { ToolPopupContent } from '../message/types';
 import { getRuntimeKey, subscribeRuntimeEndpointChanged, subscribeRuntimeEndpointWillChange } from '@/lib/runtime-switch';
+import { getRuntimeUrlResolver } from '@/lib/runtime-url';
 import { MarkdownMediaOwner, MediaContext, type MarkdownDocumentAssets } from './markdown-media-context';
 
 export type { MarkdownDocumentAssets } from './markdown-media-context';
@@ -29,6 +30,7 @@ export function MarkdownMediaProvider({
   const [transportRevision, advanceTransport] = React.useReducer((revision: number) => revision + 1, 0);
   React.useEffect(() => subscribeRuntimeEndpointChanged(() => advanceTransport()), []);
   const runtimeKey = getRuntimeKey();
+  const resolver = getRuntimeUrlResolver();
   const filePath = documentAssets?.filePath;
   const workspaceRoot = documentAssets?.workspaceRoot;
   // Color scheme and link callbacks can change without revoking loaded assets.
@@ -42,6 +44,7 @@ export function MarkdownMediaProvider({
     void ownerContent;
     void runtimeKey;
     void transportRevision;
+    void resolver;
     return new MarkdownMediaOwner({
       mode,
       directory,
@@ -49,20 +52,22 @@ export function MarkdownMediaProvider({
       messageId,
       documentAssets: filePath ? { filePath, workspaceRoot: workspaceRoot ?? null } : undefined,
     });
-  }, [ownerContent, mode, directory, sessionId, messageId, runtimeKey, transportRevision, filePath, workspaceRoot]);
-  React.useEffect(() => {
+  }, [ownerContent, mode, directory, sessionId, messageId, runtimeKey, transportRevision, resolver, filePath, workspaceRoot]);
+  React.useLayoutEffect(() => {
+    // A hidden provider misses endpoint events, including same-key renewal.
+    if (runtimeKey !== getRuntimeKey() || resolver !== getRuntimeUrlResolver()) {
+      owner.dispose();
+      advanceTransport();
+      return;
+    }
+    // Connect before child passive effects resolve sources on first mount or replay.
+    owner.connect();
     const unsubscribe = subscribeRuntimeEndpointWillChange(() => owner.dispose());
-    // StrictMode replays effects with the same memoized owner. Defer final
-    // disposal one microtask so that replay can reclaim it, while endpoint
-    // changes still abort synchronously before credentials are replaced.
-    const lease = owner.lease = Symbol();
     return () => {
       unsubscribe();
-      queueMicrotask(() => {
-        if (owner.lease === lease) owner.dispose();
-      });
+      owner.disconnect();
     };
-  }, [owner]);
+  }, [owner, resolver, runtimeKey]);
   const value = React.useMemo(
     () => ({ owner, mode, settled, documentAssets, onShowPopup }),
     [owner, mode, settled, documentAssets, onShowPopup],

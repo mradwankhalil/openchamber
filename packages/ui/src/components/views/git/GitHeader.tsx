@@ -21,7 +21,8 @@ import type {
   GitRemote,
   GitRemoteComparison,
   GitHubPullRequest,
-  GitHubChecksSummary,
+  PullRequestStack,
+  CISummary,
 } from '@/lib/api/types';
 import { useI18n } from '@/lib/i18n';
 import { identityDisplayName } from '@/lib/source-control/identity';
@@ -30,8 +31,10 @@ import { describeIdentityApplicability, type IdentityApplicability } from '@/lib
 import { useDeviceInfo } from '@/lib/device';
 import { useIsContributorWorktree } from '@/hooks/useIsContributorWorktree';
 import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
-import { formatChangeRequestReference, getSourceControlProviderLabel } from '@/lib/source-control/identity';
-import type { SourceControlProvider } from '@/lib/source-control/types';
+import { defaultSourceControlIdentities } from '@/lib/source-control/identity';
+import { formatChangeRequestLabel } from '@/lib/source-control/providers/terminology';
+import { useSourceControlDescriptorOf, useSourceControlProviderRegistry, useSourceControlProviders } from '@/lib/source-control/providers/registry';
+import { ProviderIcon } from '@/components/sourceControl/ProviderIcon';
 import { prVisualStateOf } from '@/lib/source-control/prVisualState';
 import { ContextPanelHeaderToolbar } from '@/components/layout/contextPanelHeaderSlot';
 import { useInContextPanelHeader } from '@/components/layout/contextPanelHeaderSlotContext';
@@ -80,8 +83,10 @@ interface GitHeaderProps {
   onOpenReintegrateCommits?: () => void;
   pullRequest?: GitHubPullRequest | null;
   /** Whose change request `pullRequest` is; GitLab's reads `!N` and "merge request". */
-  pullRequestProvider?: SourceControlProvider | null;
-  prChecks?: GitHubChecksSummary | null;
+  pullRequestProvider?: string | null;
+  prChecks?: CISummary | null;
+  /** The chain the branch's change is in, as its status names it (hosts that create changes by pushing for review). */
+  pullRequestStack?: PullRequestStack | null;
   onOpenPullRequest?: () => void;
   // Nested repository picker: shown when the Git tab's root is not a
   // repository, or is one with no commits yet, and has repositories nested
@@ -102,9 +107,6 @@ const IDENTITY_ICON_MAP: Record<string, IconName> = {
   heart: 'heart',
   user: 'user-3',
   fingerprint: 'fingerprint',
-  // Identities made from a connected account carry the provider's mark.
-  github: 'github',
-  gitlab: 'gitlab',
 };
 
 const IDENTITY_COLOR_MAP: Record<string, string> = {
@@ -132,12 +134,23 @@ interface IdentityIconProps {
 }
 
 const IdentityIcon: React.FC<IdentityIconProps> = ({ icon, className, colorToken }) => {
-  const iconName = IDENTITY_ICON_MAP[icon ?? 'branch'] ?? 'user-3';
+  // Identities made from a connected account carry the provider's mark: their icon key is the provider id.
+  const providers = useSourceControlProviderRegistry((state) => state.byId);
+  const iconName = IDENTITY_ICON_MAP[icon ?? 'branch'];
+  const provider = !iconName && icon ? providers.get(icon) : undefined;
+  const style = { color: getIdentityColor(colorToken) };
+  if (provider) {
+    return (
+      <span className="inline-flex shrink-0" style={style}>
+        <ProviderIcon descriptor={provider} className={className} />
+      </span>
+    );
+  }
   return (
     <Icon
-      name={iconName}
+      name={iconName ?? 'user-3'}
       className={className}
-      style={{ color: getIdentityColor(colorToken) }}
+      style={style}
     />
   );
 };
@@ -357,6 +370,7 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
   pullRequest,
   pullRequestProvider,
   prChecks,
+  pullRequestStack,
   onOpenPullRequest,
   repositoryOptions,
   selectedRepository,
@@ -368,6 +382,8 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
   const { isMobile } = useDeviceInfo();
   const choosesPushDestination = useIsContributorWorktree(directory);
   const knownIdentities = useSourceControlAuthStore((state) => state.identities);
+  const providers = useSourceControlProviders();
+  const descriptorOf = useSourceControlDescriptorOf();
   const panelToolbarRef = React.useRef<HTMLDivElement | null>(null);
   useToolbarFit(panelToolbarRef, GIT_PANEL_HEADER_FIT);
   if (!status) {
@@ -376,7 +392,9 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
 
   const repositoryOptionsForPicker = (repositoryOptions ?? []).filter(Boolean);
 
-  const repositoryLink = repositoryLinkFromRemotes(remotes, knownIdentities);
+  const repositoryLink = repositoryLinkFromRemotes(remotes, [...knownIdentities, ...defaultSourceControlIdentities(providers)], providers);
+  const repositoryDescriptor = repositoryLink ? descriptorOf(repositoryLink.provider) : null;
+  const pullRequestDescriptor = descriptorOf(pullRequestProvider);
   const hasRepositoryViewItems = Boolean(
     onOpenHistory || onOpenGraph || onOpenStashes || onOpenUpdateBranch || onOpenReintegrateCommits
   );
@@ -435,8 +453,8 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
               <>
                 {hasRepositoryViewItems ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem onSelect={() => { void openExternalUrl(repositoryLink.url); }}>
-                  <Icon name={repositoryLink.provider === 'gitlab' ? 'gitlab' : 'github'} className="size-4" />
-                  {t('gitView.header.openRepository', { provider: getSourceControlProviderLabel(repositoryLink.provider) })}
+                  {repositoryDescriptor ? <ProviderIcon descriptor={repositoryDescriptor} className="size-4" /> : null}
+                  {t('gitView.header.openRepository', { provider: repositoryDescriptor?.label ?? repositoryLink.provider })}
                 </DropdownMenuItem>
               </>
             ) : null}
@@ -464,6 +482,11 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
     })
     : null;
 
+  // Counted from the bottom, as the preview counts layers.
+  const stackPosition = pullRequest && pullRequestStack
+    ? pullRequestStack.layers.findIndex((layer) => layer.number === pullRequest.number) + 1
+    : 0;
+
   const prChip = pullRequest && onOpenPullRequest ? (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -478,7 +501,13 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
             className="size-3.5"
             style={{ color: `var(--pr-${prVisualState})` }}
           />
-          <span className="tabular-nums text-foreground/80">{pullRequestProvider === 'gitlab' ? formatChangeRequestReference('gitlab', pullRequest.number) : t('gitView.pr.numberLabel', { number: pullRequest.number })}</span>
+          <span className="tabular-nums text-foreground/80">{formatChangeRequestLabel(pullRequestDescriptor, pullRequest.number)}</span>
+          {pullRequestStack && stackPosition > 0 ? (
+            <span className="inline-flex items-center gap-0.5 tabular-nums text-muted-foreground">
+              <Icon name="stack" className="size-3" />
+              {t('stacks.preview.position', { position: stackPosition, size: pullRequestStack.layers.length })}
+            </span>
+          ) : null}
           {prChecksColor ? (
             <span
               aria-hidden="true"
@@ -488,7 +517,7 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
           ) : null}
         </Button>
       </TooltipTrigger>
-      <TooltipContent sideOffset={8}>{t(changeRequestCopy('gitView.header.openPullRequest', pullRequestProvider))}</TooltipContent>
+      <TooltipContent sideOffset={8}>{t(changeRequestCopy('gitView.header.openPullRequest', pullRequestDescriptor.terminology.changeRequest))}</TooltipContent>
     </Tooltip>
   ) : null;
 

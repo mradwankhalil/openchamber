@@ -1,3 +1,4 @@
+import { registerPlugin } from '@capacitor/core';
 import React from 'react';
 
 import { observeNativeKeyboardHeight, resetHardwareKeyboardDetection, startHardwareKeyboardBridge } from '@/lib/hardwareKeyboard';
@@ -13,15 +14,16 @@ export const isCapacitorMobileApp = (): boolean => {
   return window.location.protocol === 'capacitor:';
 };
 
+interface WindowLayoutPlugin {
+  get(): Promise<{ edgeToEdge: boolean }>;
+}
+
 /**
- * True on Android 14 and older, where the app (targetSdk 35) is not forced edge-to-edge
- * and StatusBar.setOverlaysWebView({ overlay: false }) really moves the WebView below the
- * status bar. Android WebView keeps the OS version in its user agent.
+ * Android only (WindowLayoutPlugin.java). The OS version comes from native code because
+ * hardened WebViews (GrapheneOS's Vanadium) report "Android 10" in the user agent on
+ * every release.
  */
-export const isAndroidBeforeEdgeToEdge = (userAgent = navigator.userAgent): boolean => {
-  const major = Number(/\bAndroid (\d+)/.exec(userAgent)?.[1]);
-  return Number.isInteger(major) && major < 15;
-};
+const WindowLayout = registerPlugin<WindowLayoutPlugin>('WindowLayout');
 
 export const useNativeMobileChrome = (): void => {
   React.useEffect(() => {
@@ -69,7 +71,8 @@ export const useNativeMobileChrome = (): void => {
           // Before Android 15 that call moves the WebView below the status bar natively, so
           // the page must not reserve the strip again. Marked only once the call succeeded:
           // until then the WebView still sits under the bar and needs the injected inset.
-          if (overlayOff && isAndroidBeforeEdgeToEdge()) {
+          const edgeToEdge = await WindowLayout.get().then(({ edgeToEdge }) => edgeToEdge, () => true);
+          if (overlayOff && !edgeToEdge) {
             root.classList.add('oc-android-below-status-bar');
           }
           await StatusBar.setBackgroundColor({ color: themeBg }).catch(() => undefined);

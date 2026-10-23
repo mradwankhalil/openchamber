@@ -1,16 +1,24 @@
 import { bundledLanguages, createHighlighterCore, createOnigurumaEngine, type GrammarState, type ThemedToken } from 'shiki';
 import { sanitizeTemplateCallGrammar } from '@/lib/shiki/sanitizeTemplateCallGrammar';
+import { highlightsTokens, resolveHighlights } from './highlightsEngine';
 import { MARKDOWN_SHIKI_THEME_DEFINITION } from './markdownShikiThemeDefinition';
 
 type Lineage = { language: string; source: string; tokens: ThemedToken[][]; state: GrammarState | undefined };
 
-/** Worker-local Oniguruma highlighter. Only complete lines retain grammar state. */
+/**
+ * Worker-local highlighter. Highlights tokenizes the languages it has a lexer
+ * for in one pass over the whole block, fast enough that a streaming fence
+ * needs no carried state. Other languages use Oniguruma, where only complete
+ * lines retain grammar state.
+ */
 export function createStreamdownHighlighter() {
   let pending: ReturnType<typeof createHighlighterCore> | undefined;
   let lineages: Lineage[] = [];
   const loaders = new Map(Object.entries(bundledLanguages));
 
   return async (code: string, language: string, fullPass = false): Promise<ThemedToken[][]> => {
+    const target = await resolveHighlights(language);
+    if (target) return highlightsTokens(target, code);
     pending ??= createHighlighterCore({
       themes: [MARKDOWN_SHIKI_THEME_DEFINITION], langs: [],
       engine: createOnigurumaEngine(import('shiki/wasm')),

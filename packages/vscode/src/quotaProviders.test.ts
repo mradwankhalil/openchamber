@@ -182,6 +182,60 @@ describe('OpenCode Go quota provider (VS Code parity)', () => {
     });
   });
 
+  // #5278: the usage API floors its percent, so 17.657% came back as 17 while
+  // the Console page showed 18.
+  test('reads the exact Console meters with an API key, without an organization', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    stubFetchReturning(async (url, init) => {
+      requests.push({ url, init });
+      return mockResponse({
+        product: 'go',
+        access: { meters: {
+          fiveHour: { resetsAt: '2026-08-12T12:00:00.000Z', limitMicroCents: '1000000', usedMicroCents: '43690' },
+          week: { resetsAt: '2026-08-19T12:00:00.000Z', limitMicroCents: '1000000', usedMicroCents: '176570' },
+          month: { resetsAt: '2026-09-01T00:00:00.000Z', limitMicroCents: '1000000', usedMicroCents: '268960' },
+        } },
+      });
+    });
+
+    const result = await fetchQuotaForProvider('opencode-go');
+
+    assert.deepEqual(requests.map((request) => request.url), ['https://opencode.ai/console/api/go/status']);
+    const headers = new Headers(requests[0]!.init?.headers);
+    assert.equal(headers.get('Authorization'), 'Bearer test-token');
+    assert.equal(headers.get('x-org-id'), null);
+    assert.equal(requests[0]!.init?.redirect, 'error');
+    assert.equal(result.ok, true);
+    assert.ok(Math.abs(result.usage!.windows['5h']!.usedPercent! - 4.369) < 1e-9);
+    assert.ok(Math.abs(result.usage!.windows.weekly!.usedPercent! - 17.657) < 1e-9);
+    assert.ok(Math.abs(result.usage!.windows.monthly!.usedPercent! - 26.896) < 1e-9);
+    assert.equal(result.usage!.windows.credits_balance, undefined);
+  });
+
+  test('falls back to the usage API when the Console status gives the key no Go meters', async () => {
+    const consoleAnswers: Array<() => Promise<Response>> = [
+      async () => mockResponse({}, { ok: false, status: 403 }),
+      async () => mockResponse({ product: null, access: { meters: {} } }),
+      async () => mockResponse({ product: 'go', access: { meters: {} } }),
+      async () => { throw new TypeError('fetch failed'); },
+    ];
+    for (const consoleAnswer of consoleAnswers) {
+      const requestedUrls: string[] = [];
+      stubFetchReturning(async (url) => {
+        requestedUrls.push(url);
+        return url === 'https://opencode.ai/console/api/go/status'
+          ? consoleAnswer()
+          : mockResponse({ usage: { rolling: { percent: 25, resetsAt: '2026-08-12T12:00:00.000Z' } } });
+      });
+
+      const result = await fetchQuotaForProvider('opencode-go');
+
+      assert.deepEqual(requestedUrls, ['https://opencode.ai/console/api/go/status', 'https://opencode.ai/zen/go/v1/usage']);
+      assert.equal(result.ok, true);
+      assert.equal(result.usage!.windows['5h']!.usedPercent, 25);
+    }
+  });
+
   test('keeps a 401 without the expired-key code an authentication failure', async () => {
     stubFetchReturning(async () => mockResponse({ error: { type: 'AuthError', message: 'Unauthorized' } }, { ok: false, status: 401 }));
     const result = await fetchQuotaForProvider('opencode-go');
@@ -343,8 +397,9 @@ describe('OpenCode Go quota provider — Console OAuth (VS Code parity)', () => 
     const result = await fetchQuotaForProvider('opencode-go');
 
     // The billing read starts alongside the Go status; its result is dropped
-    // when the Console read fails.
-    assert.deepEqual(requestedUrls, ['https://opencode.ai/console/api/billing/status', 'https://opencode.ai/console/api/go/status', 'https://opencode.ai/zen/go/v1/usage']);
+    // when the Console read fails. The key then tries the same Console status
+    // before the usage API.
+    assert.deepEqual(requestedUrls, ['https://opencode.ai/console/api/billing/status', 'https://opencode.ai/console/api/go/status', 'https://opencode.ai/console/api/go/status', 'https://opencode.ai/zen/go/v1/usage']);
     assert.equal(result.usage!.windows.credits_balance, undefined);
     assert.equal(result.ok, true);
     assert.equal(result.usage!.windows['5h']!.usedPercent, 10);

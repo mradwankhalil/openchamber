@@ -18,6 +18,7 @@ import {
   type OverviewActivity,
   type OverviewCleanupRow,
   type OverviewDoneSignal,
+  type OverviewSessionSections,
   type OverviewVeto,
   type OverviewWaitingReason,
   type OverviewWorktreeLosses,
@@ -29,6 +30,7 @@ import { cn } from '@/lib/utils';
 import { getWorktreeDisplayName } from '@/lib/worktrees/worktreeManager';
 import { resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { useUIStore } from '@/stores/useUIStore';
+import { useGlobalBlockingRequestsStore } from '@/sync/global-blocking-requests';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { markOverviewSessionsDone, removeOverviewWorktree, type OverviewRemoveOutcome, type OverviewWorktreeTarget } from './overviewActions';
 import { useOverviewData, useOverviewReviewRequests, type OverviewData, type OverviewWorktree } from './useOverviewData';
@@ -37,8 +39,9 @@ type Layout = 'page' | 'mobile';
 
 // The page speaks the sidebar's language: the same marks for a request, an
 // unread end and a running turn, and the title in bold where something waits
-// on the user. Colour stays on the marks and on the few notes that name a
-// problem; everything else is the page's text colour or muted.
+// on the user. Colour stays on the marks and on the notes that name a state;
+// everything else is the page's text colour or muted. Every row carries its
+// own action, since the page exists to act without opening each session.
 
 type Mark = { icon: IconName; color: string; tint?: boolean };
 
@@ -98,6 +101,8 @@ const LEFT_AS_IS_KEY = {
   changed: 'overview.toast.changed',
 } satisfies Record<Exclude<OverviewRemoveOutcome['kind'], 'removed' | 'failed'>, I18nKey>;
 
+type SectionId = 'waiting' | 'running' | 'done' | 'working' | 'cleanup';
+
 /** A row's leading mark, named in a tooltip; a tinted one sits on a fill of its colour, as the sidebar's request marks do. */
 const RowMark: React.FC<{ mark: Mark; label: string }> = ({ mark, label }) => (
   <RowMarkTooltip label={label}>
@@ -112,12 +117,12 @@ const RowMark: React.FC<{ mark: Mark; label: string }> = ({ mark, label }) => (
 );
 
 /**
- * One row in the sidebar's shape: a mark slot, the title, a short note, and on
- * the end the project and the time. While the row is hovered or focused the
- * actions take the end's place, so nothing moves; on touch they stay visible.
- * A recap, where there is a decision to make, is a second line under the
- * title. Opening is a button of its own over the text, so the actions beside
- * it stay buttons too.
+ * One row in the sidebar's shape: a mark slot, the title, the reason it is
+ * here beside it, then the project, the time and the row's actions at the
+ * end. The actions are on the row at rest, quiet until the row is hovered,
+ * so nothing moves and nothing has to be discovered. A second line under the
+ * title carries what helps decide: a recap, the question asked. Opening is a
+ * button of its own over the text, so the actions beside it stay buttons too.
  */
 const OverviewRow: React.FC<{
   layout: Layout;
@@ -125,13 +130,15 @@ const OverviewRow: React.FC<{
   title: string;
   /** Bold, as an unread row in the sidebar. */
   strong?: boolean;
+  /** Plain text title: a branch name, a count line. */
+  plain?: boolean;
   note?: string | null;
   noteColor?: string;
-  recap?: string | null;
+  sub?: string | null;
   end?: React.ReactNode;
   actions?: React.ReactNode;
   onOpen?: (event: React.MouseEvent) => void;
-}> = ({ layout, mark, title, strong, note, noteColor, recap, end, actions, onOpen }) => {
+}> = ({ layout, mark, title, strong, plain, note, noteColor, sub, end, actions, onOpen }) => {
   const touch = layout === 'mobile';
   const body = (
     <>
@@ -140,10 +147,10 @@ const OverviewRow: React.FC<{
         <span
           dir="auto"
           className={cn(
-            'min-w-0 shrink truncate oc-ui-start-align typography-ui-label',
+            'min-w-0 shrink truncate oc-ui-start-align typography-ui-label text-foreground',
             // The title carries the row: always full strength, bolder where
             // something waits on the user; everything around it is smaller and muted.
-            strong ? 'font-semibold text-foreground' : 'font-medium text-foreground',
+            strong ? 'font-semibold' : plain ? 'font-normal' : 'font-medium',
           )}
         >
           {title}
@@ -152,31 +159,23 @@ const OverviewRow: React.FC<{
           <span className="shrink-0 whitespace-nowrap typography-micro text-muted-foreground/80" style={noteColor ? { color: noteColor } : undefined}>{note}</span>
         ) : null}
       </span>
-      {recap ? <span dir="auto" title={recap} className="truncate oc-ui-start-align ps-6 typography-micro text-muted-foreground/80">{recap}</span> : null}
+      {sub ? <span dir="auto" title={sub} className="truncate oc-ui-start-align ps-6 typography-micro text-muted-foreground/80">{sub}</span> : null}
     </>
   );
   const bodyClass = 'flex min-w-0 flex-1 flex-col gap-0.5 text-start';
   return (
-    <div className="group flex min-w-0 items-start gap-4 rounded-lg px-2 py-2">
+    <div className="group flex min-w-0 items-center gap-4 rounded-lg px-2 py-1.5">
       {onOpen ? (
         <button type="button" onClick={onOpen} className={cn(bodyClass, 'cursor-pointer focus-visible:outline-none')}>{body}</button>
       ) : (
         <div className={bodyClass}>{body}</div>
       )}
-      {touch ? (
-        actions ? <span className="flex min-h-6 shrink-0 items-center gap-1">{actions}</span> : <span className="flex min-h-6 shrink-0 items-center gap-3 typography-micro tabular-nums text-muted-foreground">{end}</span>
-      ) : (
-        <span className="grid min-h-6 shrink-0 items-center justify-items-end">
-          <span className={cn('flex items-center gap-3 [grid-area:1/1] whitespace-nowrap typography-micro tabular-nums text-muted-foreground', actions && 'group-hover:opacity-0 group-has-[:focus-visible]:opacity-0')}>
-            {end}
-          </span>
-          {actions ? (
-            <span className="pointer-events-none flex items-center gap-1 opacity-0 [grid-area:1/1] group-hover:pointer-events-auto group-hover:opacity-100 group-has-[:focus-visible]:pointer-events-auto group-has-[:focus-visible]:opacity-100">
-              {actions}
-            </span>
-          ) : null}
+      {end ? <span className="flex min-h-6 shrink-0 items-center gap-3 whitespace-nowrap typography-micro tabular-nums text-muted-foreground">{end}</span> : null}
+      {actions ? (
+        <span className={cn('flex min-h-6 shrink-0 items-center gap-1', !touch && 'opacity-70 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100')}>
+          {actions}
         </span>
-      )}
+      ) : null}
     </div>
   );
 };
@@ -191,43 +190,28 @@ const ProjectLabel: React.FC<{ label: string; color: string | null }> = ({ label
 
 /**
  * A section: its name, count and action, then its rows. Sections are told
- * apart by space and a hairline above, not by fills. A folded section opens
- * from its name.
+ * apart by space and a hairline above, not by fills.
  */
-const Section: React.FC<{
+const Section = React.forwardRef<HTMLElement, {
   label: string;
   count: string;
   hint?: string;
   action?: React.ReactNode;
   divider?: boolean;
-  folded?: { open: boolean; onToggle: () => void };
   children: React.ReactNode;
-}> = ({ label, count, hint, action, divider = true, folded, children }) => {
-  const heading = (
-    <>
+}>(({ label, count, hint, action, divider = true, children }, ref) => (
+  <section ref={ref} className={cn('flex min-w-0 scroll-mt-4 flex-col gap-0.5', divider && 'border-t border-border/50 pt-5')}>
+    <div className="mb-0.5 flex min-h-7 items-center gap-2 px-2">
       <span className="typography-ui-label font-medium text-foreground">{label}</span>
       <span className="typography-ui-label tabular-nums text-muted-foreground">{count}</span>
       {hint ? <span className="min-w-0 truncate typography-micro text-muted-foreground">{hint}</span> : null}
-    </>
-  );
-  const open = folded ? folded.open : true;
-  return (
-    <section className={cn('flex min-w-0 flex-col gap-1', divider && 'border-t border-border/50 pt-5')}>
-      <div className="flex min-h-7 items-center gap-2 px-2">
-        {folded ? (
-          <button type="button" onClick={folded.onToggle} aria-expanded={folded.open} className="flex min-w-0 flex-1 items-center gap-2 text-start">
-            <Icon name="arrow-right-s" className={cn('size-4 shrink-0 text-muted-foreground transition-transform', folded.open && 'rotate-90 rtl:-rotate-90')} />
-            {heading}
-          </button>
-        ) : (
-          <span className="flex min-w-0 flex-1 items-center gap-2">{heading}</span>
-        )}
-        {open ? action : null}
-      </div>
-      {open ? <div className="flex flex-col">{children}</div> : null}
-    </section>
-  );
-};
+      <span className="flex-1" />
+      {action}
+    </div>
+    <div className="flex flex-col">{children}</div>
+  </section>
+));
+Section.displayName = 'OverviewSection';
 
 type BulkItem = { key: string; title: string; reason: string };
 
@@ -315,19 +299,39 @@ const removalTarget = (data: OverviewData, session: Session): OverviewWorktree |
   return othersInWork ? null : entry;
 };
 
+type WorkingRow = OverviewSessionSections['working'][number];
+
+/** The in-work sessions of one project: the recent ones first, then the stalled ones. */
+type ProjectGroup = { label: string; color: string | null; rows: WorkingRow[]; stalled: number };
+
+const groupByProject = (data: OverviewData, sections: OverviewSessionSections): ProjectGroup[] => {
+  const groups = new Map<string, ProjectGroup>();
+  for (const row of [...sections.working, ...sections.stalled]) {
+    const project = data.projectOf(row.session);
+    let group = groups.get(project.label);
+    if (!group) {
+      group = { label: project.label, color: project.color, rows: [], stalled: 0 };
+      groups.set(project.label, group);
+    }
+    group.rows.push(row);
+    if (row.stalled) group.stalled += 1;
+  }
+  return [...groups.values()].sort((left, right) => right.rows.length - left.rows.length);
+};
 
 export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () => void }): React.ReactNode {
   const { t } = useI18n();
   const data = useOverviewData();
   const reviews = useOverviewReviewRequests();
+  const blockingBySession = useGlobalBlockingRequestsStore((state) => state.bySession);
   const openTrackerItem = useOpenTrackerItem();
   const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const { ask, dialog: bulkDialog } = useBulkConfirm();
   const [pending, setPending] = React.useState<ReadonlySet<string>>(new Set());
   const [reviewsOpen, setReviewsOpen] = React.useState(false);
-  const [stalledOpen, setStalledOpen] = React.useState(false);
-  const [cleanupOpen, setCleanupOpen] = React.useState(false);
+  const [openProjects, setOpenProjects] = React.useState<ReadonlySet<string>>(new Set());
+  const sectionRefs = React.useRef(new Map<SectionId, HTMLElement>());
   const { sections } = data;
   const mobile = layout === 'mobile';
 
@@ -346,6 +350,11 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
 
   const titleOf = React.useCallback((session: Session) => session.title || t('sessions.sidebar.session.untitled'), [t]);
   const recapOf = (session: Session) => getCurrentSessionAssist(session)?.recap || null;
+  // The question or form a session waits on, named under its title when it has one.
+  const askedOf = (session: Session): string | null => {
+    const requests = blockingBySession.get(session.id);
+    return requests?.forms[0]?.title || requests?.pages[0]?.title || null;
+  };
 
   // The project is named only when the page spans more than one: with one,
   // the same name on every row says nothing.
@@ -353,11 +362,11 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
     ...sections.waiting, ...sections.running, ...sections.done, ...sections.working, ...sections.stalled,
   ].map((row) => row.session);
   const manyProjects = new Set(listedSessions.map((session) => data.projectOf(session).label)).size > 1;
-  const endOf = (session: Session, time: React.ReactNode = formatSessionCompactDateLabel(session.time.updated)) => {
-    const project = data.projectOf(session);
+  const endOf = (session: Session, time: React.ReactNode = formatSessionCompactDateLabel(session.time.updated), project = manyProjects) => {
+    const entry = data.projectOf(session);
     return (
       <>
-        {manyProjects ? <ProjectLabel label={project.label} color={project.color} /> : null}
+        {project ? <ProjectLabel label={entry.label} color={entry.color} /> : null}
         <span>{time}</span>
       </>
     );
@@ -418,16 +427,20 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
     return count === 1 ? t('overview.action.removeHintOne', { name }) : t('overview.action.removeHintMany', { name, count });
   };
 
+  const openButton = (session: Session, label = t('overview.action.open')) => (
+    <Button size="xs" variant="ghost" onClick={() => openSession(session)}>{label}</Button>
+  );
+
   const doneButton = (session: Session) => (
-    <Button size="xs" variant="outline" disabled={pending.has(session.id)} onClick={() => void markDone([session])}>
+    <Button size="xs" variant="ghost" disabled={pending.has(session.id)} onClick={() => void markDone([session])}>
       {t('overview.action.done')}
     </Button>
   );
 
-  const removeButton = (target: OverviewWorktreeTarget, onClick: () => void) => (
+  const removeButton = (target: OverviewWorktreeTarget, onClick: () => void, variant: 'outline' | 'ghost' = 'outline') => (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button size="xs" variant="outline" disabled={pending.has(target.worktree.path)} onClick={onClick}>
+        <Button size="xs" variant={variant} disabled={pending.has(target.worktree.path)} onClick={onClick}>
           {t('overview.action.remove')}
         </Button>
       </TooltipTrigger>
@@ -470,13 +483,6 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
     data.refreshGit();
   };
 
-  const waitingCount = sections.waiting.length;
-  const summary: string[] = [];
-  if (waitingCount > 0) summary.push(waitingCount === 1 ? t('overview.summary.waitingOne') : t('overview.summary.waitingMany', { count: waitingCount }));
-  if (sections.running.length > 0) summary.push(sections.running.length === 1 ? t('overview.summary.runningOne') : t('overview.summary.runningMany', { count: sections.running.length }));
-  if (sections.done.length > 0) summary.push(sections.done.length === 1 ? t('overview.summary.doneOne') : t('overview.summary.doneMany', { count: sections.done.length }));
-  if (summary.length === 0) summary.push(t('overview.summary.calm'));
-
   if (!data.ready) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground typography-ui-label">
@@ -485,33 +491,73 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
     );
   }
 
+  const waitingCount = sections.waiting.length;
+  const workingCount = sections.working.length + sections.stalled.length;
+  const groups = groupByProject(data, sections);
+  const groupOpen = (group: ProjectGroup) => groups.length === 1 || openProjects.has(group.label);
+  const toggleGroup = (label: string) => setOpenProjects((current) => {
+    const next = new Set(current);
+    if (!next.delete(label)) next.add(label);
+    return next;
+  });
+
+  // The line of counts at the top: the same facts as the sections, readable in
+  // one glance, each a jump to its section. Nothing counted is hidden below.
+  type CountEntry = { id: SectionId; count: number; one: I18nKey; many: I18nKey; color: string };
+  const counts = ([
+    { id: 'waiting', count: waitingCount, one: 'overview.count.waitingOne', many: 'overview.count.waitingMany', color: 'var(--status-error)' },
+    { id: 'running', count: sections.running.length, one: 'overview.count.runningOne', many: 'overview.count.runningMany', color: 'var(--status-info)' },
+    { id: 'done', count: sections.done.length, one: 'overview.count.doneOne', many: 'overview.count.doneMany', color: 'var(--pr-merged)' },
+    { id: 'working', count: workingCount, one: 'overview.count.workingOne', many: 'overview.count.workingMany', color: 'var(--muted-foreground)' },
+    { id: 'cleanup', count: data.cleanup.length, one: 'overview.count.cleanupOne', many: 'overview.count.cleanupMany', color: 'var(--muted-foreground)' },
+  ] satisfies CountEntry[]).filter((entry) => entry.count > 0);
+  const jumpTo = (id: SectionId) => sectionRefs.current.get(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  const sectionRef = (id: SectionId) => (node: HTMLElement | null) => {
+    if (node) sectionRefs.current.set(id, node);
+    else sectionRefs.current.delete(id);
+  };
+
   // Each section draws a hairline above it, except the first one shown.
   const shown: React.ReactNode[] = [];
   const add = (render: (divider: boolean) => React.ReactNode) => shown.push(render(shown.length > 0));
 
   if (waitingCount > 0 || reviews.items.length > 0) add((divider) => (
-    <Section key="waiting" divider={divider} label={t('overview.section.waiting')} count={String(waitingCount)}>
-      {sections.waiting.map((row) => (
-        <OverviewRow
-          key={row.session.id}
-          layout={layout}
-          mark={row.reason === 'finished'
-            ? <SessionActivityIndicator state="unread" tooltip />
-            : <RowMark mark={WAITING_MARK[row.reason]} label={t(WAITING_KEY[row.reason])} />}
-          strong
-          title={titleOf(row.session)}
-          note={NAMED_WAITING.has(row.reason) ? t(WAITING_KEY[row.reason]) : null}
-          noteColor={row.reason === 'permission' || row.reason === 'question' ? undefined : WAITING_MARK[row.reason].color}
-          recap={row.reason === 'finished' ? recapOf(row.session) : null}
-          end={endOf(row.session)}
-          onOpen={() => openSession(row.session)}
-        />
-      ))}
+    <Section key="waiting" ref={sectionRef('waiting')} divider={divider} label={t('overview.section.waiting')} count={String(waitingCount)}>
+      {sections.waiting.map((row) => {
+        const asks = row.reason === 'permission' || row.reason === 'question';
+        return (
+          <OverviewRow
+            key={row.session.id}
+            layout={layout}
+            mark={row.reason === 'finished'
+              ? <SessionActivityIndicator state="unread" tooltip />
+              : <RowMark mark={WAITING_MARK[row.reason]} label={t(WAITING_KEY[row.reason])} />}
+            strong
+            title={titleOf(row.session)}
+            note={NAMED_WAITING.has(row.reason) ? t(WAITING_KEY[row.reason]) : null}
+            noteColor={asks ? undefined : WAITING_MARK[row.reason].color}
+            sub={row.reason === 'question' ? askedOf(row.session) : row.reason === 'finished' ? recapOf(row.session) : null}
+            end={endOf(row.session)}
+            actions={(
+              <>
+                {row.pr?.url ? (
+                  <Button size="xs" variant="ghost" onClick={(event) => openTrackerItem(row.pr?.url ?? '', resolveGlobalSessionDirectory(row.session), event)}>
+                    {t('overview.action.openPr')}
+                  </Button>
+                ) : null}
+                {openButton(row.session, asks ? t('overview.action.answer') : undefined)}
+              </>
+            )}
+            onOpen={() => openSession(row.session)}
+          />
+        );
+      })}
       {reviews.items.length > 0 ? (
         <>
           <OverviewRow
             layout={layout}
             mark={<Icon name="git-pull-request" className="size-3 text-muted-foreground" />}
+            plain
             title={t('overview.reviews.summary', { count: reviews.hasMore ? `${reviews.items.length}+` : String(reviews.items.length) })}
             end={<Icon name="arrow-right-s" className={cn('size-4 transition-transform', reviewsOpen && 'rotate-90 rtl:-rotate-90')} />}
             onOpen={() => setReviewsOpen((value) => !value)}
@@ -530,9 +576,27 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
     </Section>
   ));
 
+  if (sections.running.length > 0) add((divider) => (
+    <Section key="running" ref={sectionRef('running')} divider={divider} label={t('overview.section.running')} count={String(sections.running.length)}>
+      {sections.running.map((row) => (
+        <OverviewRow
+          key={row.session.id}
+          layout={layout}
+          mark={<SessionActivityIndicator state={row.activity} tooltip />}
+          title={titleOf(row.session)}
+          note={t(ACTIVITY_KEY[row.activity])}
+          end={endOf(row.session, <SessionActivityDuration sessionId={row.session.id} running />)}
+          actions={openButton(row.session)}
+          onOpen={() => openSession(row.session)}
+        />
+      ))}
+    </Section>
+  ));
+
   if (sections.done.length > 0) add((divider) => (
     <Section
       key="done"
+      ref={sectionRef('done')}
       divider={divider}
       label={t('overview.section.done')}
       count={String(sections.done.length)}
@@ -549,7 +613,8 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
             mark={<RowMark mark={SIGNAL_MARK[row.signal]} label={t(SIGNAL_KEY[row.signal])} />}
             title={titleOf(row.session)}
             note={t(SIGNAL_KEY[row.signal])}
-            recap={recapOf(row.session)}
+            noteColor={SIGNAL_MARK[row.signal].color}
+            sub={recapOf(row.session)}
             end={endOf(row.session)}
             actions={(
               <>
@@ -564,47 +629,57 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
     </Section>
   ));
 
-  const workingRow = (row: OverviewData['sections']['working'][number]) => (
+  const workingRow = (row: WorkingRow, project: boolean) => (
     <OverviewRow
       key={row.session.id}
       layout={layout}
       title={titleOf(row.session)}
-      note={row.veto ? t(VETO_KEY[row.veto]) : null}
+      plain
+      note={row.veto ? t(VETO_KEY[row.veto]) : row.stalled ? t('overview.row.stalled') : null}
       noteColor={row.veto ? 'var(--status-warning)' : undefined}
-      end={endOf(row.session)}
+      end={endOf(row.session, undefined, project)}
       actions={doneButton(row.session)}
       onOpen={() => openSession(row.session)}
     />
   );
 
-  if (sections.working.length > 0) add((divider) => (
-    <Section key="working" divider={divider} label={t('overview.section.working')} count={String(sections.working.length)}>
-      {sections.working.map((row) => workingRow(row))}
-    </Section>
-  ));
-
-  if (sections.stalled.length > 0) add((divider) => (
-    <Section
-      key="stalled"
-      divider={divider}
-      label={t('overview.section.stalled')}
-      count={String(sections.stalled.length)}
-      hint={t('overview.section.stalledHint')}
-      folded={{ open: stalledOpen, onToggle: () => setStalledOpen((value) => !value) }}
-    >
-      {sections.stalled.map((row) => workingRow(row))}
+  // In work is context, not a task: one line per project with its counts,
+  // the sessions underneath when opened. One project lists them straight away.
+  if (workingCount > 0) add((divider) => (
+    <Section key="working" ref={sectionRef('working')} divider={divider} label={t('overview.section.working')} count={String(workingCount)}>
+      {groups.map((group) => {
+        const open = groupOpen(group);
+        const stats = [
+          group.rows.length === 1 ? t('overview.count.workingOne') : t('overview.count.workingMany', { count: group.rows.length }),
+          ...(group.stalled > 0 ? [group.stalled === 1 ? t('overview.count.stalledOne') : t('overview.count.stalledMany', { count: group.stalled })] : []),
+        ];
+        return (
+          <div key={group.label} className="flex flex-col">
+            {groups.length > 1 ? (
+              <OverviewRow
+                layout={layout}
+                mark={<Icon name="arrow-right-s" className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-90 rtl:-rotate-90')} />}
+                title={group.label}
+                end={<span className="flex items-center gap-3">{stats.map((stat) => <span key={stat}>{stat}</span>)}</span>}
+                onOpen={() => toggleGroup(group.label)}
+              />
+            ) : null}
+            {open ? <div className={cn('flex flex-col', groups.length > 1 && 'ps-6')}>{group.rows.map((row) => workingRow(row, false))}</div> : null}
+          </div>
+        );
+      })}
     </Section>
   ));
 
   if (data.cleanup.length > 0) add((divider) => (
     <Section
       key="cleanup"
+      ref={sectionRef('cleanup')}
       divider={divider}
       label={t('overview.section.cleanup')}
       count={String(data.cleanup.length)}
-      folded={{ open: cleanupOpen, onToggle: () => setCleanupOpen((value) => !value) }}
       action={safeCleanup.length > 1 ? (
-        <Button size="xs" variant="outline" onClick={() => void bulkRemove()}>{t('overview.action.removeAll')}</Button>
+        <Button size="xs" variant="outline" onClick={() => void bulkRemove()}>{t('overview.action.removeAllCount', { count: safeCleanup.length })}</Button>
       ) : null}
     >
       {data.cleanup.map((row) => {
@@ -614,11 +689,12 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
             key={row.facts.worktree.path}
             layout={layout}
             mark={<Icon name="git-branch" className="size-3 text-muted-foreground" />}
+            plain
             title={worktreeName(row.facts)}
             note={cleanupReason(row)}
-            noteColor={safe ? undefined : 'var(--status-warning)'}
+            noteColor={safe ? (row.kind === 'merged' ? 'var(--pr-merged)' : undefined) : 'var(--status-warning)'}
             end={row.facts.project.path.split('/').pop()}
-            actions={removeButton(row.facts, () => void (safe ? removeWorktree(row.facts, row.losses) : removeWithLosses(row)))}
+            actions={removeButton(row.facts, () => void (safe ? removeWorktree(row.facts, row.losses) : removeWithLosses(row)), 'ghost')}
           />
         );
       })}
@@ -627,31 +703,21 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
 
   return (
     <div className="h-full overflow-y-auto" style={mobile ? { paddingBottom: 'calc(1rem + var(--oc-safe-area-bottom, 0px))' } : undefined}>
-      <div className={cn('mx-auto flex w-full flex-col', mobile ? 'gap-5 px-2 pt-4' : 'max-w-[58rem] gap-6 px-8 py-10')}>
-        <div className="flex flex-col gap-3 px-2">
-          <p className="text-[1.25rem] font-medium leading-snug text-foreground">
-            {summary.map((sentence, index) => (
-              <span key={sentence} className={index > 0 ? 'text-muted-foreground' : undefined}>{index > 0 ? ' ' : ''}{sentence}</span>
-            ))}
-          </p>
-          {sections.running.length > 0 ? (
-            // What runs is glanced at, not worked through: a line of chips under the summary.
-            <div className="flex flex-wrap gap-1.5">
-              {sections.running.map((row) => (
-                <button
-                  key={row.session.id}
-                  type="button"
-                  onClick={() => openSession(row.session)}
-                  title={t(ACTIVITY_KEY[row.activity])}
-                  className="oc-tile-inset inline-flex max-w-72 items-center gap-1.5 rounded-full px-2.5 py-1 typography-micro text-foreground/85 hover:text-foreground"
-                >
-                  <SessionActivityIndicator state={row.activity} />
-                  <span dir="auto" className="truncate">{titleOf(row.session)}</span>
-                  <SessionActivityDuration sessionId={row.session.id} running className="text-muted-foreground" />
-                </button>
-              ))}
-            </div>
-          ) : null}
+      <div className={cn('mx-auto flex w-full flex-col', mobile ? 'gap-5 px-2 pt-4' : 'max-w-[52rem] gap-6 px-8 py-8')}>
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-2">
+          {counts.length === 0 ? (
+            <span className="typography-ui-label text-foreground">{t('overview.count.calm')}</span>
+          ) : counts.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={() => jumpTo(entry.id)}
+              className="inline-flex items-center gap-1.5 typography-ui-label text-foreground/80 hover:text-foreground"
+            >
+              <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
+              <span className="tabular-nums">{entry.count === 1 ? t(entry.one) : t(entry.many, { count: entry.count })}</span>
+            </button>
+          ))}
         </div>
         {shown}
       </div>

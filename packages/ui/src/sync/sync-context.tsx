@@ -108,6 +108,7 @@ import { setHostTurnStartRequester } from "./session-activity-timing"
 import { applyBackgroundShellEvents, directoriesWithRunningShells, refreshBackgroundShells } from "./background-shells"
 import {
   CHAT_LOCATION_RELEASE_DELAY_MS,
+  PROJECT_LOCATION_RELEASE_DELAY_MS,
   WORKTREE_LOCATION_RELEASE_DELAY_MS,
   createRealLocationRelease,
   directoryUse,
@@ -633,6 +634,9 @@ const showPluginNotificationToast = (kind?: string, title?: string, body?: strin
 const isUiFocused = (): boolean => (
   typeof document !== "undefined" && document.visibilityState === "visible" && document.hasFocus()
 )
+
+/** A window that is hidden or unfocused; without a document nobody can be away. */
+const isUiAway = (): boolean => "document" in globalThis && !isUiFocused()
 
 /**
  * OpenChamber's own notification frame: the agent-completion notice for
@@ -1757,6 +1761,7 @@ const MCP_STATUS_REFRESH_DEBOUNCE_MS = 250
 const mcpStatusRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function scheduleMcpStatusRefresh(directory: string): void {
+  if (dormantLocations.has(directory)) return
   const pending = mcpStatusRefreshTimers.get(directory)
   if (pending) clearTimeout(pending)
   mcpStatusRefreshTimers.set(directory, setTimeout(() => {
@@ -1765,11 +1770,38 @@ function scheduleMcpStatusRefresh(directory: string): void {
   }, MCP_STATUS_REFRESH_DEBOUNCE_MS))
 }
 
-function forgetMcpStatus(directory: string): void {
+function cancelMcpStatusRefresh(directory: string): void {
   const pending = mcpStatusRefreshTimers.get(directory)
   if (pending) clearTimeout(pending)
   mcpStatusRefreshTimers.delete(directory)
+}
+
+function forgetMcpStatus(directory: string): void {
+  cancelMcpStatusRefresh(directory)
   useMcpStore.getState().forgetDirectory(directory)
+}
+
+/**
+ * Directories on screen whose location OpenCode shut down while the window was
+ * hidden or unfocused. Their bootstrap waits for the user to come back: an app
+ * left open overnight would otherwise restart the directory and all its MCP
+ * servers every hour, right after each idle shutdown. Their MCP status is not
+ * re-read meanwhile, for the same reason.
+ */
+const dormantLocations = new Set<string>()
+
+export function wakeDormantLocations(childStores: ChildStoreManager, currentDirectory: string | null | undefined): void {
+  for (const directory of dormantLocations) {
+    if (directory !== currentDirectory) {
+      forgetMcpStatus(directory)
+      continue
+    }
+    if (childStores.getChild(directory)) {
+      childStores.requestBootstrap({ directory, priority: "selected", reason: "location-shutdown", force: true })
+    }
+    void useMcpStore.getState().refreshIfHeld(directory)
+  }
+  dormantLocations.clear()
 }
 
 // Only top-level sessions raise notifications. The directory store knows the
@@ -2011,13 +2043,21 @@ export function handleEvent(
   // they are re-read when selected or on the next reconnect. Their MCP status
   // is forgotten: the servers it describes are gone, and the status changes
   // OpenCode announces while stopping them would otherwise re-read the
-  // directory and start it again moments after it was released.
+  // directory and start it again moments after it was released. With the window
+  // hidden or unfocused, the directory on screen waits for the user to return
+  // (`dormantLocations`).
   if (payload.type === "location.shutdown") {
     if (!directory || directory === "global" || expectedRuntimeKey !== getRuntimeKey()) return
     if (directory !== opencodeClient.getDirectory()) {
       forgetMcpStatus(directory)
       return
     }
+    if (isUiAway()) {
+      dormantLocations.add(directory)
+      cancelMcpStatusRefresh(directory)
+      return
+    }
+    dormantLocations.delete(directory)
     if (childStores.getChild(directory)) {
       childStores.requestBootstrap({ directory, priority: "selected", reason: "location-shutdown", force: true })
     }
@@ -2742,7 +2782,7 @@ export function SyncProvider(props: {
         if (isWorktreeDirectory(directory, useSessionUIStore.getState().availableWorktreesByProject)) {
           return WORKTREE_LOCATION_RELEASE_DELAY_MS
         }
-        return null
+        return PROJECT_LOCATION_RELEASE_DELAY_MS
       },
       isCurrentDirectory: (directory) => directory === currentDirectoryRef.current,
       directoryUse: (directory) => isDirectoryExternallyViewed(directory)
@@ -2840,6 +2880,19 @@ export function SyncProvider(props: {
 
     window.addEventListener("openchamber:system-resume", onSystemResume)
     return () => window.removeEventListener("openchamber:system-resume", onSystemResume)
+  }, [childStores])
+
+  useEffect(() => {
+    const onReturn = () => {
+      if (dormantLocations.size > 0 && isUiFocused()) wakeDormantLocations(childStores, currentDirectoryRef.current)
+    }
+    window.addEventListener("focus", onReturn)
+    document.addEventListener("visibilitychange", onReturn)
+    return () => {
+      window.removeEventListener("focus", onReturn)
+      document.removeEventListener("visibilitychange", onReturn)
+      dormantLocations.clear()
+    }
   }, [childStores])
 
   // Configure child store manager

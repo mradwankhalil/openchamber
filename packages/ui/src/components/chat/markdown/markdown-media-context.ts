@@ -30,14 +30,19 @@ type MediaOwner = {
 };
 
 export class MarkdownMediaOwner {
-  readonly controller = new AbortController();
-  lease = Symbol();
+  controller = new AbortController();
+  private disposed = false;
   private sources = new Map<string, number>();
   private batch: Promise<Map<string, PreparedMarkdownImage>> | undefined;
   private refreshing: Promise<Map<string, PreparedMarkdownImage>> | undefined;
   private documentUrls = new Map<string, Promise<string>>();
   private runtimeKey = getRuntimeKey();
+  private resolver = getRuntimeUrlResolver();
   constructor(readonly options: MediaOwner) {}
+
+  connect(): void {
+    if (!this.disposed && this.controller.signal.aborted) this.controller = new AbortController();
+  }
 
   register(source: string): () => void {
     this.sources.set(source, (this.sources.get(source) ?? 0) + 1);
@@ -47,15 +52,17 @@ export class MarkdownMediaOwner {
     };
   }
 
-  private check(): void {
-    if (this.controller.signal.aborted || this.runtimeKey !== getRuntimeKey()) throw new DOMException('Media owner changed', 'AbortError');
+  private check(signal: AbortSignal): void {
+    if (signal.aborted || this.disposed || this.runtimeKey !== getRuntimeKey() || this.resolver !== getRuntimeUrlResolver()) throw new DOMException('Media owner changed', 'AbortError');
   }
 
   async resolve(source: string, video = false, refresh = false): Promise<string> {
-    this.check();
+    const signal = this.controller.signal;
+    this.check(signal);
     const { mode, directory, sessionId, messageId, documentAssets } = this.options;
     if (mode === 'assistant') {
       await Promise.resolve();
+      this.check(signal);
       if (![...this.sources.keys()].slice(0, 12).includes(source)) throw new Error('Message media limit');
     }
     const remote = /^(?:https?:)?\/\//i.test(source);
@@ -63,7 +70,7 @@ export class MarkdownMediaOwner {
       if (mode !== 'document' && !video) throw new Error('Remote chat image');
       return source;
     }
-    if (/^data:/i.test(source)) return resolveMarkdownImageSource(source, this.controller.signal);
+    if (/^data:/i.test(source)) return resolveMarkdownImageSource(source, signal);
     if (mode === 'document') {
       if (!documentAssets) return source;
       if (!isMarkdownDocumentReference(source)) throw new Error('Document source is unavailable');
@@ -73,17 +80,17 @@ export class MarkdownMediaOwner {
       if (video) {
         if (isVSCodeRuntime()) throw new Error('Video bridge is unavailable');
         await refreshRuntimeUrlAuthToken();
-        this.check();
+        this.check(signal);
         return getRuntimeUrlResolver().authenticatedAsset('/api/fs/raw', query);
       }
       const cached = this.documentUrls.get(path);
       if (cached) return cached;
       const pending = (async () => {
-        const response = await runtimeFetch('/api/fs/raw', { query, signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(30_000)]) });
+        const response = await runtimeFetch('/api/fs/raw', { query, signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
         if (!response.ok) throw new Error(`Image read failed (${response.status})`);
         const blob = await response.blob();
         if (blob.size > 25 * 1024 * 1024) throw new Error('Image too large for preview');
-        this.check();
+        this.check(signal);
         return URL.createObjectURL(blob);
       })();
       this.documentUrls.set(path, pending);
@@ -94,20 +101,21 @@ export class MarkdownMediaOwner {
     if (mode === 'local') return source;
     if (isVSCodeRuntime()) {
       if (video) throw new Error('Video bridge is unavailable');
-      const url = await resolveWorkspaceMarkdownImageSource(source, directory, this.controller.signal);
-      this.check();
+      const url = await resolveWorkspaceMarkdownImageSource(source, directory, signal);
+      this.check(signal);
       return url;
     }
     if (!sessionId || !messageId) throw new Error('Missing media owner');
     // All owned nodes register in effects before the first viewport callback or
     // microtask requests the batch. Embedded images count toward the same cap.
     await Promise.resolve();
+    this.check(signal);
     const sources = [...this.sources.keys()].slice(0, 12);
     if (!sources.includes(source)) throw new Error('Message media limit');
     if (!this.batch || refresh) {
       if (refresh && this.refreshing) this.batch = this.refreshing;
       else {
-        this.batch = prepareLocalMarkdownImages({ sources: sources.filter(isLocalMarkdownImageSource), directory, sessionId, messageId, signal: this.controller.signal });
+        this.batch = prepareLocalMarkdownImages({ sources: sources.filter(isLocalMarkdownImageSource), directory, sessionId, messageId, signal });
         if (refresh) {
           const pending = this.batch;
           this.refreshing = pending;
@@ -116,9 +124,10 @@ export class MarkdownMediaOwner {
       }
     }
     const prepared = (await this.batch).get(source);
+    this.check(signal);
     if (prepared?.status !== 'ready') throw new Error('Image is unavailable');
     await refreshRuntimeUrlAuthToken();
-    this.check();
+    this.check(signal);
     return getPreparedMarkdownImageUrl(prepared, directory);
   }
 
@@ -131,11 +140,13 @@ export class MarkdownMediaOwner {
   }
 
   async openGallery(element: HTMLElement, show: (content: ToolPopupContent) => void): Promise<void> {
+    const signal = this.controller.signal;
+    this.check(signal);
     const key = `${this.runtimeKey}\0${this.options.sessionId ?? ''}\0${this.options.messageId ?? ''}`;
     const entries = [...galleries.get(key) ?? []].filter((entry) => entry.element.isConnected)
       .sort((a, b) => a.element.compareDocumentPosition(b.element) & 4 ? -1 : 1);
     const results = await Promise.allSettled(entries.map((entry) => entry.resolve()));
-    this.check();
+    this.check(signal);
     const gallery = entries.flatMap((entry, index) => {
       const result = results[index];
       return result?.status === 'fulfilled' ? [{ url: result.value, filename: entry.filename, element: entry.element }] : [];
@@ -146,11 +157,17 @@ export class MarkdownMediaOwner {
     show({ open: true, title: current.filename, content: '', metadata: { tool: 'markdown-image-preview', filename: current.filename }, image: { url: current.url, filename: current.filename, gallery: gallery.map(({ url, filename }) => ({ url, filename })), index } });
   }
 
-  dispose(): void {
+  disconnect(): void {
     this.controller.abort();
     for (const pending of this.documentUrls.values()) void pending.then((url) => URL.revokeObjectURL(url), () => {});
     this.documentUrls.clear();
     this.batch = undefined;
+    this.refreshing = undefined;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.disconnect();
   }
 }
 

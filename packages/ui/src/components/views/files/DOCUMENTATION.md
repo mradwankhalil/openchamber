@@ -250,6 +250,22 @@ files view. Fragment links find a heading within the Markdown root. A source's
 `prefers-color-scheme` condition follows the app theme through its rendered
 `media` prop. Content, file and runtime changes retire older asset results.
 
+A document image is read once it comes within one height of the preview's
+scroller of its visible part (`useNearMedia` with the nearest ancestor that
+scrolls vertically as root; a table that scrolls sideways does not count). A `<picture>` is watched as a whole, since its sources have
+no box, and a source whose `media` does not hold, the other theme's for one,
+is read only once it does. The candidates of one `srcset` are all read when
+their image is near.
+
+### Why a document image waits until it is near the view
+
+The preview read every image when it opened: a README with 100 screenshots of
+2.8 MB read 280 MB and grew the browser by about 600 MB while two pictures
+were on screen (#5320). The observer's root is the preview's scroller, because
+a margin on the viewport is clipped by that scroller and an image would start
+loading only once already visible. Read files stay until the preview closes:
+releasing one far away would collapse its height and move the text being read.
+
 ### Why document assets resolve before node updates
 
 Media and link components own their resources and cleanup. Rewriting the

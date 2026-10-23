@@ -22,7 +22,9 @@ left to build are in `ADR.md` beside this file.
 The page reads; it never owns state. In work is `lib/sessionWorkMetadata.ts`,
 unread is `sync/session-unread.ts`, branch PRs live in the shared
 `useGitHubPrStatusStore` (the page asks for its worktree branches under the
-sidebar's keys), linked items are `useTrackedItemsStore`.
+sidebar's keys), linked items are `useTrackedItemsStore`, read through the
+sidebar's one repository-thread path (`getLinkedSidebarChanges`,
+`getLinkedSidebarIssues` with `useRepositoryUrlMatcher()`).
 
 ## Invariants
 
@@ -116,25 +118,44 @@ rows on the maintainer's own screen). That is the board's catalogue, not
 something waiting on the user. "Waiting on you" shows one line with the count,
 read from one page of the search ("30+" past it), which opens into the list.
 
-### Why one wide column in the sidebar's language
+### Why one column of rows that each carry their action
 
 The page speaks the sidebar's language: the same marks for a request, an
 unread end and a running turn, bold titles where something waits, the time at
-the row's end. Sections are told apart by space and a hairline, not fills.
-What runs is a line of chips under the summary, since it is glanced at, not
-worked through. The project is named only when the page spans more than one.
-The title carries each row at full strength (medium, semibold where something
-waits); everything around it is smaller and muted, and a recap is one line
-with the full text on hover. Stalled rows carry no recap: two-line recaps on
-every row made the titles hard to pick out.
+the row's end. Sections are told apart by space and a hairline, not fills. The
+project is named only when the page spans more than one.
+
+Every row carries its own actions at rest (quiet, full on hover), since the
+page exists to act without opening each session; hidden-until-hover actions
+were never found. The reason a row is listed sits beside its title in the
+colour of its state, so the state is readable without the 12px mark. A second
+line under the title carries only what helps decide: a recap on a done row,
+the question asked on a waiting one.
+
+The top is one line of counts, each a jump to its section, in place of a
+sentence: the same facts, scannable, and nothing counted is hidden below.
+
+What runs is a section of rows with the activity mark and the turn timer: the
+running sessions are what the user comes back to check, and the chips under the
+summary were glanced past.
+
+In work is grouped by project, one row per project with its counts, the
+sessions underneath when opened (a single project lists them straight away).
+Twelve flat titles read as the sidebar again. Stalled sessions sit last in
+their project with a note instead of a section of their own. Clean up is open
+by default with the bulk action in its header; a folded section at the bottom
+was never opened.
 
 Rejected on the maintainer's screen: a 640px column (thin, every section one
-grey list), then a main column with a rail and tinted section tiles (fills too
-loud, the rail truncated every stalled title, a project chip and a text badge
-on every row ran together).
+grey list), a main column with a rail and tinted section tiles (fills too loud,
+the rail truncated every stalled title), then a 58rem column with a summary
+sentence, hover-only actions, a flat In work list and folded Stalled and Clean
+up sections (too simple per row, too much as a whole).
 
-### Why review requests are GitHub only
+### Why review requests come from one provider
 
-They come from one search across the GitHub repositories of the registered
-projects (`useGitHubAcrossReferenceList`), which does not ask GitLab. GitLab
-projects join when that search covers them.
+They come from one search across the registered projects
+(`useRepositoryAcrossReferenceList`), which asks a single provider: the first
+in registry order whose descriptor has `features.referencesAcross`. Only
+GitHub has it today, so projects on GitLab, Gitea or Gerrit are left out until their
+provider offers that search.

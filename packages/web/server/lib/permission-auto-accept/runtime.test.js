@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createPermissionAutoAcceptRuntime } from './runtime.js';
 
-const createRuntime = ({ stored, fetchImpl, retryDelaysMs = [0], evaluatePermission, onPermissionReplied, resolveLegacyEnabledMode, broadcastGlobalUiEvent } = {}) => {
+const createRuntime = ({ stored, fetchImpl, retryDelaysMs = [0], evaluatePermission, onPermissionReplied, resolveLegacyEnabledMode, broadcastGlobalUiEvent, beforePersist } = {}) => {
   let settings = stored ?? { permissionAutoAccept: { sessions: {} } };
   let eventHandler;
   let statusHandler;
@@ -13,7 +13,10 @@ const createRuntime = ({ stored, fetchImpl, retryDelaysMs = [0], evaluatePermiss
     buildOpenCodeUrl: (path) => `http://opencode.test${path}`,
     getOpenCodeAuthHeaders: () => ({}),
     readSettingsFromDiskMigrated: async () => settings,
-    persistSettings: async (changes) => { settings = { ...settings, ...changes }; },
+    persistSettings: async (changes) => {
+      await beforePersist?.(changes);
+      settings = { ...settings, ...changes };
+    },
     fetchImpl: fetchImpl ?? vi.fn(async () => new Response('[]')),
     retryDelaysMs,
     evaluatePermission,
@@ -97,6 +100,23 @@ describe('permission auto-accept runtime', () => {
     emit({ type: 'session.created', properties: { info: { id: 'root' } } });
     await flush();
     await expect(runtime.resolveSessionMode('root', '/project')).resolves.toBe('ask');
+  });
+
+  it('saves the next mode change after one failed to persist', async () => {
+    let failNext = true;
+    const { runtime, getSettings } = createRuntime({
+      beforePersist: async () => {
+        if (!failNext) return;
+        failNext = false;
+        throw new Error('ENOSPC: no space left on device, write');
+      },
+    });
+
+    await expect(runtime.setSessionPolicy('root', 'auto')).rejects.toThrow('ENOSPC');
+    expect((await runtime.load()).modes).toEqual({});
+
+    await expect(runtime.setSessionPolicy('root', 'safety')).resolves.toMatchObject({ modes: { root: 'safety' }, revision: 1 });
+    expect(getSettings().permissionAutoAccept).toEqual({ sessions: { root: 'safety' }, revision: 1 });
   });
 
   it('increments the authoritative policy revision', async () => {

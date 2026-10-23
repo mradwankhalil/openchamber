@@ -10,12 +10,9 @@
 # Usage:
 #   nix run .#update-hashes
 #       Re-bake both hashes at the currently locked state (bun.lock, and the
-#       opencode input revision recorded in flake.lock).
-#   nix run .#update-hashes -- --opencode-tag <tag>
-#       Additionally move the opencode flake input to <tag>, re-lock, and
-#       bake its node_modules hash. Keep the tag in sync with
-#       packages/electron/package.json (opencodeCli.version), which the
-#       build-time assertion enforces.
+#       opencode input revision recorded in flake.lock). The opencode
+#       input first moves to the tag packages/electron pins
+#       (opencodeCli.version), which the flake's eval-time assertion enforces.
 #
 # Mechanism: a build-produced fixed-output derivation can only be hashed by
 # building it. Each hash is swapped for a sentinel (fakeSha256), the build
@@ -96,17 +93,11 @@ rehash() {
 
 FAKE_SENTINEL="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
-# ─── 1. bun dependencies (openchamber bun.lock) ───────────────
-
 bun_file="nix/hashes.json"
-bun_current=$(grep -oP '"bunDeps": "\Ksha256-[A-Za-z0-9+/=]+(?=")' "$bun_file" | head -1)
-log "bun-deps: current hash $bun_current"
-# Build the FOD itself (via its passthru), not the packages that consume it:
-# the hash check happens in the derivation, so the sdk/web builds and the
-# server assembly add nothing to the bake.
-rehash "$bun_file" "$bun_current" ".#openchamber.bunDeps" "bun-deps" "openchamber-bun-deps"
 
-# ─── 2. opencode CLI node_modules (upstream flake at the pin) ──
+# ─── 1. opencode CLI node_modules (upstream flake at the pin) ──
+#
+# Runs first so every later bake build evaluates a synced pin pair.
 
 # The version source of truth is packages/electron's opencodeCli pin:
 # this script follows it, it does not bump it. Bumping the pin (together
@@ -114,13 +105,8 @@ rehash "$bun_file" "$bun_current" ".#openchamber.bunDeps" "bun-deps" "openchambe
 cli_version=$(grep -A1 '"opencodeCli"' packages/electron/package.json | grep -oP '"version":\s*"\K[^"]+' | head -1)
 [[ -n "$cli_version" ]] || { echo "error: cannot read opencodeCli.version from packages/electron/package.json" >&2; exit 1; }
 
-if [[ "${1:-}" == "--opencode-tag" ]]; then
-  tag="${2:?--opencode-tag needs a value}"
-  log "opencode: explicit tag override $tag (packages/electron pins $cli_version)"
-else
-  # Upstream tags are v-prefixed; the pin in packages/electron is not.
-  tag="v$cli_version"
-fi
+# Upstream tags are v-prefixed; the pin in packages/electron is not.
+tag="v$cli_version"
 
 current_tag=$(grep -oP 'github:anomalyco/opencode/\K[v0-9.]+' flake.nix | head -1)
 if [[ "$current_tag" != "$tag" ]]; then
@@ -134,5 +120,14 @@ fi
 cli_hash=$(opencode_hash "$bun_file")
 log "opencode-cli: current hash $cli_hash"
 rehash "$bun_file" "$cli_hash" ".#opencode-cli.node_modules" "opencode-cli" "opencode-node_modules"
+
+# ─── 2. bun dependencies (openchamber bun.lock) ───────────────
+
+bun_current=$(grep -oP '"bunDeps": "\Ksha256-[A-Za-z0-9+/=]+(?=")' "$bun_file" | head -1)
+log "bun-deps: current hash $bun_current"
+# Build the FOD itself (via its passthru), not the packages that consume it:
+# the hash check happens in the derivation, so the sdk/web builds and the
+# server assembly add nothing to the bake.
+rehash "$bun_file" "$bun_current" ".#openchamber.bunDeps" "bun-deps" "openchamber-bun-deps"
 
 log "done — commit nix/hashes.json (and flake.lock when the tag moved)"

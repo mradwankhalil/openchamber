@@ -170,7 +170,7 @@ environment:
 - Odczytywanie na głos przez OpenAI jest wyłączone. Własny serwer syntezy mowy lub transkrypcji musi działać na tej samej maszynie. Lokalne głosy i lokalne modele dyktowania działają dalej.
 - Powiadomienia push na telefony i do przeglądarek niosą tylko ogólny tytuł, taki jak "Agent response is ready", bez treści wiadomości i nazwy sesji. Powiadomienia na desktopie zostają na Twojej maszynie i zachowują pełny tekst.
 - Sprawdzanie aktualizacji działa dalej, więc poprawki bezpieczeństwa nadal do Ciebie trafiają, ale nigdy nie raportuje użycia, nawet anonimowego identyfikatora instalacji.
-- [Zewnętrzne tunele](/pl/tunnels/) (Cloudflare, ngrok) są wyłączone. Dostawca tunelu odszyfrowuje ruch na swoim brzegu sieci i widzi każde żądanie otwartym tekstem.
+- [Zewnętrzne tunele](/pl/tunnels/) (Cloudflare, ngrok, Tailscale) są wyłączone. Cloudflare i ngrok odszyfrowują ruch na swoim brzegu sieci i widzą każde żądanie otwartym tekstem; Tailscale Serve i Funnel otwierają ten komputer dla innych urządzeń.
 - Diagramy `.drawio` otwierają się jako tekst XML. Edytor diagramów to strona diagrams.net, a otwarcie w nim diagramu przekazuje jej plik.
 - Katalog integracji na pasku bocznym jest ukryty. Instaluje on zewnętrzne usługi z listy dostarczanej razem z OpenChamber. Dodawanie serwerów MCP, wtyczek i skilli w ustawieniach działa jak dotąd.
 - Czcionki interfejsu i kodu ładowane z publicznego CDN są zastępowane czcionkami systemowymi. Twój wybór zostaje zachowany na czas, gdy tryb będzie wyłączony.

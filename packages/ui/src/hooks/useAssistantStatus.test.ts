@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { AssistantMessage, Metadata, Part, StructuredError, SyntheticMessage, ToolState, UserMessage } from '@/lib/opencode/model';
+import type { AssistantMessage, Metadata, Part, StructuredError, SyntheticMessage, ToolInput, ToolState, UserMessage } from '@/lib/opencode/model';
 
 import { createParsedStatus, getActiveAssistantContext, hasBackgroundableWork, limitResetsAt } from './useAssistantStatus';
 
@@ -224,6 +224,87 @@ describe('createParsedStatus', () => {
     test('shows the newest kind when different tools run together', () => {
         expect(statusOf([tool('1', 'read'), tool('2', 'shell')]).statusText).toBe('running a command');
         expect(statusOf([tool('1', 'shell'), tool('2', 'read')]).statusText).toBe('reading a file');
+    });
+
+    describe('OpenChamber tools', () => {
+        const call = (name: string, input: ToolInput, status: 'running' | 'pending' = 'running'): Part => ({
+            id: '1',
+            sessionID: 'ses_1',
+            messageID: 'msg_1',
+            type: 'tool',
+            callID: 'call_1',
+            tool: name,
+            state: status === 'running'
+                ? { status: 'running', input, time: { start: 1 } }
+                : { status: 'pending', input, raw: '' },
+        });
+        const script = (toolCalls: Metadata[]): Part => ({
+            id: '1',
+            sessionID: 'ses_1',
+            messageID: 'msg_1',
+            type: 'tool',
+            callID: 'call_1',
+            tool: 'execute',
+            state: { status: 'running', input: {}, time: { start: 1 }, metadata: { toolCalls } },
+        });
+
+        test('say what the action does instead of the tool name', () => {
+            expect(statusOf([call('openchamber_web', { action: 'browser.snapshot', parameters: {} })]).statusText).toBe('reading a page');
+            expect(statusOf([call('openchamber_memory', { action: 'memory.save', parameters: { title: 'x' } })]).statusText).toBe('saving to memory');
+            expect(statusOf([call('openchamber', { action: 'session.create' })]).statusText).toBe('starting a session');
+            expect(statusOf([call('openchamber_notify', { title: 'Done' })]).statusText).toBe('sending a notification');
+        });
+
+        test('fall back to the tool phrase for an action without its own', () => {
+            expect(statusOf([call('openchamber_web', { action: 'browser.click' })]).statusText).toBe('using the browser');
+            expect(statusOf([call('openchamber_knowledge', {})]).statusText).toBe('checking project knowledge');
+        });
+
+        test('a page that waits for the answer says so once it shows', () => {
+            const input = { action: 'render.page', parameters: { html: '<p>a</p>', awaitAnswer: true } };
+            expect(statusOf([call('openchamber_render', input, 'pending')]).statusText).toBe('drawing a page');
+            expect(statusOf([call('openchamber_render', input)]).statusText).toBe('waiting for your answer');
+        });
+
+        test('read the same from inside a Code Mode script', () => {
+            expect(statusOf([script([
+                { tool: 'openchamber_web', status: 'completed', input: { action: 'browser.open' } },
+                { tool: 'openchamber_memory', status: 'running', input: { action: 'memory.read' } },
+            ])]).statusText).toBe('checking memory');
+        });
+    });
+
+    describe('tools outside the built-ins', () => {
+        const script = (tool: string): Part => ({
+            id: '1',
+            sessionID: 'ses_1',
+            messageID: 'msg_1',
+            type: 'tool',
+            callID: 'call_1',
+            tool: 'execute',
+            state: { status: 'running', input: {}, time: { start: 1 }, metadata: { toolCalls: [{ tool, status: 'running' }] } },
+        });
+        const servers = ['linear', 'claude_in_chrome', 'claude', 'my.server'];
+        const statusWith = (parts: Part[]) => createParsedStatus(parts, 'ses_1:msg_1', servers).statusText;
+
+        test('the opencode namespace says what OpenCode does to itself', () => {
+            expect(statusWith([script('opencode_session_rename')])).toBe('renaming the session');
+            expect(statusWith([script('opencode_worktree_list')])).toBe('checking worktrees');
+            expect(statusWith([script('opencode_read_mcp_resource')])).toBe('reading an MCP resource');
+            expect(statusWith([tool('1', 'opencode.models')])).toBe('looking up models');
+        });
+
+        test('an MCP tool names its integration, the longest server name first', () => {
+            expect(statusWith([script('linear_list_issues')])).toBe('using linear');
+            expect(statusWith([tool('1', 'linear_get_document')])).toBe('using linear');
+            expect(statusWith([script('claude_in_chrome_navigate')])).toBe('using claude in chrome');
+            expect(statusWith([script('my_server_query')])).toBe('using my.server');
+        });
+
+        test('a tool no server claims reads as words', () => {
+            expect(statusOf([script('linear_list_issues')]).statusText).toBe('using linear list issues');
+            expect(statusOf([tool('1', 'jev-route')]).statusText).toBe('using jev route');
+        });
     });
 });
 

@@ -71,6 +71,23 @@ describe('core-routes', () => {
     await request(app).get('/api/diagnostics/local-files').set('x-openchamber-relay-connection', 'conn-1').expect(403);
     expect(requireAuth).not.toHaveBeenCalled();
   });
+
+  it('serves the OpenCode load under the same local-only gate', async () => {
+    const app = express();
+    const readOpenCodeLoad = vi.fn(async () => ({ locations: 2, processes: null }));
+    registerServerStatusRoutes(app, {
+      express,
+      getHealthSnapshot: () => ({}),
+      gracefulShutdown: vi.fn(),
+      tunnelAuthController: { classifyRequestScope: () => 'local' },
+      uiAuthController: { requireAuth: (_req, _res, next) => next() },
+      readOpenCodeLoad,
+    });
+    await request(app).get('/api/diagnostics/opencode-load').set('x-openchamber-relay-connection', 'conn-1').expect(403);
+    expect(readOpenCodeLoad).not.toHaveBeenCalled();
+    const response = await request(app).get('/api/diagnostics/opencode-load').expect(200);
+    expect(response.body).toEqual({ locations: 2, processes: null });
+  });
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -344,7 +361,7 @@ describe('core-routes', () => {
     }
   });
 
-  it('lets only GET html-preview file reads past API auth; the grant in the path is checked by the fs route', async () => {
+  it('lets only GET html-preview and extension-frame file reads past API auth; the grant in the path is checked by the owning route', async () => {
     const app = express();
     const requireAuth = vi.fn((_req, res) => res.status(401).json({ error: 'Unauthorized' }));
     registerAuthAndAccessRoutes(app, {
@@ -375,12 +392,20 @@ describe('core-routes', () => {
     app.get(/^\/api\/fs\/preview\/.+$/, (_req, res) => res.json({ reached: true }));
     app.post('/api/fs/preview', (_req, res) => res.json({ reached: true }));
     app.get('/api/fs/read', (_req, res) => res.json({ reached: true }));
+    app.get(/^\/api\/guest-files\/.+$/, (_req, res) => res.json({ reached: true }));
+    app.post(/^\/api\/guest-files\/.+$/, (_req, res) => res.json({ reached: true }));
+    app.post('/api/guests/panel/frame-grant', (_req, res) => res.json({ reached: true }));
 
     await request(app).get('/api/fs/preview/grant-1/repo/index.html').expect(200, { reached: true });
     await request(app).post('/api/fs/preview').send({ path: '/repo/index.html' }).expect(401);
     await request(app).get('/api/fs/preview/grant-1').expect(401);
     await request(app).get('/api/fs/read?path=/repo/index.html').expect(401);
-    expect(requireAuth).toHaveBeenCalledTimes(3);
+    // An extension frame reads its package by the grant in its path, and nothing more.
+    await request(app).get('/api/guest-files/grant-1/index.html').expect(200, { reached: true });
+    await request(app).get('/api/guest-files/grant-1').expect(401);
+    await request(app).post('/api/guest-files/grant-1/index.html').expect(401);
+    await request(app).post('/api/guests/panel/frame-grant').expect(401);
+    expect(requireAuth).toHaveBeenCalledTimes(6);
   });
 
   it('should probe loopback preview URLs and return ok: true for status codes 200-599', async () => {
@@ -1024,6 +1049,28 @@ describe('client auth routes', () => {
       .expect(200, { enabled: true, hasPasskeys: true, passkeyCount: 1, rpID: 'example.com' });
 
     expect(dependencies.uiAuthController.handlePasskeyStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not trust a local Host header that a tunnel forwarded for a remote client', () => {
+    const tunnelAuthController = createTunnelAuth();
+    tunnelAuthController.setActiveTunnel({ tunnelId: 'tunnel-1', publicUrl: 'https://box.tail1234.ts.net' });
+    // Tailscale routes by SNI, keeps the client's Host and connects from loopback.
+    const throughTailscale = (host, forwardedFor) => tunnelAuthController.classifyRequestScope({
+      headers: { host, 'x-forwarded-for': forwardedFor },
+      socket: { remoteAddress: '127.0.0.1' },
+    });
+
+    expect(throughTailscale('localhost', '203.0.113.10')).toBe('unknown-public');
+    expect(throughTailscale('192.168.1.5', 'fd7a:115c:a1e0::1234')).toBe('unknown-public');
+    expect(throughTailscale('box.tail1234.ts.net', '203.0.113.10')).toBe('tunnel');
+    expect(throughTailscale('localhost', '127.0.0.1')).toBe('local');
+  });
+
+  it('keeps a forwarded local request local while no tunnel is active', () => {
+    expect(createTunnelAuth().classifyRequestScope({
+      headers: { host: 'localhost', 'x-forwarded-for': '203.0.113.10' },
+      socket: { remoteAddress: '127.0.0.1' },
+    })).toBe('local');
   });
 
   it('does not trust a private Host header from a public socket peer', () => {

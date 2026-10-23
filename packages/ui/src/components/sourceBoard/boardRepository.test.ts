@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
-import { choiceForFocus, folderOfRepository, repositoryLabel, resolveBoardRepository, resolvePullLinkTarget, shouldRememberAll } from './boardRepository';
+import { choiceForFocus, folderOfRepository, repositoryLabel, resolveBoardRepository, resolveBoardTab, resolvePullLinkTarget, shouldRememberAll } from './boardRepository';
 import { repositoryUrlOfItemLink } from './openTrackerItem';
+import { githubLikeDescriptor, gitlabLikeDescriptor } from '@/lib/source-control/providers/descriptor.fixture';
+import { createRepositoryUrlMatcher } from '@/lib/source-control/repositoryUrlMatcher';
+
+const descriptors = [githubLikeDescriptor(), gitlabLikeDescriptor()];
+const urls = createRepositoryUrlMatcher(descriptors, []);
 
 const ROOT = '/work';
 const REPOS = ['/work/app', '/work/api'];
@@ -120,18 +125,18 @@ describe('folderOfRepository', () => {
       { directory: '/work/fork', remotes: [remote('origin', 'git@github.com:me/api.git'), remote('upstream', 'https://github.com/acme/api.git')] },
       { directory: '/work/api', remotes: [remote('origin', 'https://github.com/Acme/API')] },
     ];
-    expect(folderOfRepository(API, folders, github)).toBe('/work/api');
-    expect(folderOfRepository(API, folders.slice(0, 1), github)).toBe('/work/fork');
+    expect(folderOfRepository(API, folders, github, descriptors)).toBe('/work/api');
+    expect(folderOfRepository(API, folders.slice(0, 1), github, descriptors)).toBe('/work/fork');
   });
 
   test('waits on a folder still being read unless an origin already answers', () => {
     const reading = { directory: '/work/app', remotes: null };
-    expect(folderOfRepository(API, [reading, { directory: '/work/fork', remotes: [remote('upstream', 'https://github.com/acme/api.git')] }], github)).toBeNull();
-    expect(folderOfRepository(API, [reading, { directory: '/work/api', remotes: [remote('origin', 'https://github.com/acme/api.git')] }], github)).toBe('/work/api');
+    expect(folderOfRepository(API, [reading, { directory: '/work/fork', remotes: [remote('upstream', 'https://github.com/acme/api.git')] }], github, descriptors)).toBeNull();
+    expect(folderOfRepository(API, [reading, { directory: '/work/api', remotes: [remote('origin', 'https://github.com/acme/api.git')] }], github, descriptors)).toBe('/work/api');
   });
 
   test('answers none when no remote is the repository', () => {
-    expect(folderOfRepository(API, [{ directory: '/work/app', remotes: [remote('origin', 'https://github.com/acme/app.git')] }, { directory: '/work/x', remotes: [] }], github)).toBe('none');
+    expect(folderOfRepository(API, [{ directory: '/work/app', remotes: [remote('origin', 'https://github.com/acme/app.git')] }, { directory: '/work/x', remotes: [] }], github, descriptors)).toBe('none');
   });
 });
 
@@ -171,8 +176,53 @@ describe('a link focus on a project', () => {
 
 describe('repositoryUrlOfItemLink', () => {
   test('names the repository a GitHub or GitLab link points into', () => {
-    expect(repositoryUrlOfItemLink('https://github.com/Acme/API/pull/12/files')).toBe('https://github.com/acme/api');
-    expect(repositoryUrlOfItemLink('https://gitlab.example.com/group/sub/repo/-/merge_requests/7')).toBe('https://gitlab.example.com/group/sub/repo');
-    expect(repositoryUrlOfItemLink('#12')).toBeNull();
+    expect(repositoryUrlOfItemLink('https://github.com/Acme/API/pull/12/files', urls)).toBe('https://github.com/acme/api');
+    expect(repositoryUrlOfItemLink('https://gitlab.example.com/group/sub/repo/-/merge_requests/7', urls)).toBe('https://gitlab.example.com/group/sub/repo');
+    expect(repositoryUrlOfItemLink('#12', urls)).toBeNull();
+  });
+});
+
+describe('resolveBoardTab', () => {
+  const tab = (overrides: Partial<Parameters<typeof resolveBoardTab>[0]>) => resolveBoardTab({
+    chosen: 'repository', hasRepository: false, repositoryStatus: 'ready', trackers: { connected: [], pending: false }, ...overrides,
+  });
+  const linear = { connected: ['linear'], pending: false };
+
+  test('shows the repository tab when the project has one', () => {
+    expect(tab({ hasRepository: true })).toBe('repository');
+    expect(tab({ hasRepository: true, trackers: linear })).toBe('repository');
+    expect(tab({ hasRepository: true, trackers: { connected: [], pending: true } })).toBe('repository');
+  });
+
+  test('keeps a chosen tracker while it is connected', () => {
+    expect(tab({ chosen: 'tracker:linear', hasRepository: true, trackers: linear })).toBe('tracker:linear');
+    expect(tab({ chosen: 'tracker:linear', trackers: linear })).toBe('tracker:linear');
+    expect(tab({ chosen: 'tracker:linear', hasRepository: true })).toBe('repository');
+    expect(tab({ chosen: 'tracker:jira', trackers: linear })).toBe('tracker:linear');
+  });
+
+  test('waits for a chosen tracker whose status is still out instead of flashing the repository', () => {
+    expect(tab({ chosen: 'tracker:linear', hasRepository: true, trackers: { connected: [], pending: true } })).toBeNull();
+  });
+
+  test('a project on an unrecognized host turns to a connected tracker, else to the no-source note', () => {
+    expect(tab({ trackers: linear })).toBe('tracker:linear');
+    expect(tab({ trackers: { connected: ['jira', 'linear'], pending: false } })).toBe('tracker:jira');
+    expect(tab({})).toBeNull();
+    expect(tab({ repositoryStatus: 'failed' })).toBeNull();
+    expect(tab({ repositoryStatus: 'failed', trackers: linear })).toBe('tracker:linear');
+  });
+
+  test('a failed status read waits, then follows what the sources hook says', () => {
+    // While the read is out the board waits; once it failed, a tracker that was
+    // signed in keeps its tab and one never seen connected offers none.
+    expect(tab({ trackers: { connected: [], pending: true } })).toBeNull();
+    expect(tab({ trackers: linear })).toBe('tracker:linear');
+    expect(tab({ trackers: { connected: [], pending: false } })).toBeNull();
+  });
+
+  test('waits for the folder search and for the trackers\' status before choosing', () => {
+    expect(tab({ repositoryStatus: 'pending', trackers: linear })).toBeNull();
+    expect(tab({ trackers: { connected: ['linear'], pending: true } })).toBeNull();
   });
 });

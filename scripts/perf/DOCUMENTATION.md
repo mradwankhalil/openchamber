@@ -456,7 +456,8 @@ that is not listed.
 Clicks sidebar session rows with real mouse input and measures, per click:
 
 - `ack`: the clicked row is highlighted as active (the first visible reaction);
-- `content`: messages that were not in the DOM before are in it. They may still
+- `content`: messages that were not rendered before are rendered (a timeline kept
+  in the DOM under `display: none` counts as not rendered). They may still
   be invisible: a freshly opened timeline stays at opacity 0 while renderers
   hold their provisional first paint (`data-timeline-reveal="pending"`), then
   fades in;

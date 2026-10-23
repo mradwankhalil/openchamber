@@ -176,6 +176,9 @@ export const fetchOpenCodeSkillsFromApi = async (
         }
         if (location === BUILT_IN_SKILL_LOCATION) {
           return {
+            // The path no longer carries the id, and a built-in's id can
+            // differ from its name (`opencode` / `OpenCode`); policies name the id.
+            id: String(item?.id || name),
             name,
             path: location,
             scope: 'user',

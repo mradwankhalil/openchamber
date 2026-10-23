@@ -31,7 +31,7 @@ import { isDirectoryUnknown, useDirectoryStore } from "@/stores/useDirectoryStor
 import { useSessionFoldersStore } from "@/stores/useSessionFoldersStore"
 import { useSessionTabsStore } from "@/stores/useSessionTabsStore"
 import { selectCommandsForDirectory, useCommandsStore } from "@/stores/useCommandsStore"
-import { selectSkillsForDirectory, useSkillsStore } from "@/stores/useSkillsStore"
+import { selectAvailableSkillsForDirectory, useSkillsStore } from "@/stores/useSkillsStore"
 import { getDeferredSafeStorage } from "@/stores/utils/safeStorage"
 import { markPendingUserSendAnimation } from "@/lib/userSendAnimation"
 import { prepareUserMessageResume } from "./user-message-resume"
@@ -239,7 +239,7 @@ export async function routeMessage(params: {
     // them as prompt attachments rather than commands.
     let matchedCommand = selectCommandsForDirectory(useCommandsStore.getState(), requestDirectory)
       .find((c) => c.name === cmdName)
-    let matchedSkill = selectSkillsForDirectory(useSkillsStore.getState(), requestDirectory)
+    let matchedSkill = selectAvailableSkillsForDirectory(useSkillsStore.getState(), requestDirectory)
       .find((s) => s.name === cmdName)
 
     // The command list is no longer pre-warmed at bootstrap (listing it
@@ -262,7 +262,7 @@ export async function routeMessage(params: {
         if (!skillsLoaded) {
           throw new Error(`Could not load skills to resolve /${cmdName}`)
         }
-        matchedSkill = selectSkillsForDirectory(useSkillsStore.getState(), requestDirectory)
+        matchedSkill = selectAvailableSkillsForDirectory(useSkillsStore.getState(), requestDirectory)
           .find((s) => s.name === cmdName)
       }
     }
