@@ -200,7 +200,7 @@ const pickSmallModel = (models, accept) => {
 /**
  * Which model this call runs on, in order:
  *
- * 1. An explicit request model.
+ * 1. An explicit request model, with the thinking variant the caller names.
  * 2. OpenChamber's settings override (Settings → Sessions → Small Model),
  *    including the thinking variant chosen beside the model.
  * 3. The small model configured for OpenCode itself: the `title` agent's
@@ -218,9 +218,14 @@ const pickSmallModel = (models, accept) => {
  * happens to be connected: the content (diffs, replies, session text) goes
  * only where the user sent their own work or configured on purpose.
  */
-const resolveSmallModel = async ({ client, directory, model, preferredProviderID, preferredModelID }) => {
+const resolveSmallModel = async ({ client, directory, model, variant, preferredProviderID, preferredModelID }) => {
   const explicit = parseModelRef(model);
-  if (explicit) return { ...explicit, source: 'request' };
+  if (explicit) {
+    // A caller naming its model may name its thinking level with it.
+    const explicitVariant = asNonEmptyString(variant);
+    if (explicitVariant) explicit.variant = explicitVariant;
+    return { ...explicit, source: 'request' };
+  }
 
   const fromSettings = readSmallModelSettingsOverride();
   if (fromSettings) return { ...fromSettings, source: 'settings' };
@@ -316,7 +321,7 @@ const requestOptions = ({ timeoutMs, promptChars, signal }) => {
  * Generates text with the user's small model through the running OpenCode.
  * Credentials stay inside OpenCode; this server only sends a prompt.
  */
-export async function generateSmallModelText({ prompt, system, maxOutputTokens, model, directory, preferredProviderID, preferredModelID, responseSchema, timeoutMs, signal, onOverflow = 'truncate' }) {
+export async function generateSmallModelText({ prompt, system, maxOutputTokens, model, variant: requestVariant, directory, preferredProviderID, preferredModelID, responseSchema, timeoutMs, signal, onOverflow = 'truncate' }) {
   if (typeof prompt !== 'string' || !prompt.trim()) {
     throw Object.assign(new Error('prompt is required'), { statusCode: 400 });
   }
@@ -328,6 +333,7 @@ export async function generateSmallModelText({ prompt, system, maxOutputTokens, 
     client,
     directory,
     model,
+    variant: requestVariant,
     preferredProviderID,
     preferredModelID,
   });
@@ -493,7 +499,7 @@ const resolveReserveTokens = (outputReserveTokens, limits) => (
  * must read `null` as "try it", which is exactly right here — the verdict
  * comes from the reply, not from a capability flag.
  */
-export async function describeSmallModel({ directory, preferredProviderID, preferredModelID, outputReserveTokens, overrideModel } = {}) {
+export async function describeSmallModel({ directory, preferredProviderID, preferredModelID, outputReserveTokens, overrideModel, overrideVariant } = {}) {
   const client = getSmallModelClient(directory);
   if (!client) return null;
 
@@ -503,6 +509,7 @@ export async function describeSmallModel({ directory, preferredProviderID, prefe
     client,
     directory,
     model: overrideModel,
+    variant: overrideVariant,
     preferredProviderID,
     preferredModelID,
   });

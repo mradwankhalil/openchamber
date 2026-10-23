@@ -162,11 +162,11 @@ export const WorkStatusRow: React.FC<RowProps> = ({
           style={iconColor ? { color: iconColor } : undefined}
         />
       ) : null)}
-      <span id={labelId} className={cn('min-w-0 flex-1 truncate text-[13px]', muted && 'text-muted-foreground')}>
+      <span id={labelId} className={cn('min-w-0 flex-1 truncate text-[0.8125rem]', muted && 'text-muted-foreground')}>
         {label}
       </span>
       {value !== undefined && value !== null ? (
-        <span className="flex shrink-0 items-center gap-1.5 text-[13px] tabular-nums">{value}</span>
+        <span className="flex shrink-0 items-center gap-1.5 text-[0.8125rem] tabular-nums">{value}</span>
       ) : null}
     </>
   );
@@ -258,7 +258,7 @@ export const WorkStatusRowAction: React.FC<{
         onClick();
       }}
       className={cn(
-        'shrink-0 rounded-full px-1.5 py-px text-[11px] font-medium leading-4 transition-opacity',
+        'shrink-0 rounded-full px-1.5 py-px text-[0.6875rem] font-medium leading-4 transition-opacity',
         'hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50',
         !color && 'bg-[var(--interactive-hover)] text-muted-foreground',
       )}
@@ -278,7 +278,7 @@ export const WorkStatusPill: React.FC<{
 }> = ({ children, color, background }) => (
   <span
     className={cn(
-      'rounded-full px-1.5 py-px text-[11px] font-medium leading-4',
+      'rounded-full px-1.5 py-px text-[0.6875rem] font-medium leading-4',
       !color && 'bg-[var(--interactive-hover)] text-muted-foreground',
     )}
     style={color ? { color, backgroundColor: background } : undefined}
@@ -290,7 +290,7 @@ export const WorkStatusPill: React.FC<{
 /** Full-width callout for states that block the branch (merge, rebase, …). */
 export const WorkStatusCallout: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div
-    className="mx-1 mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] font-medium"
+    className="mx-1 mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-[0.8125rem] font-medium"
     style={{ backgroundColor: 'var(--status-warning-background)', color: 'var(--status-warning)' }}
   >
     <Icon name="alert" className="size-3.5 shrink-0" />

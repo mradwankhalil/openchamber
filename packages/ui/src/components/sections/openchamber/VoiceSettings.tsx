@@ -213,7 +213,7 @@ const LocalModelPicker = ({
                                     {tUnsafe(entry.labelKey)}
                                 </div>
                                 {entry.badgeKey ? (
-                                    <span className="inline-block rounded-full bg-[var(--status-success)]/15 px-2 py-px text-[10px] font-medium text-[var(--status-success)]">
+                                    <span className="inline-block rounded-full bg-[var(--status-success)]/15 px-2 py-px text-[0.625rem] font-medium text-[var(--status-success)]">
                                         {tUnsafe(entry.badgeKey)}
                                     </span>
                                 ) : null}

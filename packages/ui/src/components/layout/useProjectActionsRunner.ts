@@ -761,8 +761,12 @@ export const useProjectActionsRunner = ({
     try {
       const discovered = action.id === AUTO_DISCOVER_ACTION_ID
         ? await (async (): Promise<OpenChamberProjectAction | null> => {
+          // Settings and trust belong to the project, as the menu reads them:
+          // in a worktree session the session's folder is another config id.
+          // The dev server itself is detected in the session's folder.
+          const setupTarget = stableProjectRef ?? { id: '', path: normalizedDirectory };
           const [setup, scripts] = await Promise.all([
-            getProjectSetup({ id: stableProjectRef?.id ?? '', path: normalizedDirectory }),
+            getProjectSetup(setupTarget),
             readPackageJsonScripts(normalizedDirectory),
           ]);
           const devServer = await detectDevServerCommand(normalizedDirectory, setup.projectActions, scripts);
@@ -771,7 +775,7 @@ export const useProjectActionsRunner = ({
           }
           const savedAction = setup.projectActions.find((entry) => entry.id === devServer.actionId);
           if (savedAction?.source === 'shared'
-            && !(await ensureSharedSetupTrusted({ id: stableProjectRef?.id ?? '', path: normalizedDirectory }, setup))) {
+            && !(await ensureSharedSetupTrusted(setupTarget, setup))) {
             return null;
           }
           return {

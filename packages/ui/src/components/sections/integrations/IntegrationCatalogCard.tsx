@@ -59,7 +59,7 @@ export const IntegrationCatalogCard: React.FC<IntegrationCatalogCardProps> = ({
         {badges}
         <span
           aria-live="polite"
-          className={cn('max-w-36 shrink-0 truncate rounded-full px-2 py-0.5 text-[10px] font-medium', STATUS_TONE_CLASS[statusTone])}
+          className={cn('max-w-36 shrink-0 truncate rounded-full px-2 py-0.5 text-[0.625rem] font-medium', STATUS_TONE_CLASS[statusTone])}
         >
           {status}
         </span>

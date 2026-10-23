@@ -344,4 +344,126 @@ describe('session runtime', () => {
     expect(runtime.getSessionActivitySnapshot()).toEqual({});
     expect(runtime.getSessionStateSnapshot()).toEqual({});
   });
+  describe('turn starts', () => {
+    const setup = (readTurnStart = null) => {
+      const events = [];
+      const runtime = createSessionRuntime({
+        writeSseEvent() {},
+        getNotificationClients: () => new Set(),
+        broadcastEvent: (payload) => events.push(payload),
+        readTurnStart,
+      });
+      runtimes.push(runtime);
+      const status = (type, extra = {}) => runtime.processOpenCodeSsePayload({
+        type: 'session.status',
+        properties: { sessionID: 'session-1', status: { type }, ...extra },
+      });
+      const statusEvents = () => events.filter((event) => event.type === 'openchamber:session-status');
+      return { runtime, status, statusEvents };
+    };
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    it('reports the start of a turn it saw begin, and keeps it once the turn ends', () => {
+      const readTurnStart = vi.fn(async () => 1);
+      const { runtime, status, statusEvents } = setup(readTurnStart);
+
+      status('busy', { turnStartedAt: 5000 });
+      status('busy');
+      expect(statusEvents()[0].properties).toMatchObject({ status: 'busy', turnStartedAt: 5000 });
+      expect(runtime.getSessionStateSnapshot()['session-1'].turnStartedAt).toBe(5000);
+      expect(runtime.getRunningTurnStart('session-1')).toBe(5000);
+
+      // A parent idling while its subagent works still reports that start.
+      status('idle');
+      expect(runtime.getSessionStateSnapshot()['session-1']).toMatchObject({ status: 'idle', turnStartedAt: 5000 });
+      expect(runtime.getRunningTurnStart('session-1')).toBeNull();
+      expect(readTurnStart).not.toHaveBeenCalled();
+
+      status('busy', { turnStartedAt: 9000 });
+      expect(runtime.getSessionStateSnapshot()['session-1'].turnStartedAt).toBe(9000);
+    });
+
+    it('reads back the start of a turn that was running before it listened, once per turn', async () => {
+      const readTurnStart = vi.fn(async () => 3000);
+      const { runtime, status, statusEvents } = setup(readTurnStart);
+
+      status('busy');
+      status('retry');
+      // The previous turn's start is never handed out as this one's.
+      expect(runtime.getSessionStateSnapshot()['session-1'].turnStartedAt).toBeUndefined();
+      expect(statusEvents()[0].properties.turnStartedAt).toBeUndefined();
+      await settle();
+
+      expect(readTurnStart).toHaveBeenCalledTimes(1);
+      expect(runtime.getRunningTurnStart('session-1')).toBe(3000);
+      expect(statusEvents().at(-1).properties).toMatchObject({ sessionID: 'session-1', status: 'retry', turnStartedAt: 3000 });
+    });
+
+    it('drops a start read back after its turn ended', async () => {
+      let resolveRead;
+      const { runtime, status, statusEvents } = setup(() => new Promise((resolve) => { resolveRead = resolve; }));
+
+      status('busy');
+      await settle();
+      status('idle');
+      resolveRead(3000);
+      await settle();
+
+      expect(runtime.getRunningTurnStart('session-1')).toBeNull();
+      expect(runtime.getSessionStateSnapshot()['session-1'].turnStartedAt).toBeUndefined();
+      expect(statusEvents().every((event) => event.properties.turnStartedAt === undefined)).toBe(true);
+    });
+
+    it('leaves the start unknown when the history cannot tell it', async () => {
+      const { runtime, status, statusEvents } = setup(async () => null);
+
+      status('busy');
+      await settle();
+
+      expect(runtime.getRunningTurnStart('session-1')).toBeNull();
+      expect(statusEvents()).toHaveLength(1);
+    });
+
+    it('marks sessions running at connect busy and reads their starts back', async () => {
+      const readTurnStart = vi.fn(async (sessionId) => (sessionId === 'session-1' ? 3000 : 4000));
+      const { runtime, status, statusEvents } = setup(readTurnStart);
+      status('busy', { turnStartedAt: 4500 });
+
+      runtime.adoptRunningSessions(['session-1', 'session-2'], Date.now() + 1);
+      await settle();
+
+      // A start seen live is not read again.
+      expect(readTurnStart.mock.calls).toEqual([['session-2']]);
+      expect(runtime.getSessionStateSnapshot()['session-2']).toMatchObject({ status: 'busy', turnStartedAt: 4000 });
+      expect(runtime.getActiveSessionCount()).toBe(2);
+      expect(statusEvents().at(-1).properties).toMatchObject({ sessionID: 'session-2', turnStartedAt: 4000 });
+    });
+
+    it('leaves a session whose turn ended while the running list was read', async () => {
+      const readTurnStart = vi.fn(async () => 3000);
+      const { runtime, status } = setup(readTurnStart);
+      status('busy', { turnStartedAt: 5000 });
+      const readAt = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      status('idle');
+
+      runtime.adoptRunningSessions(['session-1'], readAt);
+      await settle();
+
+      expect(runtime.getSessionStateSnapshot()['session-1'].status).toBe('idle');
+      expect(runtime.getActiveSessionCount()).toBe(0);
+      expect(readTurnStart).not.toHaveBeenCalled();
+    });
+
+    it('forgets starts when the session is deleted or OpenCode restarts', () => {
+      const { runtime, status } = setup();
+      status('busy', { turnStartedAt: 5000 });
+      runtime.processOpenCodeSsePayload({ type: 'session.deleted', properties: { sessionID: 'session-1', info: { id: 'session-1' } } });
+      expect(runtime.getRunningTurnStart('session-1')).toBeNull();
+
+      status('busy', { turnStartedAt: 6000 });
+      runtime.interruptBusySessionsAfterRestart();
+      expect(runtime.getSessionStateSnapshot()['session-1'].turnStartedAt).toBeUndefined();
+    });
+  });
 });

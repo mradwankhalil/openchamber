@@ -5,6 +5,7 @@ import yaml from 'yaml';
 
 import { assertGitAvailable, looksLikeAuthError, runGit } from './git.js';
 import { parseSkillRepoSource } from './source.js';
+import { removeDirectory } from './remove-directory.js';
 
 const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
 
@@ -34,14 +35,6 @@ function parseSkillMd(content) {
       frontmatter: {},
       warnings: ['Invalid SKILL.md: failed to parse YAML frontmatter'],
     };
-  }
-}
-
-async function safeRm(dir) {
-  try {
-    await fs.promises.rm(dir, { recursive: true, force: true });
-  } catch {
-    // ignore
   }
 }
 
@@ -118,7 +111,14 @@ export async function scanSkillsRepository({
       if (sparseSet.ok) {
         const checkout = await runGit(['-C', tempBase, 'checkout', '--force', 'HEAD'], { ...remoteGitOptions, timeoutMs: 60_000 });
         if (checkout.ok) {
-          const lsFiles = await runGit(['-C', tempBase, 'ls-files'], { timeoutMs: 15_000 });
+          // The index also lists the files the sparse checkout left out, and
+          // each of those would cost a `git show` below; the subpath limits
+          // the list to what is on disk, as `ls-tree` does in the fallback.
+          const lsFilesArgs = ['-C', tempBase, 'ls-files'];
+          if (effectiveSubpath) {
+            lsFilesArgs.push('--', effectiveSubpath);
+          }
+          const lsFiles = await runGit(lsFilesArgs, { timeoutMs: 15_000 });
           if (lsFiles.ok) {
             skillMdPaths = lsFiles.stdout
               .split(/\r?\n/)
@@ -226,6 +226,6 @@ export async function scanSkillsRepository({
       items,
     };
   } finally {
-    await safeRm(tempBase);
+    await removeDirectory(tempBase);
   }
 }

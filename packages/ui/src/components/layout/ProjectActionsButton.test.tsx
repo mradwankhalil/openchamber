@@ -21,6 +21,7 @@ const openExternalCalls: string[] = [];
 const detectedDevServer: MockedDetectedDevServer = { command: null, previewUrlHint: null };
 const mockedDeviceInfo = { isMobile: false, isTablet: false, hasTouchOnlyPointer: false };
 let effectiveDirectory = '/repo';
+const projectSetupReads: Array<{ id: string; path: string }> = [];
 
 const uiState = {
   terminalShell: 'zsh',
@@ -155,7 +156,9 @@ mock.module('@/stores/useDesktopSshStore', () => ({ useDesktopSshStore: useDeskt
 mock.module('@/lib/url', () => ({ openExternalUrl: async (url: string) => { openExternalCalls.push(url); } }));
 mock.module('@/lib/openchamberConfig', () => ({
   getProjectActionsState: async () => mockedActionsState,
-  getProjectSetup: async () => ({
+  getProjectSetup: async (projectRef: { id: string; path: string }) => {
+    projectSetupReads.push(projectRef);
+    return {
     trust: mockedActionsState.actions.some((action) => action.source === 'shared')
       ? { hash: 'sha256:shared', trusted: false }
       : { hash: null, trusted: true },
@@ -166,7 +169,8 @@ mock.module('@/lib/openchamberConfig', () => ({
     draftStarters: [],
     shared: { status: 'missing', path: '.openchamber/project.json', setupWorktree: [], setupWorktreeWait: null, projectActions: mockedActionsState.actions.filter((action) => action.source === 'shared'), draftStarters: [], plansDir: null },
     personal: { setupWorktree: [], setupWorktreeWait: null, setupWorktreeMode: 'append', projectActions: mockedActionsState.actions.filter((action) => action.source !== 'shared'), projectActionsPrimaryId: null, draftStarters: [], hiddenSharedActionIds: [], sharedTrust: null },
-  }),
+    };
+  },
   updateProjectSetup: async () => true,
 }));
 mock.module('@/lib/browser/announcedServers', () => ({ setAnnouncedDevServers: () => undefined }));
@@ -244,6 +248,7 @@ describe('ProjectActionsButton lifecycle', () => {
     detectedDevServer.actionId = undefined;
     mockedDeviceInfo.isMobile = true;
     effectiveDirectory = '/repo';
+    projectSetupReads.length = 0;
     sessionCounter = 0;
     mockedActionsState.actions = [{ id: 'build', name: 'Build', command: 'echo hello', icon: 'build' }];
     getSafeStorage().clear();
@@ -339,6 +344,27 @@ describe('ProjectActionsButton lifecycle', () => {
     const created = createCalls[0];
     if (created?.mode !== 'command') throw new Error('expected command terminal');
     expect(created.command).toBe('bun run dev');
+  });
+
+  test('auto-discovery in a worktree session reads the project\'s setup and trust', async () => {
+    mockedDeviceInfo.isMobile = false;
+    mockedActionsState.actions = [{ id: 'dev', name: 'Dev server', command: 'bun run dev', source: 'shared' }];
+    detectedDevServer.command = 'bun run dev';
+    detectedDevServer.actionId = 'dev';
+    effectiveDirectory = '/worktrees/feature';
+    await renderButton({ projectPath: '/repo', directory: '/worktrees/feature' });
+
+    await act(async () => {
+      menuItem('Auto-discover dev server')?.click();
+      await Promise.resolve();
+    });
+
+    // The same config the menu reads, so trust given in one counts in the other.
+    expect(projectSetupReads.at(-1)).toEqual({ id: 'project-1', path: '/repo' });
+    await act(async () => {
+      settleSharedTrustConfirmation('skip');
+      await Promise.resolve();
+    });
   });
 
   test('the picked action is still selected after the button mounts again', async () => {

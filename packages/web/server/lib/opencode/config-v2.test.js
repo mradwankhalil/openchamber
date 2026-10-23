@@ -11,6 +11,8 @@ import {
   toAgentEntity,
   writeWarmingEnabled,
   writeWarmingDuration,
+  skillSwitchRequestSchema,
+  writeSkillDisabled,
   fromAgentEntity,
   isLegacyAgentFrontmatter,
   toCommandEntity,
@@ -464,6 +466,46 @@ describe('findWebSearchProjectOverride', () => {
 
   it('ignores the user config showing up among project files', () => {
     expect(findWebSearchProjectOverride(layers(), [{ path: userPath, config: { websearch: false } }])).toBeNull();
+  });
+});
+
+describe('skill switches', () => {
+  const deny = (id) => ({ action: 'integration.use', resource: `skill:${id}`, effect: 'deny' });
+
+  it('accepts a skill id and refuses wildcards, separators and padding', () => {
+    const parse = (id) => skillSwitchRequestSchema.safeParse({ id, enabled: false, scope: 'user' }).success;
+    expect(parse('deploy-docs')).toBe(true);
+    expect(parse('déploy')).toBe(true);
+    for (const id of ['', ' deploy', 'deploy*', 'de?ploy', 'a/b', 'a\\b', 'a\nb', 7, null]) {
+      expect(parse(id)).toBe(false);
+    }
+    expect(skillSwitchRequestSchema.safeParse({ id: 'deploy', enabled: 'no', scope: 'user' }).success).toBe(false);
+    expect(skillSwitchRequestSchema.safeParse({ id: 'deploy', enabled: true, scope: 'global' }).success).toBe(false);
+  });
+
+  it('turns a skill off once and back on, leaving other statements alone', () => {
+    const wildcard = { action: 'integration.use', resource: 'skill:internal-*', effect: 'deny' };
+    const allow = { action: 'integration.use', resource: 'skill:review', effect: 'allow' };
+    const config = { model: 'openai/gpt-5', policies: [wildcard, allow] };
+
+    expect(writeSkillDisabled(config, 'deploy', true)).toBe(true);
+    expect(config.policies).toEqual([wildcard, allow, deny('deploy')]);
+    expect(writeSkillDisabled(config, 'deploy', true)).toBe(false);
+
+    expect(writeSkillDisabled(config, 'deploy', false)).toBe(true);
+    expect(config).toEqual({ model: 'openai/gpt-5', policies: [wildcard, allow] });
+    expect(writeSkillDisabled(config, 'deploy', false)).toBe(false);
+  });
+
+  it('turns on a deny written by hand, in the deprecated key too, and drops what it empties', () => {
+    const config = { policies: [deny('deploy')], experimental: { policies: [deny('deploy')] } };
+    expect(writeSkillDisabled(config, 'deploy', true)).toBe(false);
+    expect(writeSkillDisabled(config, 'deploy', false)).toBe(true);
+    expect(config).toEqual({});
+
+    const kept = { experimental: { policies: [deny('deploy')], other: true } };
+    expect(writeSkillDisabled(kept, 'deploy', false)).toBe(true);
+    expect(kept).toEqual({ experimental: { other: true } });
   });
 });
 

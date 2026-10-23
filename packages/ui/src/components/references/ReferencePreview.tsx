@@ -4,30 +4,34 @@ import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { dropdownTriggerVariants } from '@/components/ui/dropdown-trigger';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
-import type { GitHubChecksSummary, GitHubPullStatus, GitHubReference, GitHubReferenceComment, GitHubReferenceDetail, LinearIssue, LinearIssueSummary, PullRequestStackLayer } from '@/lib/api/types';
-import { useI18n } from '@/lib/i18n';
+import type { CISummary, ChangeRequestListStatus, ChangeRequestRevision, ChangeRequestRevisionKind, RepositoryReference, RepositoryReferenceComment, RepositoryReferenceDetail, TrackerItem, TrackerItemSummary, PullRequestStackLayer } from '@/lib/api/types';
+import { useI18n, type I18nKey } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
 import type { CachedValue } from './referenceCache';
-import { ReferenceMarkdownRewriteContext, useGitLabUploadRewrite } from './gitlabUploads';
-import { getSourceControlProviderLabel } from '@/lib/source-control/identity';
+import { ReferenceMarkdownRewriteContext, useProjectUploadRewrite } from './projectUploads';
+import { useSourceControlProvider } from '@/lib/source-control/providers/registry';
+import { trackerPresentation } from '@/lib/trackers/presentation';
+import { useTrackerDescriptor } from '@/lib/trackers/registry';
+import { isSettledTrackerState, trackerStateGlyph } from '@/lib/trackers/stateLook';
 import { ReferenceComments, type ReferenceThreadActions } from './ReferenceComments';
 import { buildReferenceTimeline, type ReferenceCommentItem, type ReferenceTimelineEntry } from './referenceTimeline';
 import { ChecksGlyph, ReferenceLabelChips } from './ReferencePickerRow';
 import { PullStackRows } from './PullStackRows';
 import { useReferenceImagePreview } from './useReferenceImagePreview';
 import {
-    githubStateLook,
+    repositoryStateLook,
     labelColor,
-    LINEAR_PRIORITY_KEYS,
-    linearStateLook,
     REFERENCE_META_TEXT,
     relativeTimeOf,
     type ReferencePickerItem,
     referenceNumberLabel,
+    TRACKER_PRIORITY_KEYS,
 } from './referencePickerItems';
+import { joinProjectPath } from '@/lib/source-control/projectPath';
 
 export type ReferencePreviewPurpose = 'attach' | 'worktree';
 
@@ -105,7 +109,7 @@ const useRelative = (now: number) => {
     };
 };
 
-const ChecksSummaryText: React.FC<{ checks: GitHubChecksSummary }> = ({ checks }) => {
+const ChecksSummaryText: React.FC<{ checks: CISummary }> = ({ checks }) => {
     const { t } = useI18n();
     if (checks.state === 'failure') return <>{t('references.picker.preview.checksFailed', { failed: checks.failure, total: checks.total })}</>;
     if (checks.state === 'pending') return <>{t('references.picker.preview.checksPending', { pending: checks.pending, total: checks.total })}</>;
@@ -114,7 +118,7 @@ const ChecksSummaryText: React.FC<{ checks: GitHubChecksSummary }> = ({ checks }
 };
 
 /** A checks total as the preview and the board's checks dialog show it. */
-export const ChecksSummaryLine: React.FC<{ checks: GitHubChecksSummary }> = ({ checks }) => (
+export const ChecksSummaryLine: React.FC<{ checks: CISummary }> = ({ checks }) => (
     <>
         <ChecksGlyph checks={checks} />
         <ChecksSummaryText checks={checks} />
@@ -128,6 +132,88 @@ const REVIEW_KEYS = {
 } as const;
 
 const Pending = () => <Icon name="loader-4" className="size-3.5 animate-spin text-muted-foreground" />;
+
+const REVISION_KIND_KEYS = {
+    rework: 'references.picker.preview.revision.kind.rework',
+    'trivial-rebase': 'references.picker.preview.revision.kind.trivialRebase',
+    'merge-first-parent-update': 'references.picker.preview.revision.kind.mergeUpdate',
+    'no-code-change': 'references.picker.preview.revision.kind.noCodeChange',
+    'no-change': 'references.picker.preview.revision.kind.noChange',
+} as const satisfies Record<ChangeRequestRevisionKind, I18nKey>;
+
+/** A change's revisions to choose from, oldest first, and the one shown: null for the latest. */
+export type RevisionChoice = {
+    revisions: ChangeRequestRevision[];
+    selected: string | null;
+    onSelect: (sha: string | null) => void;
+};
+
+/**
+ * Which revision (patchset) of a change the Changes row shows, beside it.
+ * Only where there is more than one to choose from.
+ */
+const RevisionPicker: React.FC<{ choice: RevisionChoice }> = ({ choice }) => {
+    const { t } = useI18n();
+    const latest = choice.revisions.at(-1);
+    if (!latest || choice.revisions.length < 2) return null;
+    const shown = choice.revisions.find((revision) => revision.sha === choice.selected) ?? latest;
+    const labelOf = (revision: ChangeRequestRevision) => (revision === latest
+        ? t('references.picker.preview.revision.latest', { number: revision.number })
+        : t('references.picker.preview.revision.number', { number: revision.number }));
+    return (
+        <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+                <button
+                    type="button"
+                    className={cn(dropdownTriggerVariants(), 'min-w-0 max-w-[14rem] font-normal')}
+                    aria-label={t('references.picker.preview.revision.label')}
+                >
+                    <span className="truncate">{labelOf(shown)}</span>
+                    <Icon name="arrow-down-s" className="size-3.5" />
+                </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64">
+                <DropdownMenuRadioGroup
+                    value={shown.sha}
+                    onValueChange={(value) => choice.onSelect(value === latest.sha ? null : String(value))}
+                >
+                    {[...choice.revisions].reverse().map((revision) => (
+                        <DropdownMenuRadioItem key={revision.sha} value={revision.sha}>
+                            <span className="min-w-0 flex-1 truncate">{labelOf(revision)}</span>
+                            {revision.kind && revision.kind !== 'rework' ? (
+                                <span className={cn('shrink-0 typography-meta', REFERENCE_META_TEXT)}>{t(REVISION_KIND_KEYS[revision.kind])}</span>
+                            ) : null}
+                        </DropdownMenuRadioItem>
+                    ))}
+                </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+        </DropdownMenu>
+    );
+};
+
+/** A review host's flags on a change: work in progress, private, its topic. Nothing for other hosts. */
+const ChangeFlags: React.FC<{ reference: RepositoryReference }> = ({ reference }) => {
+    const { t } = useI18n();
+    if (reference.kind !== 'pull') return null;
+    const flags = [
+        // The state pill already says Draft for a draft; saying work in progress beside it repeats it.
+        reference.workInProgress && !reference.draft ? t('references.picker.preview.wip') : null,
+        reference.private ? t('references.picker.preview.private') : null,
+    ].filter((flag): flag is string => flag !== null);
+    if (flags.length === 0 && !reference.topic) return null;
+    return (
+        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {flags.map((flag) => (
+                <span key={flag} className="inline-flex h-5 shrink-0 items-center rounded-full bg-surface-muted px-2 typography-micro text-muted-foreground">{flag}</span>
+            ))}
+            {reference.topic ? (
+                <span className={cn('min-w-0 truncate typography-meta', REFERENCE_META_TEXT)} title={reference.topic}>
+                    {t('references.picker.preview.topic', { topic: reference.topic })}
+                </span>
+            ) : null}
+        </span>
+    );
+};
 
 /** Description with images and the HTML GitHub allows; the agent gets the source. */
 const ReferenceBody: React.FC<{ content: string }> = ({ content }) => {
@@ -208,18 +294,20 @@ const LoadError: React.FC<{ error: string }> = ({ error }) => {
  * `checks`: the status that colours a GitHub PR, or a GitLab detail's pipeline.
  */
 const PullDetailRows: React.FC<{
-    detail: CachedValue<GitHubReferenceDetail>;
-    checks: CachedValue<GitHubChecksSummary | null>;
+    detail: CachedValue<RepositoryReferenceDetail>;
+    checks: CachedValue<CISummary | null>;
     links?: React.ReactNode;
     /** Opens the PR's check runs; the totals become a button. */
     onOpenChecks?: () => void;
-}> = ({ detail, checks, links, onOpenChecks }) => {
+    revisionChoice?: RevisionChoice;
+}> = ({ detail, checks, links, onOpenChecks, revisionChoice }) => {
     const { t } = useI18n();
     const pull = detail.status === 'ready' ? detail.value.pull : null;
     return (
         <>
             <MetaRow label={t('references.picker.preview.changes')}>
                 <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    {revisionChoice ? <RevisionPicker choice={revisionChoice} /> : null}
                     {detail.status === 'error' ? <LoadError error={detail.error} /> : pull ? (
                         <span className="inline-flex items-center gap-2">
                             <span className="text-[var(--status-success)]">+{pull.additions}</span>
@@ -265,7 +353,7 @@ const PullDetailRows: React.FC<{
     );
 };
 
-const NO_CHECKS: CachedValue<GitHubChecksSummary | null> = { status: 'ready', value: null };
+const NO_CHECKS: CachedValue<CISummary | null> = { status: 'ready', value: null };
 
 /**
  * The previewed PR's checks as its row has them, the status that stays
@@ -275,19 +363,19 @@ const NO_CHECKS: CachedValue<GitHubChecksSummary | null> = { status: 'ready', va
  * have none to show.
  */
 const previewChecks = (
-    reference: GitHubReference,
-    pullStatus: CachedValue<GitHubPullStatus | null>,
-    detail: CachedValue<GitHubReferenceDetail>,
-): CachedValue<GitHubChecksSummary | null> => {
+    reference: RepositoryReference,
+    pullStatus: CachedValue<ChangeRequestListStatus | null>,
+    detail: CachedValue<RepositoryReferenceDetail>,
+): CachedValue<CISummary | null> => {
     if (reference.kind !== 'pull' || reference.state !== 'open') return NO_CHECKS;
     if (pullStatus.status === 'ready' && pullStatus.value?.checks) return { status: 'ready', value: pullStatus.value.checks };
     return mapDetail(detail, (value) => value.pull?.checks ?? null);
 };
 
-const GitHubPreview: React.FC<{
-    reference: GitHubReference;
-    pullStatus: CachedValue<GitHubPullStatus | null>;
-    detail: CachedValue<GitHubReferenceDetail>;
+const RepositoryPreview: React.FC<{
+    reference: RepositoryReference;
+    pullStatus: CachedValue<ChangeRequestListStatus | null>;
+    detail: CachedValue<RepositoryReferenceDetail>;
     purpose: ReferencePreviewPurpose;
     pinned: boolean;
     includeDiff: boolean;
@@ -304,7 +392,8 @@ const GitHubPreview: React.FC<{
     onRefresh?: () => Promise<void>;
     threadActions?: ReferenceThreadActions;
     onOpenStackLayer?: (layer: PullRequestStackLayer) => void;
-}> = ({ reference, pullStatus, detail, purpose, pinned, includeDiff, onIncludeDiffChange, now, footer: footerOverride, pullLinks, reply, labelsControl, reviewersControl, onOpenChecks, commentAttachments, stateMenu, onRefresh, threadActions, onOpenStackLayer }) => {
+    revisionChoice?: RevisionChoice;
+}> = ({ reference, pullStatus, detail, purpose, pinned, includeDiff, onIncludeDiffChange, now, footer: footerOverride, pullLinks, reply, labelsControl, reviewersControl, onOpenChecks, commentAttachments, stateMenu, onRefresh, threadActions, onOpenStackLayer, revisionChoice }) => {
     const { t } = useI18n();
     const [refreshing, setRefreshing] = React.useState(false);
     const refresh = onRefresh ? () => {
@@ -312,7 +401,7 @@ const GitHubPreview: React.FC<{
         void onRefresh().finally(() => setRefreshing(false));
     } : null;
     const comments = React.useMemo(() => {
-        const commentItem = (comment: GitHubReferenceComment, key: string): ReferenceCommentItem => {
+        const commentItem = (comment: RepositoryReferenceComment, key: string): ReferenceCommentItem => {
             const location = comment.path ? `${comment.path}${comment.line ? `:${comment.line}` : ''}` : null;
             const item: ReferenceCommentItem = {
                 kind: 'comment',
@@ -346,12 +435,13 @@ const GitHubPreview: React.FC<{
         }))));
     }, [detail, t]);
     const relative = useRelative(now);
-    const look = githubStateLook(reference, pullStatus.status === 'ready' ? pullStatus.value : null);
+    const descriptor = useSourceControlProvider(reference.provider);
+    const look = repositoryStateLook(reference, pullStatus.status === 'ready' ? pullStatus.value : null);
     const labels = reference.labels.map((label) => ({ name: label.name, color: labelColor(label.color) }));
     const updated = relative(reference.updatedAt);
     const body = reference.body.trim() ? reference.body : '';
     const stack = reference.kind === 'pull' && detail.status === 'ready' ? detail.value.pull?.stack ?? null : null;
-    const numberLabel = (number: number) => referenceNumberLabel({ ...reference, number });
+    const numberLabel = (number: number) => referenceNumberLabel({ ...reference, number }, descriptor);
     // Counted from the bottom, as GitHub numbers layers.
     const stackPosition = stack ? stack.layers.findIndex((layer) => layer.number === reference.number) + 1 : 0;
 
@@ -400,7 +490,7 @@ const GitHubPreview: React.FC<{
                             <StatePill icon={look.icon} color={look.color} label={t(look.labelKey)} />
                         )}
                         <span className={cn('truncate typography-meta', REFERENCE_META_TEXT)}>
-                            {reference.sourceRepo.owner}/{reference.sourceRepo.repo} {referenceNumberLabel(reference)}
+                            {joinProjectPath(reference.sourceRepo.owner, reference.sourceRepo.repo)} {referenceNumberLabel(reference, descriptor)}
                         </span>
                         {refresh ? (
                             <button
@@ -420,11 +510,12 @@ const GitHubPreview: React.FC<{
                             rel="noopener noreferrer"
                             className={cn('inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 typography-meta hover:bg-interactive-hover hover:text-foreground', !refresh && 'ms-auto', REFERENCE_META_TEXT)}
                         >
-                            {getSourceControlProviderLabel(reference.provider ?? 'github')}
+                            {descriptor.label}
                             <Icon name="external-link" className="size-3.5" />
                         </a>
                     </div>
                     <h3 className="typography-ui-header font-semibold break-words text-foreground">{reference.title}</h3>
+                    <ChangeFlags reference={reference} />
                 </>
             }
             meta={
@@ -443,13 +534,24 @@ const GitHubPreview: React.FC<{
                     {reference.kind === 'pull' ? (
                         <>
                             <MetaRow label={t('references.picker.preview.branch')}>
-                                <span className="inline-flex max-w-full items-center gap-1 font-mono">
-                                    <span className="truncate">{reference.head}</span>
-                                    <Icon name="arrow-right" className="size-3 shrink-0 text-muted-foreground" />
-                                    <span className="truncate">{reference.base}</span>
-                                </span>
+                                {descriptor.features.branchHeads ? (
+                                    <span className="inline-flex max-w-full items-center gap-1 font-mono">
+                                        <span className="truncate">{reference.head}</span>
+                                        <Icon name="arrow-right" className="size-3 shrink-0 text-muted-foreground" />
+                                        <span className="truncate">{reference.base}</span>
+                                    </span>
+                                ) : (
+                                    // The head is a revision's ref, not a branch: only where it lands reads as one.
+                                    <span className="block truncate font-mono">{reference.base}</span>
+                                )}
                             </MetaRow>
-                            <PullDetailRows detail={detail} checks={previewChecks(reference, pullStatus, detail)} links={pullLinks} onOpenChecks={onOpenChecks} />
+                            <PullDetailRows
+                                detail={detail}
+                                checks={previewChecks(reference, pullStatus, detail)}
+                                links={pullLinks}
+                                onOpenChecks={onOpenChecks}
+                                revisionChoice={descriptor.features.revisions ? revisionChoice : undefined}
+                            />
                         </>
                     ) : null}
                     {reviewersControl && reference.kind === 'pull' ? (
@@ -508,17 +610,17 @@ const GitHubPreview: React.FC<{
 };
 
 /**
- * A parent or sub-issue as one line: its state, identifier and title. A button
+ * A parent or child item as one line: its state, identifier and title. A button
  * that previews it when the surface can, plain text otherwise.
  */
-const RelatedLinearIssue: React.FC<{
-    issue: LinearIssueSummary;
-    onOpen?: (issue: LinearIssueSummary) => void;
-    /** A sub-issue row also names its assignee. */
+const RelatedTrackerItem: React.FC<{
+    issue: TrackerItemSummary;
+    onOpen?: (issue: TrackerItemSummary) => void;
+    /** A child row also names its assignee. */
     showAssignee?: boolean;
 }> = ({ issue, onOpen, showAssignee = false }) => {
-    const look = linearStateLook(issue);
-    const assignee = issue.assignee?.displayName || issue.assignee?.name;
+    const look = trackerStateGlyph(issue.state?.category);
+    const assignee = issue.assignee?.name;
     const content = (
         <>
             <Icon name={look.icon} className="size-3.5 shrink-0" style={{ color: look.color }} />
@@ -543,29 +645,29 @@ const RelatedLinearIssue: React.FC<{
     );
 };
 
-/** A Linear issue's sub-issues, finished of all, in Linear's order. */
+/** A tracker item's children, finished of all, in the tracker's order. */
 const SubIssuesSection: React.FC<{
-    issue: LinearIssue;
-    onOpen?: (issue: LinearIssueSummary) => void;
+    issue: TrackerItem;
+    onOpen?: (issue: TrackerItemSummary) => void;
 }> = ({ issue, onOpen }) => {
     const { t } = useI18n();
-    const subIssues = issue.subIssues ?? [];
+    const subIssues = issue.children ?? [];
     if (subIssues.length === 0) return null;
-    const done = subIssues.filter((sub) => sub.state?.type === 'completed' || sub.state?.type === 'canceled' || sub.state?.type === 'duplicate').length;
+    const done = subIssues.filter((sub) => isSettledTrackerState(sub.state?.category)).length;
     return (
         <section className="flex flex-col gap-2 border-t border-border/60 pt-4">
             <h4 className="flex items-center gap-2 typography-ui-label font-semibold text-foreground">
                 {t('references.picker.preview.subIssues')}
-                {issue.subIssuesMore ? null : (
+                {issue.childrenMore ? null : (
                     <span className={cn('typography-meta font-normal tabular-nums', REFERENCE_META_TEXT)}>{done}/{subIssues.length}</span>
                 )}
             </h4>
             <ul className="flex flex-col gap-1.5">
                 {subIssues.map((sub) => (
-                    <li key={sub.id}><RelatedLinearIssue issue={sub} onOpen={onOpen} showAssignee /></li>
+                    <li key={sub.id}><RelatedTrackerItem issue={sub} onOpen={onOpen} showAssignee /></li>
                 ))}
             </ul>
-            {issue.subIssuesMore ? (
+            {issue.childrenMore ? (
                 <a
                     href={issue.url}
                     target="_blank"
@@ -580,32 +682,37 @@ const SubIssuesSection: React.FC<{
     );
 };
 
-const LinearPreview: React.FC<{
-    issue: LinearIssueSummary;
-    detail: CachedValue<LinearIssue>;
+/** A tracker's work item; parent, children, labels and priority show where its capabilities say so. */
+const TrackerPreview: React.FC<{
+    issue: TrackerItemSummary;
+    detail: CachedValue<TrackerItem>;
     purpose: ReferencePreviewPurpose;
     pinned: boolean;
     now: number;
     footer?: React.ReactNode;
     stateControl?: React.ReactNode;
-    onOpenIssue?: (issue: LinearIssueSummary) => void;
+    onOpenIssue?: (issue: TrackerItemSummary) => void;
 }> = ({ issue, detail, purpose, pinned, now, footer: footerOverride, stateControl, onOpenIssue }) => {
     const { t } = useI18n();
     const relative = useRelative(now);
-    const look = linearStateLook(issue);
+    const descriptor = useTrackerDescriptor(issue.provider);
+    const { capabilities } = descriptor;
+    const look = trackerStateGlyph(issue.state?.category);
     const full = detail.status === 'ready' ? detail.value : null;
-    // A parent or sub-issue opened from another preview comes without its
+    // A parent or child opened from another preview comes without its
     // labels and parent; its own detail brings them.
-    const labels = (full?.labels ?? issue.labels ?? []).map((label) => ({ name: label.name, color: labelColor(label.color) }));
-    const parent = full?.parent ?? issue.parent ?? null;
+    const labels = capabilities.labels
+        ? (full?.labels ?? issue.labels ?? []).map((label) => ({ name: label.name, color: labelColor(label.color) }))
+        : [];
+    const parent = capabilities.children ? full?.parent ?? issue.parent ?? null : null;
     const updated = relative(issue.updatedAt);
-    const assignee = issue.assignee?.displayName || issue.assignee?.name;
+    const assignee = issue.assignee?.name;
     const comments = React.useMemo(
         () => mapDetail(detail, (value) => (value.comments ?? []).map((comment): ReferenceTimelineEntry => ({
             kind: 'comment',
             key: comment.id,
-            author: comment.user?.displayName || comment.user?.name || null,
-            avatarUrl: comment.user?.avatarUrl ?? null,
+            author: comment.author?.name ?? null,
+            avatarUrl: comment.author?.avatarUrl ?? null,
             body: comment.body,
             createdAt: comment.createdAt,
             context: null,
@@ -616,7 +723,7 @@ const LinearPreview: React.FC<{
 
     const footer = footerOverride ?? (
         <p className="typography-meta text-muted-foreground">
-            {purpose === 'worktree' ? t('references.picker.preview.worktree.issue') : t('references.picker.preview.sends.linear')}
+            {purpose === 'worktree' ? t('references.picker.preview.worktree.issue') : t('references.picker.preview.sends.tracker')}
         </p>
     );
 
@@ -635,7 +742,7 @@ const LinearPreview: React.FC<{
                             rel="noopener noreferrer"
                             className={cn('ms-auto inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 typography-meta hover:bg-interactive-hover hover:text-foreground', REFERENCE_META_TEXT)}
                         >
-                            Linear
+                            {descriptor.name}
                             <Icon name="external-link" className="size-3.5" />
                         </a>
                     </div>
@@ -646,13 +753,13 @@ const LinearPreview: React.FC<{
                 <dl className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-4 gap-y-1.5">
                     {parent ? (
                         <MetaRow label={t('references.picker.preview.parent')}>
-                            <RelatedLinearIssue issue={parent} onOpen={onOpenIssue} />
+                            <RelatedTrackerItem issue={parent} onOpen={onOpenIssue} />
                         </MetaRow>
                     ) : null}
                     {assignee ? <MetaRow label={t('references.picker.preview.assignee')}>{assignee}</MetaRow> : null}
-                    {issue.team ? <MetaRow label={t('references.picker.preview.team')}>{issue.team.name}</MetaRow> : null}
-                    {issue.priority && issue.priority > 0 ? (
-                        <MetaRow label={t('references.picker.preview.priority')}>{t(LINEAR_PRIORITY_KEYS[issue.priority])}</MetaRow>
+                    {issue.container ? <MetaRow label={t(trackerPresentation(issue.provider).copy.containerMeta)}>{issue.container.name}</MetaRow> : null}
+                    {capabilities.priority && issue.priority && issue.priority !== 'none' ? (
+                        <MetaRow label={t('references.picker.preview.priority')}>{t(TRACKER_PRIORITY_KEYS[issue.priority])}</MetaRow>
                     ) : null}
                     {updated ? <MetaRow label={t('references.picker.preview.updated')}>{updated}</MetaRow> : null}
                     {labels.length > 0 ? (
@@ -676,7 +783,7 @@ const LinearPreview: React.FC<{
                 )}
             </div>
 
-            {full ? <SubIssuesSection issue={full} onOpen={onOpenIssue} /> : null}
+            {full && capabilities.children ? <SubIssuesSection issue={full} onOpen={onOpenIssue} /> : null}
             {detail.status === 'ready' ? <CommentsSection state={comments} total={null} now={now} /> : null}
         </PreviewFrame>
     );
@@ -687,9 +794,9 @@ export const ReferencePreview: React.FC<{
     /** The project the item was listed for; GitLab attachments are read through it. */
     directory: string | null;
     /** The previewed PR's checks and mergeability, as its row has them. */
-    pullStatus: CachedValue<GitHubPullStatus | null>;
-    linearDetail: CachedValue<LinearIssue>;
-    githubDetail: CachedValue<GitHubReferenceDetail>;
+    pullStatus: CachedValue<ChangeRequestListStatus | null>;
+    trackerDetail: CachedValue<TrackerItem>;
+    repositoryDetail: CachedValue<RepositoryReferenceDetail>;
     purpose: ReferencePreviewPurpose;
     /** Desktop pane: own scroll with the send summary pinned below. */
     pinned: boolean;
@@ -700,8 +807,8 @@ export const ReferencePreview: React.FC<{
     footer?: React.ReactNode;
     /** Beside a PR's size: where to look at its changes. */
     pullLinks?: React.ReactNode;
-    /** Replaces a Linear issue's state pill, such as with one that changes the state. */
-    linearStateControl?: React.ReactNode;
+    /** Replaces a tracker item's state pill, such as with one that changes the state. */
+    trackerStateControl?: React.ReactNode;
     /** After an issue's or PR's activity: a way to answer it. */
     reply?: React.ReactNode;
     /** Replace an issue's or PR's labels, and a PR's reviewers, with ones that change them. */
@@ -713,17 +820,19 @@ export const ReferencePreview: React.FC<{
     commentAttachments?: CommentAttachments;
     /** Menu items on an issue's or PR's state pill, such as close or reopen. */
     stateMenu?: React.ReactNode;
-    /** Previews a Linear issue's parent or sub-issue; without it they are plain text. */
-    onOpenLinearIssue?: (issue: LinearIssueSummary) => void;
+    /** Previews a tracker item's parent or child; without it they are plain text. */
+    onOpenTrackerItem?: (item: TrackerItemSummary) => void;
     /** Reads an issue or PR again from its host, past every cached answer; settles when the reads are asked. */
     onRefresh?: () => Promise<void>;
     /** Answer and resolve a PR's review threads; without it they are read only. */
     threadActions?: ReferenceThreadActions;
     /** Opens another layer of the previewed PR's stack; without it the layers are plain text. */
     onOpenStackLayer?: (layer: PullRequestStackLayer) => void;
-}> = ({ item, directory, pullStatus, linearDetail, githubDetail, purpose, pinned, includeDiff, onIncludeDiffChange, now, footer, pullLinks, linearStateControl, reply, labelsControl, reviewersControl, onOpenChecks, commentAttachments, stateMenu, onOpenLinearIssue, onRefresh, threadActions, onOpenStackLayer }) => {
+    /** A change's revisions to pick the shown one from, where the host keeps revisions. */
+    revisionChoice?: RevisionChoice;
+}> = ({ item, directory, pullStatus, trackerDetail, repositoryDetail, purpose, pinned, includeDiff, onIncludeDiffChange, now, footer, pullLinks, trackerStateControl, reply, labelsControl, reviewersControl, onOpenChecks, commentAttachments, stateMenu, onOpenTrackerItem, onRefresh, threadActions, onOpenStackLayer, revisionChoice }) => {
     const { t } = useI18n();
-    const rewriteMarkdown = useGitLabUploadRewrite(directory, item?.source === 'github' ? item.reference : null);
+    const rewriteMarkdown = useProjectUploadRewrite(directory, item?.source === 'repository' ? item.reference : null);
     if (!item) {
         return (
             <div className="flex h-full items-center justify-center px-6 text-center typography-meta text-muted-foreground">
@@ -731,15 +840,15 @@ export const ReferencePreview: React.FC<{
             </div>
         );
     }
-    if (item.source === 'linear') {
-        return <LinearPreview issue={item.issue} detail={linearDetail} purpose={purpose} pinned={pinned} now={now} footer={footer} stateControl={linearStateControl} onOpenIssue={onOpenLinearIssue} />;
+    if (item.source === 'tracker') {
+        return <TrackerPreview issue={item.item} detail={trackerDetail} purpose={purpose} pinned={pinned} now={now} footer={footer} stateControl={trackerStateControl} onOpenIssue={onOpenTrackerItem} />;
     }
     return (
         <ReferenceMarkdownRewriteContext.Provider value={rewriteMarkdown}>
-            <GitHubPreview
+            <RepositoryPreview
                 reference={item.reference}
                 pullStatus={pullStatus}
-                detail={githubDetail}
+                detail={repositoryDetail}
                 purpose={purpose}
                 pinned={pinned}
                 includeDiff={includeDiff}
@@ -756,6 +865,7 @@ export const ReferencePreview: React.FC<{
                 onRefresh={onRefresh}
                 threadActions={threadActions}
                 onOpenStackLayer={onOpenStackLayer}
+                revisionChoice={revisionChoice}
             />
         </ReferenceMarkdownRewriteContext.Provider>
     );

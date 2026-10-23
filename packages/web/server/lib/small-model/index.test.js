@@ -367,6 +367,16 @@ describe('generateSmallModelText', () => {
     expect(lastGenerate().body.model).toEqual({ id: 'gpt-5-mini', providerID: 'openai' });
   });
 
+  it('sends the thinking variant a caller names with its own model', async () => {
+    state.models = [MODEL({ variants: [{ id: 'low' }, { id: 'high' }] })];
+
+    const result = await generateSmallModelText({
+      prompt: 'hi', directory: '/proj', model: 'anthropic/claude-haiku-4-5', variant: 'high',
+    });
+    expect(result).toMatchObject({ providerID: 'anthropic', modelID: 'claude-haiku-4-5', source: 'request' });
+    expect(lastGenerate().body.model).toEqual({ id: 'claude-haiku-4-5', providerID: 'anthropic', variant: 'high' });
+  });
+
   it('sends the thinking variant saved beside the small model override', async () => {
     state.models = [MODEL({ variants: [{ id: 'low' }, { id: 'high' }] })];
     fs.writeFileSync(

@@ -124,6 +124,7 @@ export const DefaultsSettings: React.FC = () => {
   // Fail closed: never offer providers whose credentials were not verified.
   const smallModelProviders = useCallableModelProviders() ?? [];
   const [walkthroughModelOverride, setWalkthroughModelOverride] = React.useState<string | undefined>();
+  const [walkthroughModelVariant, setWalkthroughModelVariant] = React.useState<string | undefined>();
   const [fallbackModel, setFallbackModel] = React.useState<string | undefined>();
   const [fallbackVariant, setFallbackVariant] = React.useState<string | undefined>();
   const [isLoading, setIsLoading] = React.useState(true);
@@ -154,6 +155,10 @@ export const DefaultsSettings: React.FC = () => {
           const walkthroughOverride = data.walkthroughModelOverride?.trim();
           if (walkthroughOverride) {
             setWalkthroughModelOverride(walkthroughOverride);
+          }
+          const walkthroughVariant = data.walkthroughModelVariant?.trim();
+          if (walkthroughVariant) {
+            setWalkthroughModelVariant(walkthroughVariant);
           }
           const fallback = data.fallbackModel?.trim();
           if (fallback) {
@@ -285,12 +290,26 @@ export const DefaultsSettings: React.FC = () => {
     async (providerId: string, modelId: string) => {
       const newValue = providerId && modelId ? `${providerId}/${modelId}` : undefined;
       setWalkthroughModelOverride(newValue);
+      // The thinking level belongs to the model it was picked for.
+      setWalkthroughModelVariant(undefined);
       try {
         // Clearing the picker is how the user goes back to the small model, so
         // an empty value is a real choice rather than a no-op.
-        await updateDesktopSettings({ walkthroughModelOverride: newValue ?? '' });
+        await updateDesktopSettings({ walkthroughModelOverride: newValue ?? '', walkthroughModelVariant: '' });
       } catch (error) {
         console.warn('Failed to save walkthrough model override:', error);
+      }
+    },
+    []
+  );
+
+  const handleWalkthroughModelVariantChange = React.useCallback(
+    async (variant: string | undefined) => {
+      setWalkthroughModelVariant(variant);
+      try {
+        await updateDesktopSettings({ walkthroughModelVariant: variant ?? '' });
+      } catch (error) {
+        console.warn('Failed to save walkthrough model variant:', error);
       }
     },
     []
@@ -360,6 +379,10 @@ export const DefaultsSettings: React.FC = () => {
   const smallModelVariants = React.useMemo(
     () => variantsOf(parsedSmallModel.providerId, parsedSmallModel.modelId),
     [parsedSmallModel.modelId, parsedSmallModel.providerId, variantsOf]
+  );
+  const walkthroughModelVariants = React.useMemo(
+    () => variantsOf(parsedWalkthroughModel.providerId, parsedWalkthroughModel.modelId),
+    [parsedWalkthroughModel.modelId, parsedWalkthroughModel.providerId, variantsOf]
   );
 
   if (isLoading) {
@@ -453,6 +476,12 @@ export const DefaultsSettings: React.FC = () => {
               isModelAllowed={isStructuredOutputCapable}
               placeholder={t('settings.openchamber.defaults.walkthroughModel.usesSmallModel')}
               className={SETTINGS_CUSTOM_TRIGGER_CLASS}
+            />
+            <ModelVariantSelect
+              variants={walkthroughModelVariants}
+              value={walkthroughModelVariant}
+              onChange={handleWalkthroughModelVariantChange}
+              ariaLabel={t('settings.openchamber.defaults.smallModel.thinking')}
             />
           </SettingsFieldRow>
         </div>

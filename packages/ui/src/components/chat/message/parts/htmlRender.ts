@@ -97,7 +97,7 @@ const darkLift = (foreground: string) => `inset 0 1px 0 0 color-mix(in srgb,${fo
 export function htmlRenderTheme(theme: Theme, metrics: HtmlRenderMetrics): HtmlRenderTheme {
     const { surface, interactive, primary, status, syntax } = theme.colors;
     const dark = theme.metadata.variant === 'dark';
-    // The app's main button (components/ui/button.tsx, TINT_PRIMARY): a pale
+    // The app's main button (components/ui/button-variants.ts, TINT_PRIMARY): a pale
     // accent fill and border with readable accent text. A dark theme mixes the
     // accent into transparent so the tone sits on the surface behind it.
     const tint = (amount: number, base: string) => `color-mix(in srgb,${primary.base} ${amount}%,${base})`;
@@ -223,7 +223,7 @@ const KIT_CSS = '.oc-box{box-sizing:border-box;padding:16px;border-radius:var(--
     + '.oc-box .oc-box{background-color:color-mix(in srgb,var(--foreground) 6%,transparent)}'
     + '.oc-muted{color:var(--muted-foreground)}'
     + '.oc-num{font-variant-numeric:tabular-nums;text-align:end}'
-    // The chat's own Markdown table (chat/markdown/decorate.ts): a framed
+    // The chat's own Markdown table (chat/markdown/MarkdownTable.tsx): a framed
     // block that scrolls sideways when wider than the column, rows apart by
     // a hairline.
     + '.oc-table{overflow-x:auto;overscroll-behavior-x:none;border:1px solid color-mix(in srgb,var(--border) 80%,transparent);border-radius:calc(var(--oc-rem) * .5);background-color:var(--card)}'
@@ -359,6 +359,15 @@ const ANNOTATION_BRIDGE = `(function(C){window.addEventListener("message",functi
 // page's width without resizing the root, so the tooltip check below also
 // sizes the page again when the bar's height changed.
 //
+// A page built as an app screen scrolls itself: the body, or a box spanning
+// the whole frame from its top to its bottom (`height:100vh` or `100%` with
+// `overflow:auto`), holds the content and the document never outgrows the
+// frame, so the frame stayed at its minimum height with the page scrolling
+// inside a 48 px strip. Such a box adds what it hides below its own edge.
+// Each box is grown that way once per height: a box of a fixed height that
+// only happened to span the frame does not follow, and growing it again would
+// swing the frame between two heights.
+//
 // A page that fits its frame cannot scroll at all. A document that can scroll
 // keeps a touch that starts on it: on a phone, a swipe over a page that fit
 // its frame bounced inside it instead of scrolling the chat. Only a page taller
@@ -418,9 +427,12 @@ const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("oc-html-ren
     + `window.addEventListener("message",function(e){var d=e.data;if(e.source!==window.parent||!d||d.type!==${JSON.stringify(POINTER_MESSAGE)})return;if(d.over===true)document.documentElement.setAttribute("data-oc-pointer","");else document.documentElement.removeAttribute("data-oc-pointer");});`
     + `document.addEventListener("click",function(e){var t=e.target,a=t&&t.closest?t.closest("a[href]"):null,u;if(!a)return;try{u=new URL(a.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol))return;e.preventDefault();window.parent.postMessage({type:${JSON.stringify(OPEN_LINK_MESSAGE)},url:u.href},"*");},true);`
     + ANNOTATION_BRIDGE
-    + `var h,G=0,z=function(){var r=document.documentElement,d=document.body,v=r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height,i,b;`
+    + `var h,G=0,HF=new WeakMap(),z=function(){var r=document.documentElement,d=document.body,v=r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height,i,b,k;`
     + `if(d&&!/^(?:hidden|clip|scroll|auto)$/.test(getComputedStyle(d).overflowY)){b=d.getBoundingClientRect();b=b.top+window.scrollY+(d.clientTop+d.scrollHeight)*(d.offsetHeight?b.height/d.offsetHeight:1);if(b>v)v=b;}if(N){N=0;W();}`
-    + `for(i=0;i<P.length;i++){b=P[i].getBoundingClientRect();if(getComputedStyle(P[i]).position==="absolute"&&(b.width||b.height)&&b.bottom+window.scrollY>v)v=b.bottom+window.scrollY;}i=window.innerHeight-r.clientHeight;v=Math.ceil(v);if(i&&!(i===G&&v===window.innerHeight))v+=i;G=i;r.style.overflowY=v>window.innerHeight+1?"auto":"hidden";if(v===h)return;h=v;window.parent.postMessage({type:${JSON.stringify(SIZE_MESSAGE)},height:v},"*");};window.addEventListener("resize",z);`
+    + `for(i=0;i<P.length;i++){b=P[i].getBoundingClientRect();if(getComputedStyle(P[i]).position==="absolute"&&(b.width||b.height)&&b.bottom+window.scrollY>v)v=b.bottom+window.scrollY;}`
+    + `for(i=-1;i<SC.length;i++){b=i<0?d:SC[i];if(!b||b.scrollHeight<=b.clientHeight+1||i<0&&!/^(?:scroll|auto)$/.test(getComputedStyle(b).overflowY))continue;k=b.getBoundingClientRect();`
+    + `if(k.top>1||Math.abs(k.bottom-window.innerHeight)>1||Math.abs((HF.get(b)||-9)-k.height)<.5)continue;HF.set(b,k.height);k=window.innerHeight+b.scrollHeight-b.clientHeight;if(k>v)v=k;}`
+    + `i=window.innerHeight-r.clientHeight;v=Math.ceil(v);if(i&&!(i===G&&v===window.innerHeight))v+=i;G=i;r.style.overflowY=v>window.innerHeight+1?"auto":"hidden";if(v===h)return;h=v;window.parent.postMessage({type:${JSON.stringify(SIZE_MESSAGE)},height:v},"*");};window.addEventListener("resize",z);`
     + `if(window.ResizeObserver){var o=new ResizeObserver(z);o.observe(document.documentElement);document.addEventListener("DOMContentLoaded",function(){if(document.body)o.observe(document.body);});}`
     + `document.addEventListener("DOMContentLoaded",z);window.addEventListener("load",z);`
     + `window.addEventListener("keydown",function(e){var t=e.composedPath()[0],f;if(!e.isTrusted||e.isComposing||!(e.metaKey||e.ctrlKey)||/^[acvxyz]$/i.test(e.key)&&!e.altKey||t&&(t.isContentEditable||/^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))return;`
@@ -459,8 +471,8 @@ const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("oc-html-ren
     + `window.addEventListener("touchstart",function(e){var t=e.touches[0];GX=t?t.clientX:null;GY=t?t.clientY:null;},{passive:true});`
     + `window.addEventListener("touchmove",function(e){var t=e.touches[0],x,y,dx,dy;if(!t||GX===null||GY===null)return;x=t.clientX;y=t.clientY;dx=x-GX;dy=y-GY;GX=x;GY=y;`
     + `if(!e.isTrusted||e.defaultPrevented||Math.abs(dy)<=Math.abs(dx))return;if(dy<0)GS("down");else if(!GU(e.target))GS("up");},{passive:true});`
-    + `var P=[],Q=0,N=1,C=function(e){for(var a=e.parentElement;a&&a!==document.body;a=a.parentElement){var o=getComputedStyle(a);if(o.overflowX!=="visible"||o.overflowY!=="visible")return 1;}return 0;},`
-    + `W=function(){P=[];var a=document.body?document.body.getElementsByTagName("*"):[];for(var i=0;i<a.length&&i<5000;i++){var p=getComputedStyle(a[i]).position;if((p==="absolute"||p==="fixed")&&!C(a[i]))P.push(a[i]);}},`
+    + `var P=[],SC=[],Q=0,N=1,C=function(e){for(var a=e.parentElement;a&&a!==document.body;a=a.parentElement){var o=getComputedStyle(a);if(o.overflowX!=="visible"||o.overflowY!=="visible")return 1;}return 0;},`
+    + `W=function(){P=[];SC=[];var a=document.body?document.body.getElementsByTagName("*"):[];for(var i=0;i<a.length&&i<5000;i++){var o=getComputedStyle(a[i]),p=o.position;if((p==="absolute"||p==="fixed")&&!C(a[i]))P.push(a[i]);if(/^(?:scroll|auto)$/.test(o.overflowY))SC.push(a[i]);}},`
     + `F=function(){Q=0;if(window.innerHeight-document.documentElement.clientHeight!==G)z();if(N){N=0;W();}var w=document.documentElement.clientWidth;for(var i=0;i<P.length;i++){var e=P[i],x=e.__ocx||0,y=e.__ocy||0,r=e.getBoundingClientRect(),l=r.left-x,g=r.right-x,t=r.top-y,b=r.bottom-y,nx=0,ny=0;if(!r.width&&!r.height)continue;`
     + `if(g>0&&l<w&&r.width<=w){if(g>w)nx=w-g;if(l+nx<0)nx=-l;}if(t<0&&b>0)ny=-t;if(nx!==x||ny!==y){e.__ocx=nx;e.__ocy=ny;e.style.translate=nx||ny?nx+"px "+ny+"px":"";}}},`
     + `U=function(r){if(r)N=1;if(!Q)Q=requestAnimationFrame(F);};`

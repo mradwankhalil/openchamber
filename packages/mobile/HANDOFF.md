@@ -159,8 +159,9 @@ iOS Simulator helpers: `mobile:sim:{boot,install,launch,run,serve,list,kill}` (s
 - **Android top inset comes from one place per OS version.** On Android 14 and older,
   `StatusBar.setOverlaysWebView({ overlay: false })` moves the WebView below the status bar, yet
   Capacitor still injects the bar height as `--safe-area-inset-top` once the WebView is 140 or
-  newer. Once that call succeeds on those versions (read from the WebView user agent),
-  `useNativeMobileChrome` adds `oc-android-below-status-bar` and `mobile.css` zeroes that inset; Android 15+
+  newer. Once that call succeeds on those versions (reported by the app-local `WindowLayout`
+  plugin; the WebView user agent is unreliable because GrapheneOS's Vanadium always says
+  `Android 10`), `useNativeMobileChrome` adds `oc-android-below-status-bar` and `mobile.css` zeroes that inset; Android 15+
   is edge-to-edge and keeps the injected value. Without it the app showed an empty strip under
   the status bar (#4803). The Android 14 emulator image ships WebView 113, so reproducing it
   needs a newer `com.android.webview` installed and selected.

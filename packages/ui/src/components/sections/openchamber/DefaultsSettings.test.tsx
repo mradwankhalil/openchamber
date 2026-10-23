@@ -370,4 +370,46 @@ describe('DefaultsSettings', () => {
 
     expect(host.querySelector('[data-select-value="__default__"]')).toBeNull();
   });
+
+  test('saves a thinking level for the walkthrough model and clears it when that model changes', async () => {
+    savedSettings = {
+      defaultModel: 'sidecar/model',
+      defaultVariant: 'high',
+      smallModelUseDefault: true,
+      walkthroughModelOverride: 'sidecar/small',
+    };
+    configState.providers = [{
+      id: 'sidecar',
+      models: [
+        { id: 'model', variants: { high: true } },
+        { id: 'small', variants: [{ id: 'low' }, { id: 'medium' }] },
+        { id: 'other', variants: [{ id: 'low' }] },
+      ],
+    }];
+
+    await act(async () => {
+      root.render(<DefaultsSettings />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The small model uses its default, so the only unset level picker is the walkthrough's.
+    const walkthroughSelect = host.querySelector('[data-select-value="__default__"]');
+    expect(walkthroughSelect).toBeTruthy();
+    await act(async () => {
+      walkthroughSelect?.querySelector<HTMLButtonElement>('button')?.click();
+      await Promise.resolve();
+    });
+    expect(updateCalls.some((call) => call.walkthroughModelVariant === 'medium')).toBe(true);
+
+    const walkthroughModelButton = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent === 'sidecar/small');
+    await act(async () => {
+      walkthroughModelButton?.click();
+      await Promise.resolve();
+    });
+    expect(updateCalls.some((call) => (
+      call.walkthroughModelOverride === 'sidecar/other' && call.walkthroughModelVariant === ''
+    ))).toBe(true);
+  });
 });

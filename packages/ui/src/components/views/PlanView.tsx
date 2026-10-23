@@ -226,18 +226,15 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
   const editorViewRef = React.useRef<EditorView | null>(null);
   const editorWrapperRef = React.useRef<HTMLDivElement | null>(null);
   const previewRef = React.useRef<HTMLDivElement | null>(null);
-  const [previewNode, setPreviewNode] = React.useState<HTMLDivElement | null>(null);
   const setPreviewContainer = React.useCallback((node: HTMLDivElement | null) => {
     previewRef.current = node;
-    setPreviewNode(node);
   }, []);
 
   const openLinkedFile = React.useCallback((absolutePath: string) => {
     if (!savedPlanProjectRef?.path) return;
     useUIStore.getState().openContextFile(savedPlanProjectRef.path, absolutePath);
   }, [savedPlanProjectRef]);
-  useMarkdownLocalAssets({
-    container: previewNode,
+  const markdownDocumentAssets = useMarkdownLocalAssets({
     filePath: loadedProjectPlanPath,
     workspaceRoot: savedPlanProjectRef?.path ?? null,
     onOpenFile: openLinkedFile,
@@ -954,7 +951,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
                         </div>
                       }
                     >
-                      <SimpleMarkdownRenderer content={content} className="typography-markdown-body" frontmatter="properties" enableFileReferences={false} />
+                      <SimpleMarkdownRenderer content={content} documentAssets={markdownDocumentAssets} className="typography-markdown-body" frontmatter="properties" enableFileReferences={false} />
                     </ErrorBoundary>
                   </div>
                 ) : (

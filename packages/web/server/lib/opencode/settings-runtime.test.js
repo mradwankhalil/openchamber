@@ -12,11 +12,12 @@ const createRuntime = async ({
   onPermissionDefaultModeChanged = undefined,
   onLastDirectoryChanged = undefined,
   chatRoots = undefined,
+  fs = fsPromises,
 } = {}) => {
   const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'oc-settings-runtime-'));
   const settingsFilePath = path.join(tempRoot, 'settings.json');
   const runtime = createSettingsRuntime({
-    fsPromises,
+    fsPromises: fs,
     path,
     crypto,
     SETTINGS_FILE_PATH: settingsFilePath,
@@ -495,6 +496,70 @@ describe('settings runtime', () => {
       expect(files).not.toContain('settings.json.tmp-1234-11111-abc');
       expect(files).not.toContain('settings.json.tmp-5678-22222-def');
     } finally {
+      await cleanup();
+    }
+  });
+
+  it('writes the next save after one failed with a full disk', async () => {
+    let failNextSettingsWrite = true;
+    const fs = {
+      ...fsPromises,
+      writeFile: async (file, ...rest) => {
+        if (failNextSettingsWrite && path.basename(String(file)).startsWith('settings.json.tmp-')) {
+          failNextSettingsWrite = false;
+          const error = new Error('ENOSPC: no space left on device, write');
+          error.code = 'ENOSPC';
+          throw error;
+        }
+        return fsPromises.writeFile(file, ...rest);
+      },
+    };
+    const { runtime, settingsFilePath, cleanup } = await createRuntime({
+      fs,
+      mergePersistedSettings: (current, changes) => ({ ...current, ...changes }),
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(runtime.persistSettings({ lightThemeId: 'flexoki-light' })).rejects.toThrow('ENOSPC');
+      await expect(runtime.persistSettings({ lastDirectory: '/work/a' })).resolves.toMatchObject({ lastDirectory: '/work/a' });
+      const onDisk = JSON.parse(await fsPromises.readFile(settingsFilePath, 'utf8'));
+      expect(onDisk.lastDirectory).toBe('/work/a');
+      expect((await runtime.readSettingsFromDisk()).lightThemeId).toBeUndefined();
+    } finally {
+      warn.mockRestore();
+      await cleanup();
+    }
+  });
+
+  it('writes a save already queued behind one that fails with a full disk', async () => {
+    let failNextSettingsWrite = true;
+    const fs = {
+      ...fsPromises,
+      writeFile: async (file, ...rest) => {
+        if (failNextSettingsWrite && path.basename(String(file)).startsWith('settings.json.tmp-')) {
+          failNextSettingsWrite = false;
+          const error = new Error('ENOSPC: no space left on device, write');
+          error.code = 'ENOSPC';
+          throw error;
+        }
+        return fsPromises.writeFile(file, ...rest);
+      },
+    };
+    const { runtime, settingsFilePath, cleanup } = await createRuntime({
+      fs,
+      mergePersistedSettings: (current, changes) => ({ ...current, ...changes }),
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const first = runtime.persistSettings({ lightThemeId: 'flexoki-light' });
+      const second = runtime.persistSettings({ lastDirectory: '/work/b' });
+      await expect(first).rejects.toThrow('ENOSPC');
+      await expect(second).resolves.toMatchObject({ lastDirectory: '/work/b' });
+      const onDisk = JSON.parse(await fsPromises.readFile(settingsFilePath, 'utf8'));
+      expect(onDisk.lastDirectory).toBe('/work/b');
+      expect((await runtime.readSettingsFromDisk()).lightThemeId).toBeUndefined();
+    } finally {
+      warn.mockRestore();
       await cleanup();
     }
   });

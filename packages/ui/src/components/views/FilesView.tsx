@@ -40,9 +40,9 @@ import { JsonTreeView } from '@/components/ui/JsonTreeView';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 import { languageByExtension, loadLanguageByExtension } from '@/lib/codemirror/languageByExtension';
 import { createFlexokiCodeMirrorTheme } from '@/lib/codemirror/flexokiTheme';
-import { shikiHighlightExtension } from '@/lib/codemirror/shikiHighlight';
+import { codeHighlightExtension } from '@/lib/codemirror/codeHighlight';
 import { syncVimMappings } from '@/lib/codemirror/vimModeExtension';
-import { getResolvedShikiTheme } from '@/lib/shiki/appThemeRegistry';
+import { getCodeTokenTheme } from '@/lib/shiki/appThemeRegistry';
 import { File as PierreFile, VirtualizerContext, WorkerPoolContext } from '@pierre/diffs/react';
 import { useWorkerPool } from '@/contexts/DiffWorkerProvider';
 import { useFileViewVirtualizer, type FileViewVirtualizer } from './useFileViewVirtualizer';
@@ -127,6 +127,7 @@ import {
 import { Icon } from "@/components/icon/Icon";
 import { useMessageTTS } from '@/hooks/useMessageTTS';
 import { ensurePierreThemeRegistered } from '@/lib/shiki/appThemeRegistry';
+import { DIFFS_HIGHLIGHTER, toDiffsLanguage } from '@/lib/shiki/diffsHighlighter';
 import { getDefaultTheme } from '@/lib/theme/themes';
 import { isBrowserClientRuntime, isDesktopLocalOriginActive, openDesktopFileInApp, openDesktopPath } from '@/lib/desktop';
 import { registerCloseTabTarget } from '@/lib/closeTabTarget';
@@ -201,7 +202,7 @@ const OpenInAppListIcon = ({ label, iconDataUrl }: { label: string; iconDataUrl?
     <span
       className={cn(
         'size-4 rounded-sm flex items-center justify-center',
-        'oc-tile-inset text-[9px] font-medium text-muted-foreground'
+        'oc-tile-inset text-[0.5625rem] font-medium text-muted-foreground'
       )}
     >
       {initial}
@@ -3792,9 +3793,9 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
       return [createFlexokiCodeMirrorTheme(currentTheme, { fontSize: editorFontSize })];
     }
 
-    // Shiki token colors (worker-backed) match the Shiki file view exactly.
+    // Token colors from the file view's highlighter (see codeHighlight.ts).
     // Same language resolver as the view, so both agree on the language. When
-    // Shiki is the color source, drop the lezer token colors to avoid a
+    // it is the color source, drop the lezer token colors to avoid a
     // competing highlighter (Keep the lezer language for indentation/folding).
     const shikiLanguage = getLanguageFromExtension(selectedFile.path);
     const extensions = [createFlexokiCodeMirrorTheme(currentTheme, shikiLanguage ? { syntaxColors: false, fontSize: editorFontSize } : { fontSize: editorFontSize })];
@@ -3803,10 +3804,10 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
       extensions.push(language);
     }
     if (shikiLanguage) {
-      extensions.push(shikiHighlightExtension({
+      extensions.push(codeHighlightExtension({
         language: shikiLanguage,
         themeName: currentTheme.metadata.id,
-        theme: getResolvedShikiTheme(currentTheme),
+        theme: getCodeTokenTheme(currentTheme),
       }));
     }
     if (wrapLines) {
@@ -4123,17 +4124,13 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
     connectFullscreenVirtualizer(node);
     setFullscreenCodeScroller(node);
   }, [connectFullscreenVirtualizer, setFullscreenCodeScroller]);
-  const [mdPreviewNode, setMdPreviewNode] = React.useState<HTMLDivElement | null>(null);
-  const [mdFullscreenPreviewNode, setMdFullscreenPreviewNode] = React.useState<HTMLDivElement | null>(null);
   const setMainMarkdownScroller = React.useCallback((node: HTMLDivElement | null) => {
     markdownPreviewRef.current = node;
     mdPreviewContainerRef.current = node;
-    setMdPreviewNode(node);
     setMainMarkdownScroll(node);
   }, [setMainMarkdownScroll]);
   const setFullscreenMarkdownScroller = React.useCallback((node: HTMLDivElement | null) => {
     mdFullscreenPreviewContainerRef.current = node;
-    setMdFullscreenPreviewNode(node);
     setFullscreenMarkdownScroll(node);
   }, [setFullscreenMarkdownScroll]);
   // A relative link in a rendered Markdown file opens that file here; on
@@ -4145,16 +4142,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
   }, [panelRoot]);
   const markdownLocalAssetsActive = isMarkdown && mdViewMode === 'preview' && !fileLoading;
   const markdownColorScheme = currentTheme.metadata.variant === 'light' ? 'light' : 'dark';
-  useMarkdownLocalAssets({
-    container: mdPreviewNode,
-    filePath: selectedFile?.path ?? null,
-    workspaceRoot: root || null,
-    onOpenFile: openLinkedFile,
-    enabled: markdownLocalAssetsActive,
-    colorScheme: markdownColorScheme,
-  });
-  useMarkdownLocalAssets({
-    container: mdFullscreenPreviewNode,
+  const markdownDocumentAssets = useMarkdownLocalAssets({
     filePath: selectedFile?.path ?? null,
     workspaceRoot: root || null,
     onOpenFile: openLinkedFile,
@@ -4163,7 +4151,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
   });
   const shikiWorkerPool = useWorkerPool('unified');
   // Large code previews use the full draft with viewport virtualization and
-  // the shared Shiki worker pool. The threshold does not disable editing.
+  // the shared diff worker pool. The threshold does not disable editing.
   const isLargeFile = draftContent.length > LARGE_FILE_CHAR_THRESHOLD;
   const largeFileCacheKey = React.useMemo(
     () => (isLargeFile && codePreviewActive ? makeFileContentCacheKey(draftContent) : undefined),
@@ -4174,7 +4162,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
     const fileContents = {
       name: file.name,
       contents: content,
-      lang: getLanguageFromExtension(file.path) || undefined,
+      lang: toDiffsLanguage(getLanguageFromExtension(file.path)),
     };
     const pierreFile = (key: string) => (
       <PierreFile
@@ -4185,6 +4173,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
           overflow: wrapLines ? 'wrap' : 'scroll',
           theme: pierreTheme,
           themeType: currentTheme.metadata.variant === 'dark' ? 'dark' : 'light',
+          preferredHighlighter: DIFFS_HIGHLIGHTER,
           onPostRender: restoreScroll,
         }}
         className={isLargeFile ? 'block w-full' : 'block h-full w-full'}
@@ -4197,7 +4186,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
     }
 
     // Large files render through pierre's Virtualizer (viewport-only DOM) and
-    // the shared Shiki worker pool. The pool is created lazily: until it is
+    // the shared diff worker pool. The pool is created lazily: until it is
     // ready the key carries a 'pending' suffix so the file remounts with the
     // worker-backed highlighter instead of silently staying on the main thread.
     return (
@@ -5009,7 +4998,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
               variant="outline"
               onClick={() => void saveAndContinue()}
               disabled={isSaving}
-              className="border-[var(--status-success-border)] bg-[var(--status-success-background)] text-[var(--status-success)] hover:bg-[rgb(var(--status-success)/0.2)]"
+              className="border-[var(--status-success-border)] bg-[var(--status-success-background)] text-[var(--status-success)] hover:bg-[var(--status-success)]/20"
             >
               {t('filesView.unsaved.saveChanges')}
             </Button>
@@ -5280,6 +5269,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
                   <div style={previewFontStyle}>
                     <SimpleMarkdownRenderer
                       content={fileContent}
+                      documentAssets={markdownDocumentAssets}
                       className="typography-markdown-body"
                       frontmatter="properties"
                       enableFileReferences={false}
@@ -5596,6 +5586,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
                 <div style={previewFontStyle}>
                   <SimpleMarkdownRenderer
                     content={fileContent}
+                    documentAssets={markdownDocumentAssets}
                     className="typography-markdown-body"
                     frontmatter="properties"
                     enableFileReferences={false}

@@ -76,8 +76,11 @@ test('the page sums up, lists what waits first, and asks before marking everythi
   ));
 
   const text = container.textContent ?? '';
-  expect(text).toContain('2 things wait on you.');
-  expect(text).toContain('2 sessions look done.');
+  expect(text).toContain('2 need you');
+  expect(text).toContain('2 look done');
+  // The question a session waits on is named under its title.
+  expect(text).toContain('Which branch?');
+  expect([...container.querySelectorAll('button')].filter((button) => button.textContent === 'Answer').length).toBe(1);
   expect(text.indexOf('Fix relay reconnect')).toBeLessThan(text.indexOf('Usage stats'));
   expect(text).toContain('asks a question');
   // An unread end wears the sidebar's unread mark instead of a word.

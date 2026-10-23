@@ -170,7 +170,7 @@ environment:
 - OpenAI üzerinden sesli okuma kapalıdır. Özel bir konuşma sentezi ya da transkripsiyon sunucusu aynı makinede çalışmalıdır. Yerel sesler ve yerel dikte modelleri çalışmaya devam eder.
 - Telefonlara ve tarayıcılara giden push bildirimleri yalnızca "Agent response is ready" gibi genel bir başlık taşır; mesaj metni ya da oturum adı içermez. Masaüstü bildirimleri makinenizde kalır ve metnin tamamını korur.
 - Güncelleme kontrolleri çalışmaya devam eder, böylece güvenlik düzeltmeleri size ulaşmaya devam eder; ama kullanım bilgisi asla bildirilmez, anonim kurulum kimliği bile gönderilmez.
-- [Harici tüneller](/tr/tunnels/) (Cloudflare, ngrok) kapalıdır. Bir tünel sağlayıcısı trafiği kendi ucunda çözer ve her isteği düz metin olarak görür.
+- [Harici tüneller](/tr/tunnels/) (Cloudflare, ngrok, Tailscale) kapalıdır. Cloudflare ve ngrok trafiği kendi uçlarında çözer ve her isteği düz metin olarak görür; Tailscale Serve ve Funnel bu makineyi başka cihazlara açar.
 - `.drawio` diyagramları XML metni olarak açılır. Diyagram düzenleyicisi diagrams.net'in bir sayfasıdır ve bir diyagramı orada açmak dosyayı o sayfaya verir.
 - Kenar çubuğundaki entegrasyon kataloğu gizlenir. Katalog, OpenChamber ile gelen bir listeden dış hizmetler kurar. Ayarlar'dan MCP sunucusu, eklenti ve skill eklemek eskisi gibi çalışır.
 - Herkese açık bir CDN'den yüklenen arayüz ve kod yazı tipleri sistem yazı tiplerine döner. Seçiminiz mod kapandığında kullanılmak üzere saklanır.

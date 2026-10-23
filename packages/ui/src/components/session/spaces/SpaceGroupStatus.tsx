@@ -66,7 +66,7 @@ const STATE_LINE = {
 const Line: React.FC<{ icon: 'loader-4' | 'error-warning' | 'alert' | 'stop'; tone: 'muted' | 'error' | 'warning'; children: React.ReactNode }> = ({ icon, tone, children }) => (
   <span className={tone === 'error' ? 'flex items-start gap-1.5 text-[var(--status-error)]' : tone === 'warning' ? 'flex items-start gap-1.5 text-[var(--status-warning)]' : 'flex items-start gap-1.5 text-muted-foreground'}>
     {icon === 'loader-4' ? <Spinner className="mt-px h-3 w-3 shrink-0" /> : <Icon name={icon} className="mt-px h-3 w-3 shrink-0" />}
-    <span className="min-w-0 whitespace-normal break-words text-[11px] leading-tight">{children}</span>
+    <span className="min-w-0 whitespace-normal break-words text-[0.6875rem] leading-tight">{children}</span>
   </span>
 );
 

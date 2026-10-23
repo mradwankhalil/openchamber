@@ -267,6 +267,23 @@ describe('session image assets', () => {
     }
   });
 
+  it('takes the source list of a page that names hundreds of images', async () => {
+    const fixture = await createFixture({ sources: [] });
+    const files = Array.from({ length: 400 }, (_, index) => path.join(fixture.directory, `a-long-gallery-file-name-for-poster-number-${index + 1}.png`));
+    await Promise.all(files.map((file) => fs.writeFile(file, PNG)));
+    const html = files.map((file) => `<img src="${file}">`).join('');
+    fixture.fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+      id: 'msg_1',
+      type: 'assistant',
+      content: [{ type: 'tool', name: 'openchamber_render', id: 'call_1', state: { status: 'completed', input: { html, title: 'Gallery' } } }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+
+    // Well past the old 32 KB body limit.
+    expect(JSON.stringify(files).length).toBeGreaterThan(32 * 1024);
+    const response = await preparePage(fixture.app, fixture.directory, 'call_1', files);
+    expect(response.body.results.filter((result) => result.status === 'ready')).toHaveLength(400);
+  });
+
   it('shows a page\'s images in page order while their files fit the page\'s weight budget', async () => {
     const fixture = await createFixture({ sources: [] });
     const [first, missing, second, third, small] = ['first.png', 'missing.png', 'second.png', 'third.png', 'small.png']

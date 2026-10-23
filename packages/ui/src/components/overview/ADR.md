@@ -29,22 +29,26 @@ to on purpose, the overview is a status read.
 
 Sections, top to bottom (`lib/overview/overviewModel.ts` decides membership):
 
-- **Summary.** One to three sentences ("3 things wait on you. 2 agents are
-  running, 4 sessions look done."), then the running sessions as a line of
-  chips with the sidebar's activity mark and turn timer.
-- **Waiting on you.** A permission or question request from any session,
-  shown on the top-level session the user opens (a subagent's request is
-  answered in its parent). An unread end with an error. A failed scheduled run.
-  An own PR with failed checks or a conflict. An unread finished session. At the
-  end, one folded line "PRs asking for your review: N" that opens into the list.
+- **Counts.** One line: "2 need you · 1 running · 1 looks done · 12 in work ·
+  3 to clean up", each a jump to its section; "Nothing needs you." when every
+  count is zero.
+- **Needs you.** A permission or question request from any session, shown on
+  the top-level session the user opens (a subagent's request is answered in its
+  parent), with the question named under the title and an Answer action. An
+  unread end with an error. A failed scheduled run. An own PR with failed
+  checks or a conflict, with an Open PR action. An unread finished session with
+  its recap. At the end, one folded line "PRs asking for your review: N" that
+  opens into the list.
+- **Running.** Rows with the activity mark, the turn timer and Open.
 - **Looks done.** Sessions in work, idle, read, with a done signal and no veto.
-  Each row: Mark done, and Clean up where that is safe. A bulk "Mark all done".
-- **In work.** The rest of the sessions in work: idle, read, no done signal or
-  a veto, touched in the last three days. The veto shows as a note.
-- **Stalled** (folded). In work, not done, untouched for three days.
-- **Can be cleaned up** (folded). Linked worktrees whose PR is merged, or that
-  have no open PR and no activity for 14 days. Bulk "Clean up all" for the
-  ones where nothing is lost.
+  Each row: Done, and Clean up where that is safe. A bulk "Mark all done".
+- **In work.** The rest of the sessions in work, grouped by project: one row
+  per project with "N in work · N stalled", the sessions underneath when
+  opened (a single project lists them straight away). The veto shows as a
+  note; a session untouched for three days sits last with a "stalled" note.
+- **Can be cleaned up.** Linked worktrees whose PR is merged, or that have no
+  open PR and no activity for 14 days, open by default. "Clean up all (N)" in
+  the header for the ones where nothing is lost.
 
 "In work" means the sidebar's In work set (`metadata.openchamber.work`). With
 the In work feature off, the page follows every session touched in the last
@@ -129,7 +133,8 @@ The repository's CODEOWNERS names the maintainer for everything, so
 `review-requested:@me` returned the whole open queue: 30 rows on the first try.
 Those are the board's catalogue, not something waiting on the user, so they are
 counted on one line that opens into the list. GitHub only for now: the search
-across repositories does not ask GitLab.
+across repositories asks one provider with `features.referencesAcross`, and
+GitLab and Gitea do not have it.
 
 ### The page reads what it needs itself
 
@@ -169,10 +174,22 @@ Three passes on the maintainer's screen:
    only. The project is named only when the page spans more than one project.
    This is the current pass.
 
-Feedback on pass 3: the title was hard to tell from the metadata. The title is
-now always full strength (medium, semibold when waiting), recaps are one muted
-line with the full text on hover, notes and project names are smaller and
-lighter, and stalled rows carry no recap.
+Feedback on pass 3: the title was hard to tell from the metadata. The title
+became always full strength (medium, semibold when waiting), recaps one muted
+line with the full text on hover, notes and project names smaller and lighter,
+and stalled rows carried no recap.
+
+4. **Rows that carry their actions, counts instead of a sentence, In work by
+   project** (2026-10-23). The maintainer's verdict on pass 3 was "too simple
+   and too complex at once": a row said only a title and a time, while the page
+   stacked five sections, two of them folded, and its summary sentence repeated
+   the section headers. Each row now carries its actions at rest (quiet, full
+   on hover) and names its reason in the colour of its state beside the title;
+   the summary is a line of counts that jump to their sections; running
+   sessions are rows, not chips; In work is one row per project with counts,
+   opened on click, with stalled sessions last in their project instead of a
+   section; Clean up is open by default with its bulk action in the header.
+   The current pass.
 
 Principle that came out of it: the page should not invent a visual language.
 Colour lives on marks and on notes that name a problem; everything else is the
@@ -180,16 +197,20 @@ text colour or muted.
 
 ## Not built yet
 
-- **Projects section.** One quiet row per project with counts: PRs merged,
-  open PRs and issues with new ones, Linear done. Counts use calendar "today /
-  yesterday" in local time; the maintainer found that simpler than a rolling
-  24 hours, and "since your last visit" was rejected because opening the page
-  without reading it would wipe the counts.
+- **Project counts beyond In work.** The project rows under In work count
+  only sessions. The planned counts per project (PRs merged, open PRs and
+  issues with new ones, tracker items done) use calendar "today / yesterday"
+  in local time; the maintainer found that simpler than a rolling 24 hours,
+  and "since your last visit" was rejected because opening the page without
+  reading it would wipe the counts.
+- **What a running agent is doing now.** A running row shows the timer; the
+  current tool or file would need message-level data the global stores do not
+  carry.
 - **All my open PRs across projects** (v1 knows only the PRs of session
   branches and linked ones).
 - **GitLab parity** for review requests and the counts: the maintainer requires
   GitLab to match GitHub.
-- **Linear completed counts.**
+- **Tracker completed counts** (Linear today).
 
 ## Where to look
 

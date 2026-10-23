@@ -72,4 +72,17 @@ describe('Toaster', () => {
 
     expect(documentQueries.mock.calls.length).toBe(queriesBefore);
   });
+
+  test('draws a loading toast with the app spinner in place of sonner\'s own', async () => {
+    await act(async () => root.render(<Toaster />));
+
+    await act(async () => {
+      toast.loading('Saving images');
+    });
+    await settle();
+
+    const icon = document.querySelector('[data-sonner-toast] [data-icon]');
+    expect(icon?.querySelector('[data-spinner]')).not.toBeNull();
+    expect(icon?.querySelector('.sonner-loading-bar')).toBeNull();
+  });
 });

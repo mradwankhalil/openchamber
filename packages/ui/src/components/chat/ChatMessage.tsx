@@ -24,6 +24,7 @@ import type { StreamPhase, ToolPopupContent } from './message/types';
 import { deriveMessageRole } from './message/messageRole';
 import { filterVisibleParts, normalizeParts } from './message/partUtils';
 import { normalizeUserDisplayParts } from './message/normalizeUserDisplayParts';
+import { useSourceControlDescriptorOf } from '@/lib/source-control/providers/registry';
 import { isHiddenUserMessage } from './message/hiddenUserMessage';
 import { flattenAssistantTextParts, flattenUserTextParts } from '@/lib/messages/messageText';
 import { assistantErrorNotice } from '@/lib/messages/assistantError';
@@ -79,12 +80,12 @@ function useStickyDisplayValue<T>(value: T | null | undefined): T | null | undef
 // Assistant text goes to the clipboard as Markdown with its rendered HTML,
 // or as the plain text the reader sees when the user asked for that.
 const copyAssistantText = async (text: string) => {
-    const { renderMarkdownSync } = await import('./markdown/markdownCore');
-    const html = renderMarkdownSync(text);
+    const { renderMarkdownForExport } = await import('./markdown/renderMarkdownForExport');
+    const root = await renderMarkdownForExport(text, { purpose: 'copy' });
     const plainText = useUIStore.getState().copyMessagesAsPlainText
-        ? (await import('./markdown/selectionMarkdown')).renderedMarkdownHtmlToPlainText(html, document)
+        ? (await import('./markdown/selectionMarkdown')).serializeRenderedMarkdown(root, 'plain')
         : undefined;
-    return copyMarkdownToClipboard(text, html, { plainText });
+    return copyMarkdownToClipboard(text, root.innerHTML, { plainText });
 };
 
 const getMessageInfoProp = (info: unknown, key: string): unknown => {
@@ -172,14 +173,16 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
         }))
     );
 
+    // Change-request chips are labelled by their provider; the lookup changes when the list lands.
+    const descriptorOf = useSourceControlDescriptorOf();
     const normalizedParts = React.useMemo(() => {
         const safeParts = normalizeParts(message.parts);
         if (!isUser) {
             return safeParts;
         }
 
-        return normalizeUserDisplayParts(safeParts);
-    }, [isUser, message.parts]);
+        return normalizeUserDisplayParts(safeParts, descriptorOf);
+    }, [descriptorOf, isUser, message.parts]);
 
     const agentName = React.useMemo(() => {
         if (isUser) return undefined;

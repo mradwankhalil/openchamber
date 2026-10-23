@@ -57,7 +57,9 @@ login `generateSmallModelText` throws `404`. What happens next is per feature:
 
 Five things are decided here, in order:
 
-1. An explicit `model` on the request (`provider/model`) — `source: 'request'`.
+1. An explicit `model` on the request (`provider/model`), with the thinking
+   level the caller names beside it (`variant` for `generateSmallModelText`,
+   `overrideVariant` for `describeSmallModel`) — `source: 'request'`.
 2. OpenChamber's settings override (Settings → Sessions → Small Model): when
    `smallModelUseDefault` is `false`, `smallModelOverride` wins and
    `smallModelVariant` names the thinking level beside it —

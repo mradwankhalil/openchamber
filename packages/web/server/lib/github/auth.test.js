@@ -57,12 +57,13 @@ describe('GitHub auth credentials', () => {
       status: 'valid',
     })]);
     await expect(auth.getGitHubAuthByAccountId('github.com#7', 1)).resolves.toMatchObject({ accessToken: 'new-secret' });
+    // github.com alone is written in the version 2 shape earlier releases read.
     const stored = JSON.parse(await fs.readFile(filePath, 'utf8'));
-    expect(stored).toMatchObject({ version: 3, instances: { 'github.com': expect.objectContaining({ activeCredentialId: 'github.com#7' }) } });
-    expect(stored.instances['github.com'].credentials).toEqual([expect.objectContaining({ credentialId: 'github.com#7', revision: 1, accessToken: 'new-secret' })]);
+    expect(stored).toMatchObject({ version: 2, activeCredentialId: 'github.com#7' });
+    expect(stored.credentials).toEqual([expect.objectContaining({ credentialId: 'github.com#7', revision: 1, accessToken: 'new-secret' })]);
   });
 
-  it('migrates a version 2 flat file into the github.com instance', async () => {
+  it('reads a version 2 flat file into the github.com instance and keeps writing version 2', async () => {
     const filePath = path.join(directory, 'github-auth.json');
     await fs.writeFile(filePath, JSON.stringify({
       version: 2,
@@ -78,7 +79,8 @@ describe('GitHub auth credentials', () => {
     await auth.setGitHubAuth({ accessToken: 'new-secret', user: { id: 8, login: 'other' }, source: 'pat' });
 
     const stored = JSON.parse(await fs.readFile(filePath, 'utf8'));
-    expect(stored).toMatchObject({ version: 3, instances: { 'github.com': expect.objectContaining({ activeCredentialId: expect.any(String) }) } });
+    expect(stored).toMatchObject({ version: 2, activeCredentialId: expect.any(String) });
+    expect(stored.credentials).toHaveLength(2);
   });
 
   it('keeps OAuth and PAT credentials for one provider user distinct and immutable', async () => {
@@ -109,8 +111,8 @@ describe('GitHub auth credentials', () => {
       expect.objectContaining({ id: oauth.accountId, status: 'invalid', providerUserStatus: 'available' }),
       expect.objectContaining({ id: pat.accountId, status: 'valid', providerUserStatus: 'available' }),
     ]);
-    await expect(auth.removeGitHubAuthAccount(oauth.accountId)).resolves.toBe(true);
-    await expect(auth.removeGitHubAuthAccount(oauth.accountId)).resolves.toBe(false);
+    await expect(auth.removeGitHubAuthAccountForHost('github.com', oauth.accountId)).resolves.toBe(true);
+    await expect(auth.removeGitHubAuthAccountForHost('github.com', oauth.accountId)).resolves.toBe(false);
   });
 
   it('fails closed on malformed or unsupported storage and leaves it untouched', async () => {

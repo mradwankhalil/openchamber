@@ -34,7 +34,7 @@ export const registerMagicPromptRoutes = (app, dependencies) => {
     runtime: createMagicPromptRuntime({ fsPromises, path, filePath: path.join(openchamberDataDir, 'magic-prompts.json') }),
     projectRuntime: createProjectMagicPromptRuntime({ projectConfigRuntime }),
     listProjects,
-    ownerOfDirectory: createMagicPromptOwnerResolver({ path, listProjects, resolvePrimaryWorktreeRoot, resolveWorktreeTopLevel }),
+    ownerOfDirectory: createMagicPromptOwnerResolver({ path, realpath: (value) => fsPromises.realpath(value), listProjects, resolvePrimaryWorktreeRoot, resolveWorktreeTopLevel }),
   });
 
   const answer = (method, withId) => async (req, res) => {

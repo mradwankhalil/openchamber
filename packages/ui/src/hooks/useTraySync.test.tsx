@@ -7,6 +7,9 @@ import { CHAT_DRAFT_PROJECT_ID } from '@/lib/chatDirectories';
 import { useTraySync } from './useTraySync';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
+import { getPinnedSessionKey } from '@/lib/sessionPins';
+import { getRuntimeKey } from '@/lib/runtime-switch';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useUIStore } from '@/stores/useUIStore';
 import {
@@ -340,6 +343,34 @@ describe('Tray sessions follow the configured projects', () => {
     await act(async () => root.render(<Harness />));
     await flush();
     expect(lastSnapshot()?.sessions?.map((entry) => entry.id)).toEqual(['in-worktree']);
+  });
+
+  test('keeps an in-work or pinned session whose project is gone, as the sidebar zones do', async () => {
+    useGlobalSessionsStore.setState({
+      activeSessions: [
+        { ...session('in-work', undefined, '/tmp/removed'), metadata: { openchamber: { work: { state: 'open' } } } },
+        session('pinned', undefined, '/tmp/removed-too'),
+        session('elsewhere', undefined, '/tmp/eval-run'),
+      ],
+    });
+    const pinKey = getPinnedSessionKey(getRuntimeKey(), '/tmp/removed-too', 'pinned');
+    useSessionPinnedStore.setState({ ids: new Set(pinKey ? [pinKey] : []) });
+    await act(async () => root.render(<Harness />));
+    await flush();
+    expect(lastSnapshot()?.sessions?.map((entry) => entry.id).sort()).toEqual(['in-work', 'pinned']);
+    useSessionPinnedStore.setState({ ids: new Set() });
+  });
+
+  test('drops a /btw fork, which the sidebar never lists', async () => {
+    useGlobalSessionsStore.setState({
+      activeSessions: [
+        session('in-project'),
+        { ...session('btw-fork'), metadata: { openchamber: { kind: 'btw', originalSessionID: 'in-project' } } },
+      ],
+    });
+    await act(async () => root.render(<Harness />));
+    await flush();
+    expect(lastSnapshot()?.sessions?.map((entry) => entry.id)).toEqual(['in-project']);
   });
 
   test('still lists a pending approval from a session it hides', async () => {

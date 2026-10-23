@@ -132,6 +132,24 @@ const primaryCheckoutPathOf = (
   return path.posix.join(root, target.slice(checkout.length));
 };
 
+/**
+ * A path with symlinks resolved, through its nearest existing parent when the
+ * folder itself does not exist yet. Git reports checkouts this way, so
+ * workspace folders opened through a symlink (`/tmp` on macOS) are compared
+ * in the same form.
+ */
+const canonicalPath = async (value: string): Promise<string> => {
+  const resolved = path.resolve(value);
+  let existing = resolved;
+  for (;;) {
+    const real = await fs.promises.realpath(existing).catch(() => null);
+    if (real) return path.join(real, path.relative(existing, resolved));
+    const parent = path.dirname(existing);
+    if (parent === existing) return resolved;
+    existing = parent;
+  }
+};
+
 type MagicPromptServiceDeps = {
   globalFilePath: string;
   sharedFiles: Pick<ProjectSetupStore, 'readSharedFile' | 'updateSharedEntry'>;
@@ -152,12 +170,15 @@ export const createMagicPromptService = ({ globalFilePath, sharedFiles, listProj
    * failed rejects.
    */
   const ownerOfDirectory = async (directory: string): Promise<MagicPromptProject | null> => {
-    const registered = listProjects();
-    const direct = longestOwningProject(registered, directory);
+    const projects = listProjects();
+    const registered = await Promise.all(projects.map(async (project) => ({ ...project, path: normalizeProjectPath(await canonicalPath(project.path)) })));
+    const target = await canonicalPath(directory);
+    const direct = longestOwningProject(registered, target);
     const repository = await repositoryOf(directory);
-    const mapped = repository ? primaryCheckoutPathOf(registered, repository, directory) : null;
-    if (mapped === null) return direct;
-    return longestOwningProject(registered, mapped) ?? direct;
+    const mapped = repository ? primaryCheckoutPathOf(registered, repository, target) : null;
+    const owner = mapped === null ? direct : (longestOwningProject(registered, mapped) ?? direct);
+    // The caller gets the project as it is registered, not its resolved path.
+    return owner ? projects.find((project) => project.id === owner.id) ?? null : null;
   };
 
   const service = createSharedMagicPromptService({

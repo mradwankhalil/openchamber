@@ -77,7 +77,7 @@ import { useMessageQueueStore } from "@/stores/messageQueueStore"
 import { subscribeMessageQueueSync } from "./message-queue-sync"
 import { subscribeSessionWarmingSync } from "./session-warming-sync"
 import { subscribeSessionFoldersSync } from "./session-folders-sync"
-import { subscribeSpacePermissionModes } from "./permission-mode-sync"
+import { subscribePermissionPolicySync, subscribeSpacePermissionModes } from "./permission-mode-sync"
 import { spaceFoldersOfProject, subscribeSpaceCatalogs } from "./space-catalog-sync"
 import {
   processVSCodePermissionAutoAccept,
@@ -103,9 +103,12 @@ import {
   useGlobalSessionStatusStore,
 } from "./global-session-status"
 import { applyGlobalBlockingRequestEvents, applyWaitingPageEvent, useGlobalBlockingRequestsStore } from "./global-blocking-requests"
+import { requestHostTurnStarts } from "./host-session-status-seed"
+import { setHostTurnStartRequester } from "./session-activity-timing"
 import { applyBackgroundShellEvents, directoriesWithRunningShells, refreshBackgroundShells } from "./background-shells"
 import {
   CHAT_LOCATION_RELEASE_DELAY_MS,
+  PROJECT_LOCATION_RELEASE_DELAY_MS,
   WORKTREE_LOCATION_RELEASE_DELAY_MS,
   createRealLocationRelease,
   directoryUse,
@@ -176,6 +179,10 @@ type SyncSystem = SyncRuntime & {
 // Subagent sessions keep their parent's turn open in the status index; the
 // global sessions list knows every session's parent, children included.
 setSessionParentResolver((sessionId) => useGlobalSessionsStore.getState().entityById.get(sessionId)?.parentID)
+
+// A turn this page did not see begin counts from the host's record of its
+// start, read from the host's status map.
+setHostTurnStartRequester(requestHostTurnStarts)
 
 const SYNC_CONTEXT_GLOBAL_KEY = "__openchamber_sync_context__"
 const SYNC_RUNTIME_CONTEXT_GLOBAL_KEY = "__openchamber_sync_runtime_context__"
@@ -627,6 +634,9 @@ const showPluginNotificationToast = (kind?: string, title?: string, body?: strin
 const isUiFocused = (): boolean => (
   typeof document !== "undefined" && document.visibilityState === "visible" && document.hasFocus()
 )
+
+/** A window that is hidden or unfocused; without a document nobody can be away. */
+const isUiAway = (): boolean => "document" in globalThis && !isUiFocused()
 
 /**
  * OpenChamber's own notification frame: the agent-completion notice for
@@ -1751,6 +1761,7 @@ const MCP_STATUS_REFRESH_DEBOUNCE_MS = 250
 const mcpStatusRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function scheduleMcpStatusRefresh(directory: string): void {
+  if (dormantLocations.has(directory)) return
   const pending = mcpStatusRefreshTimers.get(directory)
   if (pending) clearTimeout(pending)
   mcpStatusRefreshTimers.set(directory, setTimeout(() => {
@@ -1759,11 +1770,38 @@ function scheduleMcpStatusRefresh(directory: string): void {
   }, MCP_STATUS_REFRESH_DEBOUNCE_MS))
 }
 
-function forgetMcpStatus(directory: string): void {
+function cancelMcpStatusRefresh(directory: string): void {
   const pending = mcpStatusRefreshTimers.get(directory)
   if (pending) clearTimeout(pending)
   mcpStatusRefreshTimers.delete(directory)
+}
+
+function forgetMcpStatus(directory: string): void {
+  cancelMcpStatusRefresh(directory)
   useMcpStore.getState().forgetDirectory(directory)
+}
+
+/**
+ * Directories on screen whose location OpenCode shut down while the window was
+ * hidden or unfocused. Their bootstrap waits for the user to come back: an app
+ * left open overnight would otherwise restart the directory and all its MCP
+ * servers every hour, right after each idle shutdown. Their MCP status is not
+ * re-read meanwhile, for the same reason.
+ */
+const dormantLocations = new Set<string>()
+
+export function wakeDormantLocations(childStores: ChildStoreManager, currentDirectory: string | null | undefined): void {
+  for (const directory of dormantLocations) {
+    if (directory !== currentDirectory) {
+      forgetMcpStatus(directory)
+      continue
+    }
+    if (childStores.getChild(directory)) {
+      childStores.requestBootstrap({ directory, priority: "selected", reason: "location-shutdown", force: true })
+    }
+    void useMcpStore.getState().refreshIfHeld(directory)
+  }
+  dormantLocations.clear()
 }
 
 // Only top-level sessions raise notifications. The directory store knows the
@@ -2005,13 +2043,21 @@ export function handleEvent(
   // they are re-read when selected or on the next reconnect. Their MCP status
   // is forgotten: the servers it describes are gone, and the status changes
   // OpenCode announces while stopping them would otherwise re-read the
-  // directory and start it again moments after it was released.
+  // directory and start it again moments after it was released. With the window
+  // hidden or unfocused, the directory on screen waits for the user to return
+  // (`dormantLocations`).
   if (payload.type === "location.shutdown") {
     if (!directory || directory === "global" || expectedRuntimeKey !== getRuntimeKey()) return
     if (directory !== opencodeClient.getDirectory()) {
       forgetMcpStatus(directory)
       return
     }
+    if (isUiAway()) {
+      dormantLocations.add(directory)
+      cancelMcpStatusRefresh(directory)
+      return
+    }
+    dormantLocations.delete(directory)
     if (childStores.getChild(directory)) {
       childStores.requestBootstrap({ directory, priority: "selected", reason: "location-shutdown", force: true })
     }
@@ -2736,7 +2782,7 @@ export function SyncProvider(props: {
         if (isWorktreeDirectory(directory, useSessionUIStore.getState().availableWorktreesByProject)) {
           return WORKTREE_LOCATION_RELEASE_DELAY_MS
         }
-        return null
+        return PROJECT_LOCATION_RELEASE_DELAY_MS
       },
       isCurrentDirectory: (directory) => directory === currentDirectoryRef.current,
       directoryUse: (directory) => isDirectoryExternallyViewed(directory)
@@ -2834,6 +2880,19 @@ export function SyncProvider(props: {
 
     window.addEventListener("openchamber:system-resume", onSystemResume)
     return () => window.removeEventListener("openchamber:system-resume", onSystemResume)
+  }, [childStores])
+
+  useEffect(() => {
+    const onReturn = () => {
+      if (dormantLocations.size > 0 && isUiFocused()) wakeDormantLocations(childStores, currentDirectoryRef.current)
+    }
+    window.addEventListener("focus", onReturn)
+    document.addEventListener("visibilitychange", onReturn)
+    return () => {
+      window.removeEventListener("focus", onReturn)
+      document.removeEventListener("visibilitychange", onReturn)
+      dormantLocations.clear()
+    }
   }, [childStores])
 
   // Configure child store manager
@@ -3072,6 +3131,10 @@ export function SyncProvider(props: {
     const unsubscribeSessionWarming = subscribeSessionWarmingSync(runtimeKey)
     const unsubscribeFolderEvents = subscribeSessionFoldersSync(runtimeKey)
     const unsubscribeSpaceModes = subscribeSpacePermissionModes(runtimeKey)
+    const unsubscribePermissionPolicy = subscribePermissionPolicySync(
+      runtimeKey,
+      (event) => handleEvent("global", event, childStores, routingIndex, runtimeKey),
+    )
     const unsubscribeSpaceCatalogs = subscribeSpaceCatalogs(runtimeKey)
     const resyncAfterStreamGap = (reason: SessionMaterializationReason) => {
       // Cached transcripts may have missed events too; each revalidates its
@@ -3210,6 +3273,7 @@ export function SyncProvider(props: {
       unsubscribeSessionWarming()
       unsubscribeFolderEvents()
       unsubscribeSpaceModes()
+      unsubscribePermissionPolicy()
       unsubscribeSpaceCatalogs()
     }
   }, [props.sdk, childStores, messageLoader, routingIndex, messageStreamTransport, runtimeKey, triggerDirectoryResync])

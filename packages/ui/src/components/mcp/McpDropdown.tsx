@@ -178,7 +178,7 @@ export const McpDropdownContent: React.FC<McpDropdownContentProps> = ({ active, 
                       <p>{tooltip}</p>
                     </TooltipContent>
                   </Tooltip>
-                  <span className={cn('truncate', mobileListDensity ? 'text-[17px] leading-6 font-medium' : 'typography-ui-label')}>
+                  <span className={cn('truncate', mobileListDensity ? 'text-[1.0625rem] leading-6 font-medium' : 'typography-ui-label')}>
                     {serverName}
                   </span>
                 </div>

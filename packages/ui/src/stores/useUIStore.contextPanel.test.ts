@@ -663,12 +663,22 @@ describe('useUIStore openContextSurface', () => {
     expect(activeTab?.targetPath).toBe('/repo/b.ts');
   });
 
-  test('reopening the file surface reveals the file tree when it was left hidden', () => {
+  test('reopening the file surface with no file open reveals the hidden file tree', () => {
     useUIStore.setState({ contextEditorTreeVisible: false });
 
     useUIStore.getState().openContextSurface(directory, 'file');
 
     expect(useUIStore.getState().contextEditorTreeVisible).toBe(true);
+  });
+
+  test('reopening the file surface with a file open keeps the file tree hidden', () => {
+    useUIStore.getState().openContextFile(directory, '/repo/a.ts');
+    useUIStore.getState().openContextPanelTab(directory, { mode: 'diff' });
+    useUIStore.setState({ contextEditorTreeVisible: false });
+
+    useUIStore.getState().openContextSurface(directory, 'file');
+
+    expect(useUIStore.getState().contextEditorTreeVisible).toBe(false);
   });
 
   test('opening the terminal surface clears a stale target on the singleton tab', () => {
@@ -1300,6 +1310,18 @@ describe('useUIStore workspace zones', () => {
 
     expect(panel()?.expanded).toBe(false);
     expect(panel()?.zones.bottom.expanded).toBe(true);
+  });
+
+  test('a file opened expanded spreads the zone that shows files, and a second one keeps it spread', () => {
+    const store = useUIStore.getState();
+    store.openContextFile('/repo', '/repo/a.png', { expanded: true });
+    expect(panel()).toMatchObject({ isOpen: true, expanded: true });
+
+    store.moveContextSurfaceToZone('file', 'left');
+    store.openContextFile('/repo', '/repo/b.png', { expanded: true });
+    store.openContextFile('/repo', '/repo/c.png', { expanded: true });
+    expect(panel()?.zones.left).toMatchObject({ isOpen: true, expanded: true });
+    expect(panel()?.expanded).toBe(false);
   });
 
   test('state saved before zones loads with every surface on the right', async () => {

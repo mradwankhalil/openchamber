@@ -140,13 +140,15 @@ export const createApnsRuntime = (deps) => {
   };
 
   const persistTokenUpdate = async (mutate) => {
-    persistLock = persistLock.then(async () => {
+    const result = persistLock.then(async () => {
       const current = await readTokensFromDisk();
       const next = mutate({ version: APNS_TOKENS_VERSION, tokensBySession: current.tokensBySession || {} });
       await writeTokensToDisk(next);
       return next;
     });
-    return persistLock;
+    // Only this caller sees a failed write; the next registration still writes.
+    persistLock = result.catch(() => {});
+    return result;
   };
 
   const normalizeTokens = (record) => {

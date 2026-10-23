@@ -3,7 +3,7 @@ import { OPENCODE_CONFIG_DIR } from './opencodeConfigPaths';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { fetchOpenCodeGoUsage, type OpenCodeGoApiKeyCredential, type OpenCodeGoConsoleCredential } from './opencodeGoQuota';
+import { fetchOpenCodeGoUsage, OPENCODE_GO_KEY_EXPIRED, type OpenCodeGoApiKeyCredential, type OpenCodeGoConsoleCredential } from './opencodeGoQuota';
 import { deleteLegacyOllamaCloudCredential, deleteLegacyOpenCodeGoCredential, readCredential } from './quotaCredentials';
 import { readOpenCodeCredentials } from './opencodeAuth';
 import { readConfig } from './opencodeConfig';
@@ -1664,6 +1664,18 @@ const fetchClaudeQuota = async (): Promise<ProviderResult> => {
     claudeCredentialFingerprint = fingerprint;
     claudeCachedUsage = null;
     claudeCooldownUntil = 0;
+  }
+  // An expired token answers 429, not 401, and would park the provider on
+  // "Rate limited" until the token changes. A zero or missing expiry is unknown.
+  const expiresAt = normalizeTimestamp(entry?.expires);
+  if (expiresAt !== null && expiresAt > 0 && expiresAt <= Date.now()) {
+    return buildResult({
+      providerId: 'claude',
+      providerName: 'Claude',
+      ok: false,
+      configured: true,
+      error: 'Claude session expired. Open Claude Code to sign in again.',
+    });
   }
   if (Date.now() < claudeCooldownUntil) return buildClaudeRateLimitResult();
 
@@ -4220,15 +4232,23 @@ const fetchQuotaForProviderUncoalesced = async (providerId: string): Promise<Pro
         // read that fails (no Go in that org, an endpoint change, a hiccup).
         const consoleCredential = openCodeGoConsoleCredential(auth);
         const apiKey = openCodeGoApiKey(auth);
+        let consoleFailure: Error | null = null;
         if (consoleCredential) {
           try {
             return buildResult({ providerId, providerName: 'OpenCode Go', ok: true, configured: true, usage: { windows: await fetchOpenCodeGoUsage(consoleCredential) } });
           } catch (consoleError) {
             if (!apiKey) throw consoleError;
+            consoleFailure = consoleError instanceof Error ? consoleError : new Error('Request failed');
           }
         }
         if (!apiKey) return buildResult({ providerId, providerName: 'OpenCode Go', ok: false, configured: false, error: 'Not configured' });
-        return buildResult({ providerId, providerName: 'OpenCode Go', ok: true, configured: true, usage: { windows: await fetchOpenCodeGoUsage(apiKey) } });
+        try {
+          return buildResult({ providerId, providerName: 'OpenCode Go', ok: true, configured: true, usage: { windows: await fetchOpenCodeGoUsage(apiKey) } });
+        } catch (keyError) {
+          // The expired-key advice is to connect a Console account; with one
+          // already connected, its own failure is the actionable error.
+          throw consoleFailure && keyError instanceof Error && keyError.message === OPENCODE_GO_KEY_EXPIRED ? consoleFailure : keyError;
+        }
       } catch (error) {
         return buildResult({ providerId, providerName: 'OpenCode Go', ok: false, configured: true, error: error instanceof Error ? error.message : 'Request failed' });
       }

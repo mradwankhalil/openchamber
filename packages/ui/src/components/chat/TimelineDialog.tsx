@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Icon } from "@/components/icon/Icon";
 import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
 import { getFullText, getMessagePreview } from './lib/messagePreview';
+import { useSourceControlDescriptorOf } from '@/lib/source-control/providers/registry';
 import { foldPromptEntries } from './lib/promptPreviews';
 import { useDeviceInfo } from '@/lib/device';
 import { cn } from '@/lib/utils';
@@ -108,6 +109,7 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
     onSearchQueryChange,
 }) => {
     const { t } = useI18n();
+    const descriptorOf = useSourceControlDescriptorOf();
     const messages = useSessionMessageRecords(currentSessionId, currentSessionDirectory);
     const revertToMessage = useSessionUIStore((state) => state.revertToMessage);
     const forkFromMessage = useSessionUIStore((state) => state.forkFromMessage);
@@ -276,7 +278,7 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
         <>
             <button
                 type="button"
-                className="text-[11px] uppercase tracking-wide text-muted-foreground/90 hover:text-foreground"
+                className="text-[0.6875rem] uppercase tracking-wide text-muted-foreground/90 hover:text-foreground"
                 onClick={() => {
                     void onScrollByTurnOffset?.(-1);
                     onOpenChange(false);
@@ -287,7 +289,7 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
             <span className="text-muted-foreground/50">/</span>
             <button
                 type="button"
-                className="text-[11px] uppercase tracking-wide text-muted-foreground/90 hover:text-foreground"
+                className="text-[0.6875rem] uppercase tracking-wide text-muted-foreground/90 hover:text-foreground"
                 onClick={() => {
                     onResumeToLatest?.();
                     onOpenChange(false);
@@ -349,7 +351,7 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
                         </div>
                     ) : (
                         filteredMessages.map(({ message }, index) => {
-                            const preview = getMessagePreview(message.parts, undefined, t);
+                            const preview = getMessagePreview(message.parts, undefined, t, descriptorOf);
                             const timestamp = message.info.time.created;
                             const dateGroup = formatDateGroup(timestamp);
                             const previous = filteredMessages[index - 1];

@@ -228,7 +228,9 @@ export const registerMarkdownImageGrantRoutes = (app, dependencies) => {
 
   app.post(
     '/api/openchamber/sessions/:sessionId/markdown-image-grants',
-    express.json({ limit: '32kb' }),
+    // A drawn page may name hundreds of local images (the page itself takes up
+    // to 200 000 characters), and the chat asks for all of them in one body.
+    express.json({ limit: '256kb' }),
     async (req, res) => {
       const sessionId = asString(req.params.sessionId);
       const messageId = asString(req.body?.messageId);

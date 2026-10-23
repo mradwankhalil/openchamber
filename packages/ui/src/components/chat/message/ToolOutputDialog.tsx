@@ -11,6 +11,7 @@ import { toolDisplayStyles } from '@/lib/typography';
 import { getLanguageFromExtension } from '@/lib/toolHelpers';
 import { useOptionalThemeSystem } from '@/contexts/useThemeSystem';
 import { ensurePierreThemeRegistered } from '@/lib/shiki/appThemeRegistry';
+import { DIFFS_HIGHLIGHTER, toDiffsLanguage } from '@/lib/shiki/diffsHighlighter';
 import { getDefaultTheme } from '@/lib/theme/themes';
 import {
     renderGrepOutput,
@@ -158,7 +159,7 @@ const getSvgAspectRatio = (svg: SVGElement): number | null => {
         // Ignore getBBox failures and fall back to SVG attrs/viewBox.
     }
 
-    const viewBox = svg.getAttribute('viewBox');
+    const viewBox = svg.getAttribute('data-oc-mermaid-original-viewbox') ?? svg.getAttribute('viewBox');
     if (viewBox) {
         const parts = viewBox.trim().split(/\s+/).map(Number);
         if (parts.length === 4) {
@@ -499,6 +500,7 @@ const DialogUnifiedDiff: React.FC<{
                     overflow: 'wrap',
                     theme: pierreThemeConfig.theme,
                     themeType: pierreThemeConfig.themeType,
+                    preferredHighlighter: DIFFS_HIGHLIGHTER,
                     unsafeCSS: TOOL_DIFF_UNSAFE_CSS,
                 }}
                 className="block w-full"
@@ -570,13 +572,14 @@ const DialogReadContent: React.FC<{
                 file={{
                     name: filePath,
                     contents: fileContents,
-                    lang: detectedLanguage || undefined,
+                    lang: toDiffsLanguage(detectedLanguage),
                 }}
                 options={{
                     disableFileHeader: true,
                     overflow: 'wrap',
                     theme: pierreThemeConfig.theme,
                     themeType: pierreThemeConfig.themeType,
+                    preferredHighlighter: DIFFS_HIGHLIGHTER,
                 }}
                 className="block w-full"
             />
@@ -760,16 +763,19 @@ const MermaidPreviewDialog: React.FC<{
             return;
         }
 
+        let measuredSvg: SVGElement | null = null;
         const measureAspectRatio = () => {
             const svg = mermaidPreviewRef.current?.querySelector('svg');
             if (!svg) {
                 return false;
             }
+            if (svg === measuredSvg) return true;
 
             const aspectRatio = getSvgAspectRatio(svg as SVGElement);
             if (!aspectRatio || !Number.isFinite(aspectRatio) || aspectRatio <= 0) {
                 return false;
             }
+            measuredSvg = svg;
 
             setDiagramAspectRatio((previous) => {
                 if (previous && Math.abs(previous - aspectRatio) < 0.001) {
@@ -809,7 +815,8 @@ const MermaidPreviewDialog: React.FC<{
         });
 
         if (mermaidPreviewRef.current) {
-            observer.observe(mermaidPreviewRef.current, { childList: true, subtree: true, attributes: true });
+            // A new SVG needs sizing; pointer-driven viewBox changes do not.
+            observer.observe(mermaidPreviewRef.current, { childList: true, subtree: true });
         }
 
         return () => {
@@ -1033,13 +1040,14 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                                                 file={{
                                                     name: writeTarget || 'new-file',
                                                     contents: getInputValue('content')!,
-                                                    lang: getLanguageFromExtension(writeTarget) || undefined,
+                                                    lang: toDiffsLanguage(getLanguageFromExtension(writeTarget)),
                                                 }}
                                                 options={{
                                                     disableFileHeader: true,
                                                     overflow: 'wrap',
                                                     theme: pierreThemeConfig.theme,
                                                     themeType: pierreThemeConfig.themeType,
+                                                    preferredHighlighter: DIFFS_HIGHLIGHTER,
                                                 }}
                                                 className="block w-full"
                                             />

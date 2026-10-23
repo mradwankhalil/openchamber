@@ -8,6 +8,7 @@ const __dirname = path.dirname(__filename);
 
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const webDir = path.join(repoRoot, 'packages', 'web');
+const sdkDir = path.join(repoRoot, 'packages', 'sdk');
 const electronDir = path.join(repoRoot, 'packages', 'electron');
 
 const resourcesDir = path.join(electronDir, 'resources');
@@ -76,6 +77,12 @@ const copyDir = async (src, dst) => {
 };
 
 const bunExe = resolveBun();
+
+// The bundled server imports @openchamber/sdk from its built `dist`, which
+// nothing else in packaging rebuilds: a stale one makes the app quit at start
+// once the server needs an export added since the last SDK build.
+console.log('[electron] building @openchamber/sdk dist...');
+run(bunExe, ['run', 'build'], sdkDir);
 
 console.log('[electron] building web UI dist...');
 run(bunExe, ['run', 'build'], webDir);

@@ -63,7 +63,7 @@ describe('source-control auth storage', () => {
     await expect(store.readInstance(secondOrigin)).resolves.toMatchObject({ activeAccountId: second.id });
   });
 
-  it('migrates a version 2 GitLab-only file to version 3 with an empty GitHub section', async () => {
+  it('reads a version 2 GitLab-only file without rewriting it, and moves to version 3 with the first GitHub Enterprise credential', async () => {
     const { directory, filePath, store } = await makeStore();
     const origin = 'https://gitlab.example.com';
     await fs.writeFile(filePath, JSON.stringify({
@@ -79,11 +79,15 @@ describe('source-control auth storage', () => {
     }), 'utf8');
 
     await expect(store.readInstance(origin)).resolves.toMatchObject({ activeAccountId: 'cred-1' });
+    // Earlier releases read only version 2, so the file stays as it was.
+    expect(JSON.parse(await fs.readFile(filePath, 'utf8'))).toMatchObject({ version: 2 });
+
+    await store.github.setAccount('ghe.example.com', { accessToken: 'github-pat', user: { id: 42, login: 'ghe-user' }, source: 'pat', scope: 'repo' });
     expect(JSON.parse(await fs.readFile(filePath, 'utf8'))).toMatchObject({
       version: 3,
       providers: {
         gitlab: { instances: { [origin]: { activeCredentialId: 'cred-1' } } },
-        github: { instances: {} },
+        github: { instances: { 'ghe.example.com': expect.objectContaining({ activeCredentialId: expect.any(String) }) } },
       },
     });
   });
@@ -136,6 +140,154 @@ describe('source-control auth storage', () => {
     await expect(store.github.setCliDisabled(host, true)).resolves.toBe(true);
     await expect(store.github.readInstance(host)).resolves.toMatchObject({ cliActive: false, cliDisabled: true });
     await expect(store.github.setCliActive(host, true)).resolves.toBe(false);
+  });
+
+  it('writes version 2 and 3 exactly as before while no extra provider section holds anything', async () => {
+    const { filePath, store } = await makeStore();
+    const origin = 'https://gitlab.example.com';
+    const gitlab = await store.setAccount(origin, { token: 'glpat', user: { id: 1, login: 'one' }, source: 'pat' });
+    const written = JSON.parse(await fs.readFile(filePath, 'utf8'));
+    expect(written).toEqual({ version: 2, providers: { gitlab: { instances: { [origin]: {
+      activeCredentialId: gitlab.id,
+      credentials: [{
+        credentialId: gitlab.id, revision: 1, providerUserId: `${origin}#1`, token: 'glpat',
+        user: { id: 1, login: 'one' }, source: 'pat', scope: '', status: 'valid',
+      }],
+      cliDisabled: false,
+      cliActive: false,
+    } } } } });
+    expect(gitlab.id).toMatch(/^occred:v1:gitlab:[0-9a-f-]+:r1$/);
+
+    await store.github.setAccount('ghe.example.com', { accessToken: 'pat', user: { id: 2, login: 'two' }, source: 'pat' });
+    expect(Object.keys(JSON.parse(await fs.readFile(filePath, 'utf8')).providers)).toEqual(['gitlab', 'github']);
+    expect(JSON.parse(await fs.readFile(filePath, 'utf8')).version).toBe(3);
+
+    // An extra section that is touched but stays empty writes no version 4.
+    await store.section('gitea').setCliDisabled('https://gitea.example.com', false);
+    expect(JSON.parse(await fs.readFile(filePath, 'utf8')).version).toBe(3);
+  });
+
+  it('writes version 4 only while an extra provider section holds something, and goes back when it empties', async () => {
+    const { filePath, store } = await makeStore();
+    const origin = 'https://gitea.example.com';
+    const gitea = store.section('gitea');
+    const credential = await gitea.setAccount(origin, { token: 'gitea-pat', user: { id: 5, login: 'five' }, source: 'pat' });
+
+    expect(credential).toMatchObject({ providerUserId: `${origin}#5`, token: 'gitea-pat', credentialRevision: 1 });
+    expect(credential.id).toMatch(/^occred:v1:gitea:[0-9a-f-]+:r1$/);
+    const written = JSON.parse(await fs.readFile(filePath, 'utf8'));
+    expect(written.version).toBe(4);
+    expect(Object.keys(written.providers)).toEqual(['gitlab', 'github', 'gitea']);
+    await expect(store.listInstances()).resolves.toEqual([]);
+    await expect(gitea.readAccount(origin, credential.id, 1)).resolves.toMatchObject({ token: 'gitea-pat' });
+    await expect(createSourceControlAuthStore({ filePath }).section('gitea').listInstances()).resolves.toEqual([origin]);
+
+    await gitea.removeAccount(origin, credential.id);
+    expect(JSON.parse(await fs.readFile(filePath, 'utf8'))).toEqual({ version: 2, providers: { gitlab: { instances: {} } } });
+    expect(() => store.section('github')).toThrow();
+    expect(() => store.section('Not An Id')).toThrow();
+  });
+
+  it('drops an extension provider section in one write and refuses built-in sections', async () => {
+    const { filePath, store } = await makeStore();
+    const origin = 'https://forge.example.com';
+    const forge = store.section('ext-forge');
+    await forge.setAccount(origin, { token: 'forge-pat', user: { id: 5, login: 'five' }, source: 'pat' });
+    await forge.setAccount('https://other.example.com', { token: 'other-pat', user: { id: 6, login: 'six' }, source: 'pat' });
+    const gitea = await store.section('gitea').setAccount(origin, { token: 'gitea-pat', user: { id: 5, login: 'five' }, source: 'pat' });
+
+    await expect(store.dropSection('ext-forge')).resolves.toBe(true);
+    const written = JSON.parse(await fs.readFile(filePath, 'utf8'));
+    expect(Object.keys(written.providers)).toEqual(['gitlab', 'github', 'gitea']);
+    await expect(forge.listInstances()).resolves.toEqual([]);
+    await expect(store.section('gitea').readAccount(origin, gitea.id)).resolves.toMatchObject({ token: 'gitea-pat' });
+    await expect(store.dropSection('ext-forge')).resolves.toBe(false);
+
+    for (const id of ['gitlab', 'github', 'gitea', 'ext-', 'Not An Id']) {
+      await expect(store.dropSection(id)).rejects.toThrow(/cannot be dropped/);
+    }
+    expect(JSON.parse(await fs.readFile(filePath, 'utf8'))).toEqual(written);
+  });
+
+  it('drops an extension section this build cannot parse', async () => {
+    const { filePath, store } = await makeStore();
+    await fs.writeFile(filePath, JSON.stringify({
+      version: 4,
+      providers: { gitlab: { instances: {} }, github: { instances: {} }, 'ext-forge': { instances: { 'not an origin': {} } } },
+    }), 'utf8');
+
+    await expect(store.dropSection('ext-forge')).resolves.toBe(true);
+    expect(JSON.parse(await fs.readFile(filePath, 'utf8'))).toEqual({ version: 2, providers: { gitlab: { instances: {} } } });
+  });
+
+  it('round trips a section of a provider this build does not know, byte for byte', async () => {
+    const { filePath, store } = await makeStore();
+    const forgeOrigin = 'https://forge.example.com';
+    const unknown = {
+      version: 4,
+      providers: {
+        gitlab: { instances: {} },
+        github: { instances: {} },
+        sourcehut: { instances: { [forgeOrigin]: {
+          activeCredentialId: 'occred:v1:sourcehut:one:r1',
+          credentials: [{
+            credentialId: 'occred:v1:sourcehut:one:r1', revision: 1, providerUserId: `${forgeOrigin}#3`, token: 'forge-pat',
+            user: { id: 3, login: 'three' }, source: 'pat', scope: '', status: 'valid',
+          }],
+          cliDisabled: false,
+          cliActive: false,
+        } } },
+      },
+    };
+    await fs.writeFile(filePath, JSON.stringify(unknown), 'utf8');
+
+    const gitlab = await store.setAccount('https://gitlab.example.com', { token: 'glpat', user: { id: 1, login: 'one' }, source: 'pat' });
+    const written = JSON.parse(await fs.readFile(filePath, 'utf8'));
+    expect(written.version).toBe(4);
+    expect(written.providers.sourcehut).toEqual(unknown.providers.sourcehut);
+    await store.removeAccount('https://gitlab.example.com', gitlab.id);
+    expect(JSON.parse(await fs.readFile(filePath, 'utf8'))).toEqual(unknown);
+  });
+
+  it('keeps a section of another build that does not parse here, and fails only that provider', async () => {
+    const { filePath, store } = await makeStore();
+    const original = {
+      version: 4,
+      providers: {
+        gitlab: { instances: {} },
+        github: { instances: {} },
+        // A newer build's provider keyed by bare host, with a credential field this build does not know.
+        bitbucket: { instances: { 'bitbucket.org': { credentials: [{ credentialId: 'x', workspace: 'w' }] } } },
+        // A section this build owns but cannot read.
+        gitea: { instances: { 'not an origin': {} } },
+      },
+    };
+    await fs.writeFile(filePath, JSON.stringify(original), 'utf8');
+
+    const origin = 'https://gitlab.example.com';
+    const gitlab = await store.setAccount(origin, { token: 'glpat', user: { id: 1, login: 'one' }, source: 'pat' });
+    await expect(store.github.listInstances()).resolves.toEqual([]);
+    await expect(store.section('gitea').listInstances()).rejects.toMatchObject({ code: 'INVALID_SOURCE_CONTROL_AUTH' });
+    const written = JSON.parse(await fs.readFile(filePath, 'utf8'));
+    expect(written.providers.bitbucket).toEqual(original.providers.bitbucket);
+    expect(written.providers.gitea).toEqual(original.providers.gitea);
+    await store.removeAccount(origin, gitlab.id);
+    expect(JSON.parse(await fs.readFile(filePath, 'utf8'))).toEqual(original);
+  });
+
+  it('refuses a version 3 file with an extra section and a version 4 file with an invalid id or a missing built-in section', async () => {
+    const { filePath, store } = await makeStore();
+    const section = { instances: {} };
+    for (const value of [
+      { version: 3, providers: { gitlab: section, github: section, gitea: section } },
+      { version: 4, providers: { gitlab: section, github: section, 'Not An Id': section } },
+      { version: 4, providers: { gitlab: section, gitea: section } },
+      { version: 5, providers: { gitlab: section, github: section } },
+    ]) {
+      await fs.writeFile(filePath, JSON.stringify(value), 'utf8');
+      await expect(store.listInstances()).rejects.toMatchObject({ code: 'INVALID_SOURCE_CONTROL_AUTH' });
+      expect(JSON.parse(await fs.readFile(filePath, 'utf8'))).toEqual(value);
+    }
   });
 
   it('treats missing files as empty and rejects malformed or unsupported files without rewriting them', async () => {
@@ -209,7 +361,7 @@ describe('source-control auth storage', () => {
       release();
       const [renewed, instance] = await Promise.all(readers);
       expect(refresh).toHaveBeenCalledTimes(1);
-      expect(refresh).toHaveBeenCalledWith({ origin, refreshToken: 'refresh-1' });
+      expect(refresh).toHaveBeenCalledWith({ provider: 'gitlab', origin, refreshToken: 'refresh-1' });
       expect(renewed).toMatchObject({ id: account.id, credentialRevision: account.credentialRevision, token: 'fresh', refreshToken: 'refresh-2' });
       expect(instance.accounts[0]).toMatchObject({ token: 'fresh', expiresAt: clock.now + 7200 * 1000 });
     });

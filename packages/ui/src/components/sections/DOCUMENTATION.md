@@ -91,6 +91,34 @@ login, AWS profile for Bedrock) asks only its form and calls
 `integration.connect.external`, which stores a reference to credentials managed
 outside OpenCode; the account then lists as "External credentials".
 
+A provider's credentials show as one collapsible card per kind: API key,
+browser sign-in, credentials on the server machine
+(`providers/ProviderAuthMethodCards.tsx`, built on the Integrations page's
+`IntegrationCatalogCard`). The same cards serve the connect page and a
+connected provider's page, where they are always on screen. A card names its
+kind, says in one line how it works, and carries a pill: In use, Not in use,
+Sign in again or Not connected. Opened, it lists the stored accounts of its
+kind with their Use, Rename and Remove actions, then the field or button that
+adds another. Under a stored account that field or button waits behind "Add
+account": an empty key field under a key reads as "replace this key" and a bare
+Connect as "reconnect", while both add another account that becomes active. A
+provider with one kind starts with its card
+open. Keys from environment variables are listed above the cards. A key
+OpenCode takes from the environment or the config, or credentials on the
+server machine, mark their own card In use, or the key card when the provider
+has no card of that kind. In enterprise mode the cards keep the stored accounts and
+offer nothing new.
+
+The cards replaced a separate account list over an "Add account" panel that
+stacked the key form and the sign-in buttons. That panel read as steps to
+complete in order: people saved a key and then signed in as well, and only
+learned from "not in use" that one replaces the other, while the account list
+repeated what the pills now say. A stored credential records its kind (`key`,
+`oauth`, `external`) but not the sign-in method that made it, so the sign-in
+methods of one kind (OpenAI's ChatGPT and legacy Codex flows) share one card.
+Closing a card unmounts its body, which cancels a sign-in still waiting there,
+the same as its Cancel button.
+
 Vertex can sign in through Google Application Default Credentials on the server
 machine, which OpenCode neither stores nor reports as a connection. When
 OpenCode resolved a project for Vertex (`settings.project` on the provider it
@@ -172,11 +200,144 @@ OpenCode drops an MCP server or skill an `integration.use` deny names
 MCP and Skills pages list what the config files and the disk hold.
 `shared/useIntegrationPolicyBlock.ts` reads the statements from
 `/api/config` (`readIntegrationPolicies`, decided like OpenCode: documents
-reversed, last match wins) and the pages mark such a row "Blocked by policy";
-the MCP page also disables Connect and Test. A skill's id is its `SKILL.md`
-folder name, not its display name. Statements from a connected OpenCode
+reversed, last match wins) and the MCP page marks such a row "Blocked by
+policy" and disables Connect and Test. Statements from a connected OpenCode
 Console workspace are not in `/api/config`, so a server blocked only there is
 not marked.
+
+The Skills page reads the same statements from the skills store. One choice,
+"Agents use it" (`skills/SkillUseField.tsx`), answers when agents get a skill:
+Automatically, When called (the skill file's `disable-model-invocation` flag)
+or Off. A skill's id is its `SKILL.md` folder name, not its display name. Off
+writes an exact `skill:<id>` deny where the skill lives (project config for a
+project skill, global config otherwise) and leaves the file's flag alone;
+leaving Off removes the exact deny from every config file OpenCode reads for
+the directory, hand-written ones included. A skill an exact deny turns off
+reads "Off" in the sidebar. A wildcard deny is someone else's rule: the choice
+is locked, the row reads "Blocked", and the page names the rule and its file.
+An allow that decides the skill is named the same way.
+
+### Why one choice and not a switch beside the checkbox
+
+"Run only when called" and "off" answer the same question, when an agent may
+take the skill, so two controls let a user set a combination that reads as
+nonsense (off, but only when called). One three-way choice keeps them apart
+in storage and together on screen.
+
+### Why Off writes where the skill lives and not into a chosen scope
+
+A scope picker would make every user learn how OpenCode orders global and
+project policies (global wins) before turning a skill off. Writing where the
+skill lives covers the common case with one control, and turning it back on
+clears the skill's exact deny wherever it is, so no file keeps a stale rule.
+
+## Skills catalog list
+
+The catalog page lists one source, or every source's search matches, in
+`skills/catalog/SkillsCatalogRows.tsx`. From 100 rows on it mounts only the
+rows near the viewport, measured inside the settings page's own scroller; a
+shorter list renders every row.
+
+### Why a threshold and not a virtualized list for every source
+
+A source can hold thousands of skills: `sickn33/agentic-awesome-skills` has
+8,451, and mounting them all froze the page for about 28 seconds on a source
+click and up to 47 seconds per search keystroke (#5455). Most built-in
+catalogs hold fewer than 60 rows, and a fully mounted short list keeps the
+browser's find-in-page and Tab order over every row.
+
+### Why the list waits for the page's scroller
+
+A virtualizer attached before it knows the scroller starts at offset 0 and
+scrolls there, so clicking Cursor or a large source on a scrolled page jumped
+to the top. The list finds the scroller first, starts from its `scrollTop`,
+and holds its estimated height meanwhile, because a list of height 0 for one
+render shortens the page and the browser clamps the scroll position.
+
+### Why a row measured at 0 keeps the estimate
+
+A page hidden while the list is mounted measures every row at 0 height. The
+virtualizer would then fit the whole list into the viewport, mount all of it,
+and re-render without end, so a zero measurement keeps the estimated height.
+
+## Integrations: provider cards
+
+`integrations/IntegrationsPage.tsx` draws one card per source-control provider
+and one per tracker the connected server serves, in the registries' order
+(`lib/source-control/providers/registry.ts`, `lib/trackers/registry.ts`). No
+card names a provider: a provider the server adds (Gitea) appears with no code
+here. Source-control cards are left out in VS Code, which uses the editor's own
+Git integration; tracker cards exist where the runtime has `RuntimeAPIs.trackers`.
+
+`integrations/SourceControlProviderCard.tsx` takes its name, mark and wording
+term from the descriptor. Its body is one `openchamber/ProviderInstanceAccounts`
+block per instance of that provider (the default instance stands in until one
+is listed), and "Add instance" where the descriptor's settings take an address
+(an `instance-url` field) and `instances.multiple` allows another or none is
+set up yet. A block offers the sign-in methods the descriptor names *and* the
+instance reports available (`capabilities.authenticationMethods`): device
+code, personal access token, and the provider's CLI login. When both the
+device code and a token are offered, a chip switch (`SettingsChipGroup`)
+picks one and only its form shows; it starts on the method an existing
+account came from (`oauth` is the device code, `pat` the token), else the
+first one the descriptor names. The CLI login keeps its own row. The token
+form shows the scopes the descriptor names, literally, under "Create token";
+the info hint stays.
+Where the descriptor's settings have a `username` field, the token form asks
+for a username above the token and sends both (`authSetToken(…, { username })`);
+an `http-password` field names the secret an HTTP password instead of a token
+(`sourceControlProviderSettings.ts`). Gerrit signs in this way.
+`normalizeInstanceInput` reads what the user typed the way the descriptor
+says: an origin or a bare host, HTTPS only (HTTP on loopback where allowed), a
+port only where allowed, reserved instances refused.
+
+Invariants:
+
+- A token field is a password input that starts empty, is cleared once the
+  server accepts the token, and is never logged; a rejected token
+  (`INVALID_TOKEN`) stays in the field with the rejection under the address.
+  An instance the server says belongs on another provider's card
+  (`SourceControlInstanceOtherProviderError`) keeps the token too, and the
+  line under the address names that provider by its descriptor's label.
+- An instance's async work is dropped when the runtime switches mid-flight
+  (`captureRuntime`), so a late answer never writes into the next server's state.
+- The github.com device flow (`openchamber/GitHubComAccountSection.tsx`) shows
+  only for a descriptor whose `instances.legacyFlow.kind` is
+  `github-com-device`; the instance list under it, titled "Other instances",
+  leaves that instance out.
+- A descriptor that names a settings field kind this version cannot draw shows
+  an "update OpenChamber" line instead of the instance setup.
+- Settings search anchors: the card is `integrations.source-control.<id>`, its
+  body `.connect`; tracker cards keep `integrations.<id>` and its
+  `.add-workspace`, `.mapping` and `.session-comments` anchors, the ids
+  Linear's entries always had.
+
+`integrations/TrackerSettings.tsx` is the tracker card: browser sign-in with a
+poll that stops when a new or re-authorized account appears, disconnect, and the
+account switch where `multipleAccounts` is set. `TrackerProjectMapping` and
+`TrackerSessionComments` show where `projectMapping` and `sessionComments` are
+set. A tracker that offers no browser sign-in asks for an update instead of a
+dead Connect button.
+
+### Why `{provider}` keys and not keys per provider
+
+The sentences these cards show name the provider through `{provider}` and the
+CLI through `{cli}` (`settings.sourceControl.*`, `settings.integrations.tracker.*`),
+so a provider the server adds reads correct sentences with no keys of its own.
+`openchamber/sourceControlProviderSettings.ts` selects only what really differs:
+the description by change-request term and the instance hint by
+`allowLoopbackHttp`. `integrations/trackerSettingsCopy.ts` keeps whole sentences
+per tracker only where they carry the tracker's own nouns (Linear's workspace
+and team), because interpolating a noun breaks case and gender in de, pl, uk
+and fr; any other tracker reads the generic account and group sentences.
+
+### Why a method switch and not stacked rows
+
+The sign-in methods used to stack, the device code's Connect above the token
+field, so a first visit read as two competing forms. The maintainer chose a
+chip switch: the card opens on one Connect choice and the other method is one
+click away. A chip group rather than radios because the labels are short and
+`settings-ui-patterns` puts short exclusive choices in chips.
 
 ## Magic Prompts
 

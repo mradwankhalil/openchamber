@@ -176,6 +176,9 @@ export const fetchOpenCodeSkillsFromApi = async (
         }
         if (location === BUILT_IN_SKILL_LOCATION) {
           return {
+            // The path no longer carries the id, and a built-in's id can
+            // differ from its name (`opencode` / `OpenCode`); policies name the id.
+            id: String(item?.id || name),
             name,
             path: location,
             scope: 'user',
@@ -414,7 +417,7 @@ export const persistSettings = async (changes: Record<string, unknown>, ctx?: Br
 
   const keysToClear = new Set<string>();
 
-  for (const key of ['defaultModel', 'defaultVariant', 'defaultAgent', 'defaultGitIdentityId', 'opencodeBinary', 'smallModelOverride', 'smallModelVariant', 'walkthroughModelOverride']) {
+  for (const key of ['defaultModel', 'defaultVariant', 'defaultAgent', 'defaultGitIdentityId', 'opencodeBinary', 'smallModelOverride', 'smallModelVariant', 'walkthroughModelOverride', 'walkthroughModelVariant']) {
     const value = restChanges[key];
     if (typeof value === 'string' && value.trim().length === 0) {
       keysToClear.add(key);

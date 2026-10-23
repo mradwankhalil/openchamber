@@ -140,6 +140,25 @@ describe('magic prompt routes', () => {
     });
   });
 
+  it('keeps the project of a checkout registered through a symlink for its linked worktrees', async () => {
+    await withFixture(async ({ projects, repo, tempRoot, setGlobal, setProject, overridesIn }) => {
+      await fsPromises.writeFile(path.join(repo, 'README.md'), 'x\n');
+      git(repo, 'init', '-q');
+      git(repo, 'add', '.');
+      git(repo, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'init');
+      const linkedRepo = path.join(tempRoot, 'repo-link');
+      await fsPromises.symlink(repo, linkedRepo);
+      projects.splice(0, projects.length, { id: 'repo', path: linkedRepo });
+      const worktree = path.join(tempRoot, 'wt', 'feature');
+      git(repo, 'worktree', 'add', '-q', '-b', 'feature', worktree);
+      await setGlobal('plan.todo.visible', 'Global');
+      await setProject('repo', 'plan.todo.visible', 'repo');
+
+      expect((await overridesIn(worktree))['plan.todo.visible']).toBe('repo');
+      expect((await overridesIn(path.join(linkedRepo, 'not-yet')))['plan.todo.visible']).toBe('repo');
+    });
+  });
+
   it('fails a read that needs a broken file and never overwrites it', async () => {
     await withFixture(async ({ app, repo, tempRoot, globalPath, sharedPathOf, writeShared, setGlobal }) => {
       await setGlobal('plan.todo.visible', 'Global');

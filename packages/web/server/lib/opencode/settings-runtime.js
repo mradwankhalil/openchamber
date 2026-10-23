@@ -1118,7 +1118,7 @@ export const createSettingsRuntime = (deps) => {
   };
 
   const persistSettings = async (changes, { surface = null } = {}) => {
-    persistSettingsLock = persistSettingsLock.then(async () => {
+    const result = persistSettingsLock.then(async () => {
       // Log field names only — changes can carry credentials (UI password,
       // client tokens, tunnel tokens) that must never reach the log file.
       console.log('[persistSettings] Updating fields:', Object.keys(changes || {}).join(', ') || '(none)');
@@ -1222,8 +1222,10 @@ export const createSettingsRuntime = (deps) => {
       }
       return formatSettingsResponse(next);
     });
-
-    return persistSettingsLock;
+    // A failed write (a full disk) rejects only its own caller; the next
+    // save still runs instead of replaying that error until a restart.
+    persistSettingsLock = result.catch(() => {});
+    return result;
   };
 
   return {

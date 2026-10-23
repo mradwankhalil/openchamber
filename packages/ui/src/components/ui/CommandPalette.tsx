@@ -19,13 +19,13 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useEnterpriseMode, useJevBlockedByEnterprise } from '@/stores/useEnterprisePolicyStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useGlobalSessionsStore, resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
-import { isBtwSession } from '@/lib/sessionBtwMetadata';
+import { orderVisibleRootSessions } from '@/lib/sessionListOrder';
+import { settingsPageTitleKey } from '@/lib/settings/pageTitle';
 import { useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
 import { isSessionPinned } from '@/lib/sessionPins';
 import { toggleSessionPin } from '@/sync/session-pins';
 import {
   EMPTY_SESSION_ORDER_RANKS,
-  orderSessionsByLifecycleScopes,
   useSessionOrderingStore,
 } from '@/sync/session-ordering';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
@@ -566,30 +566,30 @@ export const CommandPalette: React.FC = () => {
       .map((page) => {
         const iconName = getSettingsNavIcon(page.slug) ?? 'settings-3';
         const keywords = (page.keywords ?? []).join(' ');
+        const title = t(settingsPageTitleKey(page.slug));
         return {
           id: `settings:${page.slug}`,
-          title: page.title,
+          title,
           icon: page.slug === 'mcp'
             ? <McpIcon className="me-2 h-4 w-4" />
             : <Icon name={iconName} className="me-2 h-4 w-4" />,
-          searchText: `${page.title} ${page.group} ${keywords}`,
+          // The English title stays searchable next to the translated one.
+          searchText: `${title} ${page.title} ${page.group} ${keywords}`,
           onSelect: run(() => {
             setSettingsPage(page.slug);
             setSettingsDialogOpen(true);
           }),
         } satisfies CommandEntry;
       });
-  }, [settingsRuntimeCtx, run, setSettingsPage, setSettingsDialogOpen]);
+  }, [settingsRuntimeCtx, run, setSettingsPage, setSettingsDialogOpen, t]);
 
   // ---------------------------------------------------------------------------
   // Sessions
   // ---------------------------------------------------------------------------
-  const orderedActiveSessions = React.useMemo(() => {
-    // btw forks stay hidden until promoted to a full session; subagent
-    // sessions are reached through their parent, not listed on their own.
-    const visibleSessions = activeSessions.filter((session) => !isBtwSession(session) && !session.parentID);
-    return orderSessionsByLifecycleScopes(visibleSessions, pinnedSessionIds, sessionOrderRanks);
-  }, [activeSessions, pinnedSessionIds, sessionOrderRanks]);
+  const orderedActiveSessions = React.useMemo(
+    () => orderVisibleRootSessions(activeSessions, pinnedSessionIds, sessionOrderRanks),
+    [activeSessions, pinnedSessionIds, sessionOrderRanks],
+  );
 
   const allBranches = useGitAllBranches();
   const worktreeMetadata = useSessionUIStore((s) => s.worktreeMetadata);
@@ -887,7 +887,7 @@ export const CommandPalette: React.FC = () => {
       >
         <Command
           shouldFilter={false}
-          className="[&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:!text-[11px] [&_[cmdk-group-heading]]:!leading-4 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-4 [&_[cmdk-input-wrapper]_svg]:w-4 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-1.5 [&_[cmdk-item]_svg]:h-4 [&_[cmdk-item]_svg]:w-4 [&_[cmdk-item]]:typography-meta"
+          className="[&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:!text-[0.6875rem] [&_[cmdk-group-heading]]:!leading-4 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-4 [&_[cmdk-input-wrapper]_svg]:w-4 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-1.5 [&_[cmdk-item]_svg]:h-4 [&_[cmdk-item]_svg]:w-4 [&_[cmdk-item]]:typography-meta"
         >
           <CommandInput
             value={query}

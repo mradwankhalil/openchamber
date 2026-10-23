@@ -135,7 +135,7 @@ interface UseChatTimelineScrollResult {
     // list remounts (session switch) can depend on it.
     scrollNode: HTMLDivElement | null;
     isPinned: boolean;
-    registerList: (list: TimelineListHandle | null) => void;
+    registerList: (list: TimelineListHandle | null, sessionKey?: string) => void;
     onIsAtEndChange: (isAtEnd: boolean) => void;
     onListMetricsChange: (metrics: { readonly footerSize: number }) => void;
     onManualNavigation: () => void;
@@ -691,7 +691,7 @@ export const useChatTimelineScroll = ({
 
         const step = () => {
             frame = null;
-            if (scrollRef.current !== node) {
+            if (finished || scrollRef.current !== node) {
                 finish();
                 return;
             }
@@ -760,7 +760,7 @@ export const useChatTimelineScroll = ({
             ? checkLinked(target.anchor.messageId).catch(() => unknown)
             : Promise.resolve(unknown);
         void existence
-            .then((state) => (state === 'missing' ? false : loadHistoryUntil(target.anchor.messageId, maxBatches)))
+            .then((state) => (cancelled || state === 'missing' ? false : loadHistoryUntil(target.anchor.messageId, maxBatches)))
             .catch(() => false)
             .then((found) => {
                 if (restoreRef.current === search) restoreRef.current = null;
@@ -826,7 +826,13 @@ export const useChatTimelineScroll = ({
     }, [hideScrollButton]);
 
     // ── list callbacks ──────────────────────────────────────────────────────
-    const registerList = React.useCallback((list: TimelineListHandle | null) => {
+    const registerList = React.useCallback((list: TimelineListHandle | null, sessionKey?: string) => {
+        // Cached lists reconnect independently. An outgoing list must never
+        // clear the incoming list, regardless of sibling commit order.
+        if (sessionKey !== undefined) {
+            if (list && sessionKey !== currentSessionKeyRef.current) return;
+            if (!list && sessionKey !== listSessionKeyRef.current) return;
+        }
         const previousNode = scrollRef.current;
         // SAFETY: LegendList's web renderer mounts its scroll container as a div.
         const node = (list?.getScrollableNode() as HTMLDivElement | null) ?? null;
@@ -837,7 +843,7 @@ export const useChatTimelineScroll = ({
         scrollRef.current = node;
         setScrollNode(node);
         if (node) {
-            listSessionKeyRef.current = currentSessionKeyRef.current;
+            listSessionKeyRef.current = sessionKey ?? currentSessionKeyRef.current;
         }
         if (previousNode && previousNode !== node) {
             retireScrollContent(previousNode, () => scrollRef.current === previousNode);
@@ -1009,7 +1015,8 @@ export const useChatTimelineScroll = ({
             return;
         }
         if (followFrameRef.current !== null) return;
-        followFrameRef.current = window.requestAnimationFrame(() => {
+        const frame = window.requestAnimationFrame(() => {
+            if (followFrameRef.current !== frame) return;
             followFrameRef.current = null;
             if (scrollRef.current !== node || followGlideHeld()) return;
             // A gesture may have landed between the report and this frame.
@@ -1070,10 +1077,13 @@ export const useChatTimelineScroll = ({
             glideRef.current = { from: lastTop, target, lastTop, issuedAt: performance.now(), stateEnd: stateEnd ?? end };
             node.scrollTo({ top: target, behavior: followScrollBehavior() });
         });
+        followFrameRef.current = frame;
     }, [isLiveFollowActive, pinEndAtRest, releaseFollowAtStop]);
     followEndRef.current = followEnd;
     React.useEffect(() => () => {
         if (followFrameRef.current !== null) window.cancelAnimationFrame(followFrameRef.current);
+        followFrameRef.current = null;
+        glideRef.current = null;
     }, []);
 
     const onTimelineDataChange = React.useCallback(() => {
@@ -1584,8 +1594,9 @@ export const useChatTimelineScroll = ({
 
     React.useEffect(() => () => {
         cancelShowButtonTimer();
+        clearGoToBottomReasserts();
         restoreRef.current?.cancel();
-    }, [cancelShowButtonTimer]);
+    }, [cancelShowButtonTimer, clearGoToBottomReasserts]);
 
     // ── active-turn spy ─────────────────────────────────────────────────────
     // Reads turn positions straight from the DOM, so it is unaffected by which

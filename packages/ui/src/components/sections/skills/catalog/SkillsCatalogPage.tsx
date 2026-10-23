@@ -29,6 +29,7 @@ import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
 
 import { AddCatalogDialog } from './AddCatalogDialog';
 import { InstallSkillDialog } from './InstallSkillDialog';
+import { SkillsCatalogRows } from './SkillsCatalogRows';
 import { skillCatalogUrl } from './skillCatalogUrl';
 
 type SkillsMode = 'manual' | 'external';
@@ -595,14 +596,16 @@ export const SkillsCatalogPage: React.FC<SkillsCatalogPageProps> = ({ mode, onMo
                 <p className="typography-meta mt-1 opacity-75">{t('settings.skills.catalog.page.empty.noSkillsDescription')}</p>
               </div>
             ) : (
-              <div className="divide-y divide-[var(--surface-subtle)]">
-                {filtered.map((item) => {
+              <SkillsCatalogRows
+                items={filtered}
+                itemKey={itemKey}
+                renderRow={(item) => {
                   const installed = item.installed?.isInstalled;
                   const installedScope = item.installed?.scope;
                   const skillUrl = skillCatalogUrl(item);
 
                   return (
-                    <div key={`${item.sourceId}:${item.skillDir}`} className="py-2">
+                    <div className="py-2">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
@@ -700,8 +703,8 @@ export const SkillsCatalogPage: React.FC<SkillsCatalogPageProps> = ({ mode, onMo
                       </div>
                     </div>
                   );
-                })}
-              </div>
+                }}
+              />
             )}
         </SettingsSection>
       </SettingsPageLayout>

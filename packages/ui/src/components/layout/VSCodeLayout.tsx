@@ -831,7 +831,7 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
                     <button
                       type="button"
                       className={
-                        `px-2 py-0.5 rounded-sm typography-micro text-[10px] transition-colors ${
+                        `px-2 py-0.5 rounded-sm typography-micro text-[0.625rem] transition-colors ${
                           quotaDisplayMode === 'usage'
                             ? 'bg-interactive-selection text-interactive-selection-foreground'
                             : 'text-muted-foreground hover:text-foreground'
@@ -845,7 +845,7 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
                     <button
                       type="button"
                       className={
-                        `px-2 py-0.5 rounded-sm typography-micro text-[10px] transition-colors ${
+                        `px-2 py-0.5 rounded-sm typography-micro text-[0.625rem] transition-colors ${
                           quotaDisplayMode === 'remaining'
                             ? 'bg-interactive-selection text-interactive-selection-foreground'
                             : 'text-muted-foreground hover:text-foreground'
@@ -869,7 +869,7 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
                 </div>
               </DropdownMenuLabel>
             </div>
-            <div className="border-b border-[var(--interactive-border)] px-2 pb-2 typography-micro text-muted-foreground text-[10px]">
+            <div className="border-b border-[var(--interactive-border)] px-2 pb-2 typography-micro text-muted-foreground text-[0.625rem]">
               {t('vscodeLayout.quota.lastUpdated', { time: formatTime(quotaLastUpdated, timeFormatPreference) })}
             </div>
             {!hasRateLimits && (
@@ -917,7 +917,7 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
                                 tonePercent={window.usedPercent}
                                 className="h-1"
                               />
-                              <span className="flex items-center justify-between typography-micro text-muted-foreground text-[10px]">
+                              <span className="flex items-center justify-between typography-micro text-muted-foreground text-[0.625rem]">
                                 <span>{formatQuotaResetLabel(window.resetAt, window.resetAfterFormatted ?? window.resetAtFormatted, timeFormatPreference)}</span>
                               </span>
                       </span>

@@ -32,7 +32,7 @@ fs.writeFileSync(path.join(ghBin, 'gh'), [
 fs.chmodSync(path.join(ghBin, 'gh'), 0o755);
 const previousPath = process.env.PATH;
 
-const { createOctokit, getOctokitForAccountId, getOctokitOrNull, getGitHubCliCredential, selectTokenForHost } = await import('./octokit.js');
+const { createOctokit, getOctokitForAccountId, getOctokitForHost, getOctokitOrNull, getGitHubCliCredential, selectTokenForHost } = await import('./octokit.js');
 const OAuth = 'github-com-oauth-token';
 
 afterAll(() => {
@@ -201,7 +201,7 @@ describe('getOctokitOrNull host trust', () => {
     }
   });
 
-  test('serves the stored instance credential for a host#cli: id while that instance gh login is not activated', async () => {
+  test('resolves nothing for a host#cli: id while that instance gh login is not activated, even with a stored credential', async () => {
     const ghConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-gh-hosts-cli-'));
     fs.writeFileSync(path.join(ghConfigDir, 'hosts.yml'), 'github.example.com:\n  user: ghe-user\n  oauth_token: gho_ghe\n');
     const previousConfigDir = process.env.GH_CONFIG_DIR;
@@ -215,10 +215,9 @@ describe('getOctokitOrNull host trust', () => {
         accessToken: 'gho_stored', user: { id: 42, login: 'ghe-user' }, source: 'pat',
       });
       storedId = credential.credentialId;
-      const resolved = await getOctokitForAccountId('github.example.com#cli:42');
-      expect(resolved).not.toBeNull();
-      expect(resolved.accountId).toBe(storedId);
-      expect(resolved.source).toBe('pat');
+      // The stored PAT may belong to someone else; a gh-bound project never
+      // runs as it.
+      expect(await getOctokitForAccountId('github.example.com#cli:42')).toBeNull();
     } finally {
       if (storedId) await removeGitHubAuthAccountForHost('github.example.com', storedId);
       globalThis.fetch = previousFetch;
@@ -243,9 +242,7 @@ describe('getOctokitOrNull host trust', () => {
         accessToken: 'gho_stored', user: { id: 42, login: 'ghe-user' }, source: 'pat',
       });
       storedId = credential.credentialId;
-      const resolved = await getOctokitForAccountId('stored.only.example.com#cli:42');
-      expect(resolved).not.toBeNull();
-      expect(resolved.source).toBe('pat');
+      expect(await getOctokitForHost('stored.only.example.com')).not.toBeNull();
     } finally {
       if (storedId) await removeGitHubAuthAccountForHost('stored.only.example.com', storedId);
       if (previousConfigDir === undefined) delete process.env.GH_CONFIG_DIR;

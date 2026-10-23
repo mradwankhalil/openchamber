@@ -120,9 +120,24 @@ const isInside = (pathModule, root, directory) => {
  * `<repo>/ai`. The git helpers answer the directory itself when git cannot
  * tell, so a folder outside any repository keeps its direct owner.
  */
-export const createMagicPromptOwnerResolver = ({ path: pathModule, listProjects, resolvePrimaryWorktreeRoot, resolveWorktreeTopLevel }) => async (directory) => {
-  const target = pathModule.resolve(directory);
-  const projects = (await listProjects()).map((project) => ({ id: project.id, path: pathModule.resolve(project.path) }));
+export const createMagicPromptOwnerResolver = ({ path: pathModule, realpath, listProjects, resolvePrimaryWorktreeRoot, resolveWorktreeTopLevel }) => async (directory) => {
+  // Git reports checkout roots with symlinks resolved, so project paths and
+  // the target are compared in the same form: a project registered through a
+  // symlink (`/tmp` on macOS) still owns its linked worktrees. A folder that
+  // does not exist yet resolves through its nearest existing parent.
+  const canonical = async (value) => {
+    const resolved = pathModule.resolve(value);
+    let existing = resolved;
+    for (;;) {
+      const real = await realpath(existing).catch(() => null);
+      if (real) return pathModule.join(real, pathModule.relative(existing, resolved));
+      const parent = pathModule.dirname(existing);
+      if (parent === existing) return resolved;
+      existing = parent;
+    }
+  };
+  const target = await canonical(directory);
+  const projects = await Promise.all((await listProjects()).map(async (project) => ({ id: project.id, path: await canonical(project.path) })));
   const deepestHolding = (candidate) => projects
     .filter((project) => isInside(pathModule, project.path, candidate))
     .reduce((best, project) => (!best || project.path.length > best.path.length ? project : best), null);

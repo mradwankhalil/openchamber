@@ -36,6 +36,8 @@ Each request's outcome (`replied`, `held`, `ignored`, `failed`) is kept for a bo
 
 A `held` or `failed` outcome is broadcast as `openchamber:permission-auto-accept.left-for-user` (`permissionId`, `sessionId`, `directory`). Clients keep a `safety` or `auto` session's request out of sight until this arrives or the request is answered, so an accepted request never flashes a card; the broadcast is what puts a held one on screen. Reconnect reconciliation broadcasts again for a request still held, which a client that already shows it ignores.
 
+Both broadcasts (`updated` and `left-for-user`) go to the main WebSocket, the legacy notification stream (an isolated space's host reads it) and the control stream (`broadcastPermissionUiEvent` in `server/index.js`). A window whose main event stream runs over SSE, by setting or after a WebSocket fallback, reads only the control stream; without it, such a window hid a held request for good and kept a mode another window had changed.
+
 ## Routes
 
 - `GET /api/permission-auto-accept` answers `{ sessions, modes, revision }`. `modes` is the policy; `sessions` is its on/off view (`ask` is off) for clients from before the modes.

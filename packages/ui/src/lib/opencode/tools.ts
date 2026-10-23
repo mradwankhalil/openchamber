@@ -294,6 +294,25 @@ export function executeToolCalls(metadata: Metadata | undefined): ExecuteToolCal
   return parsed
 }
 
+const executeRawCallSchema = z
+  .object({
+    toolCalls: z
+      .array(z.object({ tool: optionalText, input: z.json().optional().catch(undefined) }).nullable().catch(null))
+      .optional()
+      .catch(undefined),
+  })
+  .catch({})
+
+/** The newest call an `execute` script made, with its arguments as the script passed them. */
+export function lastExecuteToolCall(metadata: Metadata | undefined): { tool: string; input?: JsonValue } | undefined {
+  const calls = executeRawCallSchema.parse(metadata ?? {}).toolCalls ?? []
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index]
+    if (call?.tool) return { tool: call.tool, input: call.input }
+  }
+  return undefined
+}
+
 /** `JSON.stringify` that answers `undefined` for anything it cannot serialize. */
 function stringifyOrUndefined(value: ExecuteToolCallInput): string | undefined {
   if (value === undefined || value === null) return undefined
@@ -426,6 +445,67 @@ const OPENCHAMBER_RENDER_TOOL = "openchamber_render"
 
 /** The control, schedule, browser, memory, knowledge, notify and render tools OpenChamber gives every session. */
 const OPENCHAMBER_TOOLS = new Set(["openchamber", "openchamber_schedule", "openchamber_web", "openchamber_memory", "openchamber_knowledge", "openchamber_notify", OPENCHAMBER_RENDER_TOOL])
+
+const openChamberCallSchema = z
+  .object({
+    action: optionalText,
+    awaitAnswer: z.boolean().optional().catch(undefined),
+    parameters: z.object({ awaitAnswer: z.boolean().optional().catch(undefined) }).optional().catch(undefined),
+  })
+  .catch({})
+
+/** A call to one of OpenChamber's own tools: which tool, the `action` it ran, and whether its page waits for the user. */
+export type OpenChamberToolCall = { tool: string; action?: string; awaitsAnswer: boolean }
+
+/**
+ * The tools of OpenCode's `opencode` namespace, which manage OpenCode itself.
+ * They run inside Code Mode, which names them by registry id
+ * (`opencode_session_rename`); the dotted form is how the namespace is written.
+ */
+const OPENCODE_NAMESPACE_TOOLS = new Set([
+  "session_rename",
+  "session_move",
+  "worktree_create",
+  "worktree_list",
+  "worktree_remove",
+  "models",
+  "list_mcp_resources",
+  "read_mcp_resource",
+])
+const OPENCODE_NAMESPACE_PREFIX = "opencode_"
+
+/** The bare name (`session_rename`) of a tool in the `opencode` namespace, else `undefined`. */
+export function opencodeNamespaceTool(toolName: ToolName): string | undefined {
+  const trimmed = toolName?.trim().toLowerCase() ?? ""
+  const name = trimmed.startsWith(OPENCODE_NAMESPACE_PREFIX)
+    ? trimmed.slice(OPENCODE_NAMESPACE_PREFIX.length)
+    : normalizeToolName(trimmed)
+  return OPENCODE_NAMESPACE_TOOLS.has(name) ? name : undefined
+}
+
+/**
+ * The MCP server a tool comes from. OpenCode names an MCP tool
+ * `<server>_<tool>`, with every character of the server name outside
+ * `[A-Za-z0-9_-]` replaced by `_`. A server name may hold `_` itself, so only
+ * the known server names can split the tool name; the longest match wins.
+ */
+export function mcpToolServer(toolName: ToolName, servers: readonly string[]): string | undefined {
+  const trimmed = toolName?.trim() ?? ""
+  let match: string | undefined
+  for (const server of servers) {
+    const prefix = `${server.replace(/[^a-zA-Z0-9_-]/g, "_")}_`
+    if (trimmed.length > prefix.length && trimmed.startsWith(prefix) && server.length > (match?.length ?? 0)) match = server
+  }
+  return match
+}
+
+/** `null` for every tool that is not OpenChamber's own. */
+export function openChamberToolCall(toolName: ToolName, input: JsonValue | undefined): OpenChamberToolCall | null {
+  const tool = normalizeToolName(toolName)
+  if (!OPENCHAMBER_TOOLS.has(tool)) return null
+  const parsed = openChamberCallSchema.parse(input ?? {})
+  return { tool, action: parsed.action, awaitsAnswer: (parsed.parameters?.awaitAnswer ?? parsed.awaitAnswer) === true }
+}
 
 /**
  * The action an OpenChamber tool call ran and the one detail that tells calls

@@ -37,7 +37,16 @@ other.
   and makes small edits, such as ticking a step, with its own file tools, and
   `save` creates or replaces one whole. `expected` guards a replacement only:
   a save that carries it without an `id` is a 400, never a silently ignored
-  conflict check. The actions answer `403` while
+  conflict check. Notes and todos carry `planId`, todos `dependsOn`, under
+  the storage rules of `../project-context/DOCUMENTATION.md`; an update may
+  send only those fields. `list` narrows notes, todos and plans to one `planId`; `ready: true`
+  keeps only unfinished todos whose dependencies all exist and are completed,
+  judged on the whole stored list before the plan filter. Readiness is never
+  stored. A plan save with `sessionId` sets or replaces (`null` clears) the
+  existing plan's session link; it carries no markdown, and a call with
+  both, or without an `id`, is refused before anything is written. That
+  input names the plan's session and never a note's origin. A field the
+  tool declares for another kind is a 400. The actions answer `403` while
   `agentKnowledgeToolEnabled` is `false`. `show` checks the plan exists and
   sends `openchamber:plan-open-request` to every connected window, like
   `file.open`; every layout opens the plan the way a click in the Project
@@ -190,12 +199,18 @@ other.
   (`../session-knowledge/DOCUMENTATION.md`): what the work is about, never one
   mentioned in passing. It sends one service-neutral record (`url`, `title`, `kind`
   `change` or `issue`, optional `identifier`) and nothing is looked up, so any
-  tracker works. The URL decides what is stored: a GitHub pull or issue
+  tracker works. The URL decides what is stored: a github.com pull or issue
   address becomes the GitHub entry (kind from the path, live state as for any
-  link), a Linear issue address the Linear entry, anything else an `external`
-  entry shown by identifier. A GitLab merge request or issue address (the
-  `/-/merge_requests/N` shape on any host) is keyed by the thread, so linking
-  it again from a tab like `/diffs` or with a query refreshes the one entry. It only adds or refreshes links, never removes
+  link), an item link a registered tracker's `matchUrl` claims a tracker
+  entry (`{ id: '<provider>:<IDENTIFIER>', kind, provider, identifier }`;
+  Linear's id stays `linear:ENG-12` and its kind stays `linear` while the
+  `/api/linear` alias exists, so older bundled UIs keep showing and keeping
+  it; other trackers are `kind: 'tracker'`, see
+  `../trackers/DOCUMENTATION.md`), anything else an `external` entry shown by identifier.
+  A change request or issue address that a source-control provider's
+  `urls.thread` names (GitLab's `/-/merge_requests/N` shape on any host) is
+  keyed by the thread, so linking it again from a tab like `/diffs` or with a
+  query refreshes the one entry. It only adds or refreshes links, never removes
   one: the user owns removal. A missing field or a non-http(s) URL is a 400 and
   nothing is written.
 - `file.open` shows a file in the user's viewer. `file-open.js` resolves a

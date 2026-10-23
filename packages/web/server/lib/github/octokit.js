@@ -105,6 +105,10 @@ export function createOctokit(token, accountId = '', host = '') {
   Object.defineProperty(octokit, 'openChamberCacheIdentity', {
     value: cacheIdentity,
   });
+  // The host it talks to, for checks of what it answers (routes.js).
+  Object.defineProperty(octokit, 'openChamberHost', {
+    value: normalizedHost || 'github.com',
+  });
   return octokit;
 }
 
@@ -270,15 +274,16 @@ export async function getOctokitForAccountId(accountId, options = {}) {
       octokit,
     };
   }
-  // An exact CLI account id is not consent on its own. Like GitLab, the stored
-  // credential is the preference: a `<host>#cli:<id>` id uses that host's gh
-  // token only while the instance's gh login is active, and otherwise resolves
-  // to the host's stored credential. An untrusted host never resolves at all.
+  // An exact CLI account id is not consent on its own: a `<host>#cli:<id>` id
+  // uses that host's gh token only while the instance's gh login is active and
+  // signed in as that user. Otherwise it resolves to nothing, never to another
+  // account stored for the host, which may be a different person (as on
+  // GitLab). An untrusted host never resolves at all.
   const cliMatch = /^([^#]+)#cli:(\d+)$/.exec(accountId);
   if (!cliMatch) return null;
   const host = cliMatch[1].toLowerCase();
   if (host !== 'github.com' && !(await isTrustedGitHubHostOrStored(host))) return null;
-  const { stored: storedAuth, ghCliActive, ghToken } = await resolveHostCredential(host);
+  const { ghCliActive, ghToken } = await resolveHostCredential(host);
   if (ghCliActive && ghToken) {
     const octokit = createOctokit(ghToken, accountId, host);
     let response;
@@ -317,24 +322,5 @@ export async function getOctokitForAccountId(accountId, options = {}) {
       octokit,
     };
   }
-  if (!storedAuth) return null;
-  const octokit = createOctokit(storedAuth.accessToken, storedAuth.accountId, host);
-  octokit.hook.error('request', async (error) => {
-    const identity = { provider: 'github', instance: host, accountId: storedAuth.accountId };
-    error.sourceControlIdentity = identity;
-    error.sourceControlPersistedAccount = true;
-    if (error.status === 401) {
-      await options.onUnauthorized?.(identity, true);
-      error.sourceControlInvalidated = true;
-    }
-    throw error;
-  });
-  return {
-    accountId: storedAuth.accountId,
-    credentialRevision: storedAuth.credentialRevision,
-    providerUserId: storedAuth.providerUserId,
-    source: storedAuth.source,
-    user: storedAuth.user,
-    octokit,
-  };
+  return null;
 }

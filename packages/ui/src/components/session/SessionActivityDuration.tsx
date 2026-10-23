@@ -28,7 +28,8 @@ export const SessionActivityDuration: React.FC<{
   const settledMs = useSessionFinishedTurnDurationMs(sessionId);
   const now = useDurationTickerNow(running);
 
-  const durationMs = running ? Math.max(0, now - (startedAt ?? now)) : settledMs;
+  // A running turn with no known start shows nothing rather than a guess.
+  const durationMs = running ? (startedAt === undefined ? undefined : Math.max(0, now - startedAt)) : settledMs;
   if (durationMs === undefined) return null;
 
   const label = formatSessionActivityDuration(durationMs, t);

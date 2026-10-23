@@ -59,7 +59,7 @@ const openCodePackages = (version) => ({ '@opencode/cli': version, '@opencode/pl
 // yarn and python: bun and pnpm, at exact versions, on the PATH of every space through the tools
 // volume. uv for python packages comes as a pinned download, see `tools-filler.js`. The
 // maintainer's call of 2026-10-15; go, rust and java wait for project images.
-const RUNTIME_PACKAGES = Object.freeze({ bun: '1.4.3', pnpm: '12.11.2' });
+const RUNTIME_PACKAGES = Object.freeze({ bun: '1.4.4', pnpm: '12.11.2' });
 
 /**
  * The versions a released host installs: its own `@openchamber/web`, and OpenCode at the

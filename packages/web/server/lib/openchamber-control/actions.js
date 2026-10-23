@@ -109,8 +109,8 @@ export const OPENCHAMBER_MEMORY_ACTIONS = Object.freeze(
  * own file tools on the path list gives.
  */
 export const OPENCHAMBER_KNOWLEDGE_ACTION_DEFINITIONS = Object.freeze([
-  { action: 'knowledge.list', title: 'List project knowledge', description: 'Notes with text, todos with state, plans with their file paths. List before adding, to avoid duplicates' },
-  { action: 'knowledge.save', title: 'Save project knowledge', description: 'Requires kind and body; with id it replaces. A plan body is the whole markdown, and the answer gives its path. A todo update may send only completed' },
+  { action: 'knowledge.list', title: 'List project knowledge', description: 'Notes with text, todos with state and links, plans with their file paths and session. Optional planId and ready filters. List before adding, to avoid duplicates' },
+  { action: 'knowledge.save', title: 'Save project knowledge', description: 'Requires kind and body; with id it replaces. A plan body is the whole markdown, and the answer gives its path. An update may send only the fields it changes: completed, planId or dependsOn; sessionId on a plan, without body' },
   { action: 'knowledge.delete', title: 'Delete project knowledge', description: 'Requires kind and id' },
   { action: 'knowledge.show', title: 'Show a plan to the user', description: 'Open a plan for the user to read, comment on and send to a session; requires kind plan and id' },
 ]);

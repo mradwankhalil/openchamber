@@ -91,6 +91,8 @@ mock.module('@/lib/opencode/client', () => ({
     getVcs: async () => undefined,
     listPendingForms: async () => [],
     listPendingPermissions: async () => [],
+    // The host's status map: these tests run without one, as a failed read.
+    getHostSessionStatusSnapshot: async () => null,
     getProvidersForConfig: async () => ({ providers: [], models: [] }),
     getSession: async (id: string, directory?: string) => readSession ? readSession(id, directory) : rootSession(id, id, 1),
     getSessionMessages: async (id: string) => {

@@ -24,6 +24,7 @@ const extractSessionStatusUpdate = (payload) => {
   return {
     sessionId,
     type,
+    turnStartedAt: Number.isFinite(properties.turnStartedAt) ? properties.turnStartedAt : null,
     eventId: typeof payload.id === 'string' ? payload.id : '',
     attempt: typeof status.attempt === 'number'
       ? status.attempt
@@ -39,10 +40,22 @@ const extractSessionStatusUpdate = (payload) => {
 
 const readRequestId = (value) => (typeof value === 'string' && value.trim() ? value.trim() : '');
 
-export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, broadcastEvent }) => {
+export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, broadcastEvent, readTurnStart = null }) => {
   const sessionActivityPhases = new Map();
   const sessionActivityCooldowns = new Map();
   const sessionStates = new Map();
+  // When each session's latest turn began (OpenCode's clock), so every client
+  // counts "Active for" from the same moment instead of from when it first
+  // looked. Set from `session.execution.started`; a turn this server joined
+  // already running is read back from the session's history (`readTurnStart`).
+  // The start outlives its turn with `running: false`: a parent idling while a
+  // background subagent works is still in that turn for display, and clients
+  // ask for it then. A start that is not running is never reported as the
+  // start of a busy session.
+  const turnStarts = new Map();
+  // One history read per session per turn; the token tells a read that
+  // outlived its turn from the current one.
+  const turnStartReads = new Map();
   // Pending permission requests and forms per session, kept from the same
   // upstream stream. Clients that do not initialize a directory cannot read
   // its pending list from OpenCode (that read creates a location), so this map
@@ -118,7 +131,11 @@ export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, br
     if (payload.type === 'session.deleted') {
       const info = properties.info && typeof properties.info === 'object' ? properties.info : {};
       const sessionId = readRequestId(properties.sessionID) || readRequestId(info.id);
-      if (sessionId) pendingRequestsBySession.delete(sessionId);
+      if (sessionId) {
+        pendingRequestsBySession.delete(sessionId);
+        turnStarts.delete(sessionId);
+        turnStartReads.delete(sessionId);
+      }
     }
   };
 
@@ -181,6 +198,70 @@ export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, br
     return true;
   };
 
+  /** The start of the session's running turn, or null while none is known. */
+  const getRunningTurnStart = (sessionId) => {
+    const entry = turnStarts.get(sessionId);
+    return entry?.running ? entry.startedAt : null;
+  };
+
+  /**
+   * The start clients get beside a status: a running session's own start, an
+   * idle one's last start (for a parent its subagents keep in the turn), and
+   * nothing for a running session whose start is not known yet.
+   */
+  const reportedTurnStart = (sessionId, status) => {
+    if (status === 'busy' || status === 'retry') return getRunningTurnStart(sessionId) ?? undefined;
+    return turnStarts.get(sessionId)?.startedAt;
+  };
+
+  const endTurn = (sessionId) => {
+    const entry = turnStarts.get(sessionId);
+    if (entry?.running) turnStarts.set(sessionId, { startedAt: entry.startedAt, running: false });
+    turnStartReads.delete(sessionId);
+  };
+
+  const broadcastSessionStatus = (properties) => {
+    const payload = { type: 'openchamber:session-status', properties };
+    if (broadcastEvent) {
+      broadcastEvent(payload);
+      return;
+    }
+    for (const res of getNotificationClients()) {
+      try {
+        writeSseEvent(res, payload);
+      } catch {
+      }
+    }
+  };
+
+  /**
+   * A busy session this server did not see start: read its start back from
+   * the history once per turn, and announce it when it arrives while the same
+   * turn still runs.
+   */
+  const readBackTurnStart = (sessionId) => {
+    if (!readTurnStart || turnStartReads.has(sessionId)) return;
+    const token = {};
+    turnStartReads.set(sessionId, token);
+    void Promise.resolve()
+      .then(() => readTurnStart(sessionId))
+      .catch(() => null)
+      .then((startedAt) => {
+        if (turnStartReads.get(sessionId) !== token || !Number.isFinite(startedAt)) return;
+        if (turnStarts.get(sessionId)?.running) return;
+        const state = sessionStates.get(sessionId);
+        if (state?.status !== 'busy' && state?.status !== 'retry') return;
+        turnStarts.set(sessionId, { startedAt, running: true });
+        broadcastSessionStatus({
+          sessionID: sessionId,
+          status: state.status,
+          timestamp: Date.now(),
+          metadata: state.metadata,
+          turnStartedAt: startedAt,
+        });
+      });
+  };
+
   const updateSessionState = (sessionId, status, eventId, metadata = {}) => {
     if (!sessionId || typeof sessionId !== 'string') return;
 
@@ -198,29 +279,15 @@ export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, br
       metadata: { ...existing?.metadata, ...metadata },
     });
 
-    const clients = getNotificationClients();
     if (!existing || existing.status !== status || isRestartInterruption) {
       const state = sessionStates.get(sessionId);
-      const syntheticPayload = {
-        type: 'openchamber:session-status',
-        properties: {
-          sessionID: sessionId,
-          status: state.status,
-          timestamp: state.lastUpdateAt,
-          metadata: state.metadata,
-        },
-      };
-
-      if (typeof broadcastEvent === 'function') {
-        broadcastEvent(syntheticPayload);
-      } else if (clients.size > 0) {
-        for (const res of clients) {
-          try {
-            writeSseEvent(res, syntheticPayload);
-          } catch {
-          }
-        }
-      }
+      broadcastSessionStatus({
+        sessionID: sessionId,
+        status: state.status,
+        timestamp: state.lastUpdateAt,
+        metadata: state.metadata,
+        turnStartedAt: status === 'busy' || status === 'retry' ? getRunningTurnStart(sessionId) ?? undefined : undefined,
+      });
     }
 
     const phase = status === 'busy' || status === 'retry' ? 'busy' : 'idle';
@@ -238,6 +305,7 @@ export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, br
         status: data.status,
         lastUpdateAt: data.lastUpdateAt,
         metadata: data.metadata,
+        turnStartedAt: reportedTurnStart(sessionId, data.status),
       };
     }
     return result;
@@ -285,6 +353,8 @@ export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, br
 
     // A restarted OpenCode forgot every pending request with the turns.
     pendingRequestsBySession.clear();
+    turnStarts.clear();
+    turnStartReads.clear();
     const eventId = `opencode-restart-${Date.now()}`;
     for (const sessionId of interruptedSessionIds) {
       updateSessionState(sessionId, 'idle', eventId, {
@@ -314,6 +384,10 @@ export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, br
         sessionStates.delete(sessionId);
       }
     }
+    // A start lives as long as its session's status does.
+    for (const sessionId of turnStarts.keys()) {
+      if (!sessionStates.has(sessionId)) turnStarts.delete(sessionId);
+    }
     for (const [sessionId, data] of sessionActivityPhases) {
       if (now - data.updatedAt <= SESSION_ACTIVITY_MAX_AGE_MS) continue;
       const timer = sessionActivityCooldowns.get(sessionId);
@@ -332,8 +406,14 @@ export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, br
     if (!update) return;
 
     if (update.type === 'busy' || update.type === 'retry') {
+      // Recorded before the status update, so its broadcast carries the start.
+      if (update.turnStartedAt !== null) {
+        turnStarts.set(update.sessionId, { startedAt: update.turnStartedAt, running: true });
+        turnStartReads.delete(update.sessionId);
+      }
       setSessionActivityPhase(update.sessionId, 'busy');
     } else if (update.type === 'idle') {
+      endTurn(update.sessionId);
       setSessionActivityPhase(update.sessionId, 'cooldown');
     }
 
@@ -342,6 +422,28 @@ export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, br
       message: update.message,
       next: update.next,
     });
+
+    // A later step of a turn that started before this server was listening.
+    if ((update.type === 'busy' || update.type === 'retry') && !turnStarts.get(update.sessionId)?.running) {
+      readBackTurnStart(update.sessionId);
+    }
+  };
+
+  /**
+   * Sessions OpenCode reports running when this server connects to its event
+   * stream, as read from `readAt` on. Turns that started before then sent no
+   * event this server saw, so they are marked busy here and their starts are
+   * read back from history. A session whose status changed while the list was
+   * read is left to that newer status: its turn may have ended meanwhile.
+   */
+  const adoptRunningSessions = (sessionIds, readAt) => {
+    for (const sessionId of sessionIds) {
+      if (!sessionId || typeof sessionId !== 'string') continue;
+      if ((sessionStates.get(sessionId)?.lastUpdateAt ?? 0) >= readAt) continue;
+      const status = sessionStates.get(sessionId)?.status;
+      if (status !== 'busy' && status !== 'retry') updateSessionState(sessionId, 'busy', `server-adopted-${Date.now()}`);
+      if (!turnStarts.get(sessionId)?.running) readBackTurnStart(sessionId);
+    }
   };
 
   const dispose = () => {
@@ -353,11 +455,15 @@ export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, br
     sessionActivityPhases.clear();
     sessionStates.clear();
     pendingRequestsBySession.clear();
+    turnStarts.clear();
+    turnStartReads.clear();
     activeSessionCount = 0;
   };
 
   return {
     processOpenCodeSsePayload,
+    adoptRunningSessions,
+    getRunningTurnStart,
     getSessionActivitySnapshot,
     getActiveSessionCount,
     getSessionStateSnapshot,

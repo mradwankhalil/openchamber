@@ -139,7 +139,13 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
-          changed_sensitive_files="$(gh pr diff "$PR_NUMBER" --name-only | grep -E '^(AGENTS\.md|CONTRIBUTING\.md|\.agents/skills/|\.github/PULL_REQUEST_TEMPLATE\.md$|\.github/workflows/|\.opencode/agent/|\.opencode/opencode\.json$)' || true)"
+          # The files API lists every file of a PR of any size, renames by both
+          # names. `gh pr diff` is refused past 20,000 diff lines, and inside
+          # this pipeline that failure read as "no sensitive files". Here a
+          # failed listing fails the step.
+          changed_files="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate \
+            --jq '.[] | .filename, (.previous_filename // empty)')"
+          changed_sensitive_files="$(printf '%s\n' "$changed_files" | grep -E '^(AGENTS\.md|CONTRIBUTING\.md|\.agents/skills/|\.github/PULL_REQUEST_TEMPLATE\.md$|\.github/workflows/|\.opencode/agent/|\.opencode/opencode\.json$)' || true)"
 
           if [ -n "$changed_sensitive_files" ]; then
             {
@@ -311,7 +317,13 @@ jobs:
             exit 1
           fi
 
-          gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --patch > "$context/pr.patch"
+          # GitHub refuses a diff past 20,000 lines; per-file patches still load
+          # (a file too large for one has none, and the agent reads it in head/).
+          if ! gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --patch > "$context/pr.patch"; then
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate \
+              --jq '.[] | "diff --git a/\(.previous_filename // .filename) b/\(.filename)\n--- a/\(.previous_filename // .filename)\n+++ b/\(.filename)\n\(.patch // "(no patch: binary or too large)")\n"' \
+              > "$context/pr.patch"
+          fi
           gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/comments" --paginate \
             | jq -s 'add // []' > "$context/review-comments.json"
 

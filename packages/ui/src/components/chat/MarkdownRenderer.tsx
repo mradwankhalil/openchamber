@@ -3,11 +3,10 @@ import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { cn } from '@/lib/utils';
 import { getLoadedMarkdownRendererModule, loadMarkdownRendererModule } from './markdownRendererLoader';
-import type { MarkdownRendererProps } from './MarkdownRendererImpl';
+import type { MarkdownRendererProps, SimpleMarkdownRendererProps as SimpleRendererProps } from './MarkdownRendererImpl';
 
 // Thin lazy wrapper around the MarkdownRenderer implementation.
-// The full implementation (marked + Shiki highlighting + KaTeX + morphdom
-// DOM morphing, plus beautiful-mermaid) is loaded on demand, keeping the
+// Streamdown, its official plugins and beautiful-mermaid load on demand, keeping the
 // initial bundle lean.
 
 const MarkdownRendererLazy = lazyWithChunkRecovery(() =>
@@ -48,7 +47,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = (props) => {
   );
 };
 
-type SimpleMarkdownRendererProps = React.ComponentPropsWithoutRef<typeof SimpleMarkdownRendererLazy> & {
+type SimpleMarkdownRendererProps = SimpleRendererProps & {
   fallbackContent?: React.ReactNode;
 };
 

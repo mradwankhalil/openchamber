@@ -37,3 +37,17 @@ export const chooseAutoNestedRepo = (
   const visible = repositories.find((repository) => !isHiddenRepository(root, repository));
   return visible ?? null;
 };
+
+const withoutTrailingSeparator = (value: string): string => value.replace(/[\\/]+$/, '');
+
+/**
+ * Whether a project root is searched for nested repositories at all. The home
+ * directory is not: a project there exists to hold chats outside any project,
+ * the repositories under it are tool installs and unrelated checkouts, and a
+ * walk three levels into `~` is slow. Its git surfaces show the plain "not a
+ * git repository" state.
+ */
+export const discoversNestedRepos = (root: string, homeDirectory: string | null | undefined): boolean => {
+  if (!homeDirectory) return true;
+  return withoutTrailingSeparator(root) !== withoutTrailingSeparator(homeDirectory);
+};

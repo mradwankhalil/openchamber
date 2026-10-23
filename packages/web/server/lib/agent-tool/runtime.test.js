@@ -217,6 +217,47 @@ describe('managed agent tool runtime', () => {
       expect(listed.plans).toEqual([expect.objectContaining({ id: planId, title: 'Agent plan', path: createdPlan.path })]);
       expect(await fs.readFile(listed.plans[0].path, 'utf8')).toBe(raw);
 
+      // Plan work: links, dependencies, filters and the plan session through the
+      // generated tool; null and [] reach storage as clears, never as omissions.
+      const one = (await call('save', { kind: 'todo', body: 'Step one', planId })).data.todo;
+      const two = (await call('save', { kind: 'todo', body: 'Step two', planId, dependsOn: [one.id] })).data.todo;
+      // A model can send dependsOn as a JSON string, nested or beside the
+      // action as a recorded GLM call did. It is parsed once and kept only as an
+      // array; every other value reaches the strict server check unchanged.
+      expect((await call('save', { kind: 'todo', id: two.id, dependsOn: '[]' })).data.todo).not.toHaveProperty('dependsOn');
+      const flat = await tools.openchamber_knowledge.execute(
+        { action: 'knowledge.save', kind: 'todo', id: two.id, dependsOn: JSON.stringify([one.id]) },
+        { sessionID: 'ses_caller', progress: async () => {} },
+      );
+      expect(JSON.parse(flat.content).data.todo).toMatchObject({ dependsOn: [one.id] });
+      for (const dependsOn of ['[not json', JSON.stringify({ id: one.id }), one.id, '[1]']) {
+        expect(await call('save', { kind: 'todo', id: two.id, dependsOn }))
+          .toMatchObject({ ok: false, error: { message: 'dependsOn must be an array of todo ids' } });
+      }
+      expect((await call('save', { kind: 'note', id: noteId, planId })).data.note)
+        .toMatchObject({ body: 'Edited note', planId, origin: { sessionId: 'ses_caller' } });
+      const readyInPlan = async () => (await call('list', { planId, ready: true })).data.todos.map((todo) => todo.text);
+      expect(await readyInPlan()).toEqual(['Step one']);
+      expect((await call('save', { kind: 'todo', id: one.id, completed: true })).ok).toBe(true);
+      expect(await readyInPlan()).toEqual(['Step two']);
+      expect((await call('list', { planId })).data).toMatchObject({
+        notes: [{ id: noteId }], todos: [{ id: two.id }, { id: one.id }], plans: [{ id: planId, path: createdPlan.path }],
+      });
+
+      expect((await call('save', { kind: 'plan', id: planId, sessionId: 'ses_worker' })).data.plan)
+        .toMatchObject({ id: planId, path: createdPlan.path, session: { sessionId: 'ses_worker' } });
+      const beforeMixed = await fs.readFile(projectContextRuntime.contextPathFor(owner), 'utf8');
+      expect(await call('save', { kind: 'plan', id: planId, sessionId: 'ses_other', body: '# Mixed' })).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      expect(await fs.readFile(projectContextRuntime.contextPathFor(owner), 'utf8')).toBe(beforeMixed);
+      expect(await fs.readFile(createdPlan.path, 'utf8')).toBe(raw);
+      expect((await call('save', { kind: 'plan', id: planId, sessionId: null })).data.plan).not.toHaveProperty('session');
+
+      expect((await call('save', { kind: 'note', id: noteId, planId: null })).data.note).not.toHaveProperty('planId');
+      // Deleting the first step drops it from the second's dependencies.
+      expect((await call('delete', { kind: 'todo', id: one.id })).ok).toBe(true);
+      expect((await call('list', { planId })).data.todos).toEqual([expect.not.objectContaining({ dependsOn: expect.anything() })]);
+      expect((await call('delete', { kind: 'todo', id: two.id })).ok).toBe(true);
+
       await fs.mkdir(path.join(dataDir, 'shared-plans'));
       await fs.writeFile(path.join(dataDir, 'shared-plans', 'team.md'), '# Team\n');
       const sharedId = 'shared:team.md';
@@ -248,12 +289,18 @@ describe('managed agent tool runtime', () => {
     const actions = knowledge.input.properties.action.oneOf.map((entry) => entry.const);
     expect(actions).toEqual(['knowledge.list', 'knowledge.save', 'knowledge.delete', 'knowledge.show']);
     const parameters = knowledge.input.properties.parameters.properties;
-    expect(Object.keys(parameters).sort()).toEqual(['body', 'completed', 'directory', 'expected', 'id', 'kind', 'projectId']);
+    expect(Object.keys(parameters).sort()).toEqual(['body', 'completed', 'dependsOn', 'directory', 'expected', 'id', 'kind', 'planId', 'projectId', 'ready', 'sessionId']);
     expect(parameters.kind.enum).toEqual(['note', 'todo', 'plan']);
     expect(parameters.completed.type).toBe('boolean');
+    expect(parameters.ready.type).toBe('boolean');
+    expect(parameters.planId.type).toEqual(['string', 'null']);
+    expect(parameters.sessionId.type).toEqual(['string', 'null']);
+    expect(parameters.dependsOn).toMatchObject({ type: 'array', items: { type: 'string' } });
     expect(tools.openchamber.input.properties.action.oneOf.map((entry) => entry.const)).not.toContain('knowledge.list');
+    // The control tool keeps its own session id, a plain string.
+    expect(tools.openchamber.input.properties.parameters.properties.sessionId).toEqual({ type: 'string' });
     for (const tool of ['openchamber', 'openchamber_web', 'openchamber_memory']) {
-      for (const field of ['kind', 'expected', 'completed']) {
+      for (const field of ['kind', 'expected', 'completed', 'planId', 'dependsOn', 'ready']) {
         expect(tools[tool].input.properties.parameters.properties).not.toHaveProperty(field);
       }
     }

@@ -249,6 +249,9 @@
     "tunnelMode": {
       "scope": "instance"
     },
+    "tunnelHttpsPort": {
+      "scope": "instance"
+    },
     "tunnelBootstrapTtlMs": {
       "scope": "instance"
     },
@@ -580,6 +583,9 @@
       "scope": "profile"
     },
     "walkthroughModelOverride": {
+      "scope": "profile"
+    },
+    "walkthroughModelVariant": {
       "scope": "profile"
     },
     "fallbackModel": {

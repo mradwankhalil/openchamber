@@ -59,6 +59,20 @@ const json = (body: JsonValue, status = 200): Response => (
 const server: { global: Stored; projects: Map<string, { path: string; stored: Stored }> } = { global: { kind: 'missing' }, projects: new Map() };
 let calls: Call[];
 let request: Spy<typeof fetch>;
+// Holds back the answer to the next matching request until `release` runs.
+// The answer is computed when the request arrives, as a real server would.
+let held: { match: (call: Call) => boolean; gate: Promise<void> } | null = null;
+const holdNext = (match: (call: Call) => boolean): (() => Promise<void>) => {
+  let resolve = () => {};
+  const gate = new Promise<void>((done) => { resolve = done; });
+  held = { match, gate };
+  return async () => {
+    await act(async () => {
+      resolve();
+      await flush();
+    });
+  };
+};
 
 const scopeState = (stored: Stored): JsonValue => (
   stored.kind === 'invalid'
@@ -127,6 +141,7 @@ let container: HTMLElement;
 let root: Root;
 
 beforeEach(() => {
+  held = null;
   server.global = { kind: 'missing' };
   server.projects = new Map();
   calls = [];
@@ -136,7 +151,13 @@ beforeEach(() => {
     if (call.url.pathname === '/auth/url-token') return json({ token: 'test-url-token', expiresAt: Date.now() + 60_000 });
     calls.push(call);
     if (!call.url.pathname.startsWith('/api/magic-prompts')) return json({ error: 'Not part of this test' }, 404);
-    return handle(call);
+    const response = handle(call);
+    if (held?.match(call)) {
+      const { gate } = held;
+      held = null;
+      await gate;
+    }
+    return response;
   });
   switchRuntimeEndpoint({ apiBaseUrl: 'https://runtime-a.test', runtimeKey: 'runtime-a' });
 
@@ -302,4 +323,44 @@ test('an unreadable scope shows the error with Retry, never editable built-in te
   await click(buttonIn(container, 'Retry'));
   expect(alertText()).toBeNull();
   expect(field('Visible prompt')?.value).toBe(BUILTIN_VISIBLE);
+});
+
+test('a read that started before a save never replaces what the save answered', async () => {
+  server.global = { kind: 'ok', prompts: { [VISIBLE]: 'Old visible' } };
+  useProjects([{ id: 'proj', path: '/work/proj' }]);
+  await mount();
+  await chooseScope('Project');
+  // Coming back to Global reads it again; that read answers late, with the old text.
+  const releaseRead = holdNext((call) => call.method === 'GET' && !call.url.searchParams.has('projectId'));
+  await chooseScope('Global');
+  await type('Visible prompt', 'New visible');
+  await click(blockButton('Visible prompt', 'Save'));
+  await releaseRead();
+
+  expect(field('Visible prompt')?.value).toBe('New visible');
+  expect(statusOf('Visible prompt')).toBe('Using global override');
+});
+
+test('a context runs one write at a time', async () => {
+  await mount();
+  const releaseSave = holdNext((call) => call.method === 'PUT');
+  await type('Visible prompt', 'First');
+  await click(blockButton('Visible prompt', 'Save'));
+  await type('Instructions', 'Second');
+  await click(blockButton('Instructions', 'Save'));
+  expect(promptCalls().filter((call) => call.method === 'PUT')).toHaveLength(1);
+  await releaseSave();
+  expect(server.global).toEqual({ kind: 'ok', prompts: { [VISIBLE]: 'First' } });
+});
+
+test('text typed while a save is in flight stays in the editor', async () => {
+  await mount();
+  const releaseSave = holdNext((call) => call.method === 'PUT');
+  await type('Visible prompt', 'Saved text');
+  await click(blockButton('Visible prompt', 'Save'));
+  await type('Visible prompt', 'Saved text, and more');
+  await releaseSave();
+
+  expect(field('Visible prompt')?.value).toBe('Saved text, and more');
+  expect(server.global).toEqual({ kind: 'ok', prompts: { [VISIBLE]: 'Saved text' } });
 });

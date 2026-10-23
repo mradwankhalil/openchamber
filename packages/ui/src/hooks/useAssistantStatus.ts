@@ -1,10 +1,21 @@
 import React from 'react';
 import { z } from 'zod';
 import { useChatSessionSelection } from '@/components/chat/chatColumnSession';
-import type { Message, ModelRef, Part, ReasoningPart, StructuredError, TextPart, ToolPart } from '@/lib/opencode/model';
-import { executeHasBackgroundableWork, executeToolCalls, isExecuteTool, isShellTool, isSubagentTool } from '@/lib/opencode/tools';
+import type { JsonValue, Message, ModelRef, Part, ReasoningPart, StructuredError, TextPart, ToolPart } from '@/lib/opencode/model';
+import {
+    executeHasBackgroundableWork,
+    isExecuteTool,
+    isShellTool,
+    isSubagentTool,
+    lastExecuteToolCall,
+    mcpToolServer,
+    opencodeNamespaceTool,
+    openChamberToolCall,
+} from '@/lib/opencode/tools';
+import type { OpenChamberToolCall } from '@/lib/opencode/tools';
 
 import type { MessageStreamPhase } from '@/stores/types/sessionTypes';
+import { selectMcpServersForDirectory, useMcpConfigStore } from '@/stores/useMcpConfigStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useDirectorySync, useSession, useSessionMessages, useSessionPermissions, useSessionForms, useSessionStatus } from '@/sync/sync-context';
 import { useSessionActivity } from './useSessionActivity';
@@ -147,13 +158,116 @@ type ParsedStatusResult = {
     canBackground: boolean;
 };
 
+// OpenChamber's own tools each do several kinds of work behind one name, so
+// the phrase follows the call's `action`. The fallback covers the remaining
+// actions and any added later; the tool name never reaches the pill.
+type ToolActionPhrases = { fallback: string; actions?: Record<string, string> };
+
+const OPENCHAMBER_PHRASES = new Map(Object.entries<ToolActionPhrases>({
+    openchamber: {
+        fallback: 'managing sessions',
+        actions: {
+            'projects.list': 'looking at projects',
+            'models.list': 'looking up models',
+            'models.search': 'looking up models',
+            'session.list': 'checking sessions',
+            'session.status': 'checking a session',
+            'session.messages': 'reading a session',
+            'session.create': 'starting a session',
+            'session.send': 'messaging a session',
+            'session.fork': 'forking a session',
+            'session.moveToWorktree': 'moving to a worktree',
+            'session.link': 'linking the work',
+            'file.open': 'opening a file',
+        },
+    },
+    openchamber_schedule: {
+        fallback: 'updating scheduled tasks',
+        actions: {
+            'schedule.list': 'checking scheduled tasks',
+            'schedule.run': 'running a scheduled task',
+        },
+    },
+    openchamber_web: {
+        fallback: 'using the browser',
+        actions: {
+            'browser.open': 'opening a page',
+            'browser.snapshot': 'reading a page',
+            'browser.inspect': 'inspecting a page',
+            'browser.capture': 'taking a screenshot',
+            'browser.close': 'closing a tab',
+        },
+    },
+    openchamber_memory: {
+        fallback: 'checking memory',
+        actions: {
+            'memory.save': 'saving to memory',
+            'memory.delete': 'removing a memory',
+        },
+    },
+    openchamber_knowledge: {
+        fallback: 'checking project knowledge',
+        actions: {
+            'knowledge.save': 'updating project knowledge',
+            'knowledge.delete': 'updating project knowledge',
+            'knowledge.show': 'showing a plan',
+        },
+    },
+    openchamber_notify: { fallback: 'sending a notification' },
+    openchamber_render: { fallback: 'drawing a page' },
+}));
+
+/**
+ * `running` tells a page that waits for the user's answer apart from one the
+ * model is still writing: the call runs until the user picks.
+ */
+const getOpenChamberPhrase = (call: OpenChamberToolCall, running: boolean): string => {
+    if (call.awaitsAnswer && running) return 'waiting for your answer';
+    const phrases = OPENCHAMBER_PHRASES.get(call.tool);
+    return (call.action ? phrases?.actions?.[call.action] : undefined) ?? phrases?.fallback ?? 'working';
+};
+
+// The `opencode` namespace: OpenCode managing itself.
+const OPENCODE_NAMESPACE_PHRASES = new Map(Object.entries({
+    session_rename: 'renaming the session',
+    session_move: 'moving the session',
+    worktree_create: 'creating a worktree',
+    worktree_list: 'checking worktrees',
+    worktree_remove: 'removing a worktree',
+    models: 'looking up models',
+    list_mcp_resources: 'checking MCP resources',
+    read_mcp_resource: 'reading an MCP resource',
+}));
+
+const asWords = (name: string): string => name.replace(/[_-]+/g, ' ').trim();
+
 const getToolStatusPhrase = (toolName: string, count = 1): string => {
     const bucket = TOOL_BUCKETS.get(toolName);
     if (!bucket) {
-        return `using ${toolName}`;
+        // A plugin tool nobody described: its name, read as words.
+        return `using ${asWords(toolName)}`;
     }
     const [one, many] = BUCKET_PHRASES[bucket];
     return (count > 1 ? many : one).replace('{count}', String(count));
+};
+
+/**
+ * Tools that say what they do whether the model calls them directly or from a
+ * Code Mode script: OpenChamber's own, the `opencode` namespace, and MCP
+ * tools, which name the integration they come from.
+ */
+const getNamedToolPhrase = (
+    toolName: string,
+    input: JsonValue | undefined,
+    running: boolean,
+    mcpServers: readonly string[],
+): string | undefined => {
+    const ownCall = openChamberToolCall(toolName, input);
+    if (ownCall) return getOpenChamberPhrase(ownCall, running);
+    const opencodeTool = opencodeNamespaceTool(toolName);
+    if (opencodeTool) return OPENCODE_NAMESPACE_PHRASES.get(opencodeTool);
+    const server = mcpToolServer(toolName, mcpServers);
+    return server ? `using ${asWords(server)}` : undefined;
 };
 
 /**
@@ -162,14 +276,20 @@ const getToolStatusPhrase = (toolName: string, count = 1): string => {
  * of sitting on a generic phrase for its whole run. Parallel commands are the
  * exception: one call's name cannot speak for several, so they count instead.
  */
-const getRunningToolPhrase = (part: ToolPart, toolName: string, count: number): string => {
+const getRunningToolPhrase = (part: ToolPart, toolName: string, count: number, mcpServers: readonly string[]): string => {
+    const state = part.state;
+    const named = getNamedToolPhrase(toolName, state?.input, state?.status === 'running', mcpServers);
+    if (named) {
+        return named;
+    }
     if (!isExecuteTool(toolName) || count > 1) {
         return getToolStatusPhrase(toolName, count);
     }
-    const state = part.state;
-    const calls = executeToolCalls(state && 'metadata' in state ? state.metadata : undefined);
-    const last = calls[calls.length - 1];
-    return last ? `calling ${last.tool}` : getToolStatusPhrase(toolName);
+    const last = lastExecuteToolCall(state && 'metadata' in state ? state.metadata : undefined);
+    if (!last) {
+        return getToolStatusPhrase(toolName);
+    }
+    return getNamedToolPhrase(last.tool, last.input, false, mcpServers) ?? getToolStatusPhrase(last.tool);
 };
 
 const hashString = (value: string): number => {
@@ -198,7 +318,8 @@ export const hasBackgroundableWork = (parts: readonly Part[]): boolean => parts.
     return executeHasBackgroundableWork(part.state.metadata);
 });
 
-export const createParsedStatus = (parts: Part[], genericKey: string): ParsedStatusResult => {
+/** `mcpServers`: the configured MCP server names, which name the integration an MCP tool comes from. */
+export const createParsedStatus = (parts: Part[], genericKey: string, mcpServers: readonly string[] = []): ParsedStatusResult => {
     const runningToolCounts = countRunningToolCalls(parts);
     let activePartType: ParsedStatusResult['activePartType'] = undefined;
     let activeToolName: string | undefined = undefined;
@@ -224,7 +345,7 @@ export const createParsedStatus = (parts: Part[], genericKey: string): ParsedSta
                     const bucket = TOOL_BUCKETS.get(toolName);
                     activePartType = bucket === 'edit' ? 'editing' : 'tool';
                     activeToolName = toolName;
-                    activeToolPhrase = getRunningToolPhrase(part, toolName, runningToolCounts.get(bucket ?? toolName) ?? 1);
+                    activeToolPhrase = getRunningToolPhrase(part, toolName, runningToolCounts.get(bucket ?? toolName) ?? 1, mcpServers);
                 }
                 break;
             }
@@ -428,12 +549,21 @@ export function useAssistantStatus(): AssistantStatusSnapshot {
     );
     const lastAssistantId = activeAssistant.assistantId;
 
+    // An MCP tool's name starts with its server's name, and only the configured
+    // names can split it. Reading the config touches no running server.
+    const mcpServerConfigs = useMcpConfigStore((state) => selectMcpServersForDirectory(state, currentSessionDirectory));
+    const loadMcpConfigs = useMcpConfigStore((state) => state.loadMcpConfigs);
+    React.useEffect(() => {
+        void loadMcpConfigs({ directory: currentSessionDirectory });
+    }, [currentSessionDirectory, loadMcpConfigs]);
+    const mcpServers = React.useMemo(() => mcpServerConfigs.map((server) => server.name), [mcpServerConfigs]);
+
     const lastAssistantStatusSignature = useDirectorySync(
         React.useCallback((state) => {
             const genericKey = `${currentSessionId ?? ''}:${lastAssistantId ?? ''}`;
             const parts = lastAssistantId ? (state.part[lastAssistantId] ?? EMPTY_PARTS) : EMPTY_PARTS;
-            return encodeParsedStatus(createParsedStatus(parts, genericKey));
-        }, [currentSessionId, lastAssistantId]),
+            return encodeParsedStatus(createParsedStatus(parts, genericKey, mcpServers));
+        }, [currentSessionId, lastAssistantId, mcpServers]),
         currentSessionDirectory ?? undefined,
     );
 

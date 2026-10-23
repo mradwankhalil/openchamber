@@ -56,6 +56,12 @@
     min-width: 36px;
   }
 
+  /* Toast titles and icons line up with their buttons, which the rule above
+     makes at least 36px tall (sonner.tsx). */
+  :root.mobile-pointer:not(.desktop-runtime) [data-sonner-toast] {
+    --toast-row: max(1.5rem, 36px);
+  }
+
   /* Composer top-slot rows keep room around their 36px buttons. */
   :root.mobile-pointer:not(.desktop-runtime) .oc-composer-row {
     height: 2.5rem;
@@ -137,7 +143,7 @@
   }
 
   /* Keep markdown code blocks horizontally scrollable on mobile. */
-  :root.mobile-pointer:not(.desktop-runtime) .markdown-content [data-markdown="code-block-body"] {
+  :root.mobile-pointer:not(.desktop-runtime) .markdown-content [data-streamdown="code-block-body"] {
     overflow-x: auto !important;
     overflow-y: hidden !important;
     -webkit-overflow-scrolling: touch;

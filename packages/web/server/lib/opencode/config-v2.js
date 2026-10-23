@@ -11,6 +11,7 @@
  * Reference: OpenCode `packages/core/src/config/normalize.ts`,
  * `packages/core/src/v1/config/migrate.ts`, and `services/www` migrate-v1 docs.
  */
+import { z } from 'zod';
 import { isRecord } from '../shared/guards.js';
 
 // ============== SECTIONS ==============
@@ -817,6 +818,60 @@ function findWebSearchProjectOverride(layers, projectFiles) {
   return null;
 }
 
+// ============== SKILL SWITCHES ==============
+
+/**
+ * A `PUT /api/config/skill-switch` body. The id is OpenCode's id for a skill,
+ * the folder of its `SKILL.md`; wildcard characters and path separators are
+ * refused, so the statement a switch writes can only ever match that one skill.
+ */
+const skillSwitchRequestSchema = z.object({
+  id: z.string().min(1).max(200).refine((id) => id.trim() === id && !/[*?/\\\n\r]/.test(id)),
+  enabled: z.boolean(),
+  scope: z.enum(['user', 'project']),
+});
+
+const isSkillDeny = (statement, id) => isRecord(statement)
+  && statement.action === 'integration.use'
+  && statement.resource === `skill:${id}`
+  && statement.effect === 'deny';
+
+/**
+ * Turns a skill off or back on in one config object, in place, through
+ * OpenCode's `integration.use` policy. Off appends an exact deny to the
+ * top-level `policies` unless the file already has one; on removes every
+ * exact deny for that id, from `policies` and the deprecated
+ * `experimental.policies`, and nothing else: wildcards, allows and other
+ * statements stay. A list it empties is removed. Returns whether the config
+ * changed.
+ */
+function writeSkillDisabled(config, id, disabled) {
+  const lists = [
+    { owner: config, key: 'policies' },
+    ...(isRecord(config.experimental) ? [{ owner: config.experimental, key: 'policies' }] : []),
+  ].filter(({ owner, key }) => Array.isArray(owner[key]));
+
+  if (disabled) {
+    if (lists.some(({ owner, key }) => owner[key].some((statement) => isSkillDeny(statement, id)))) return false;
+    const policies = Array.isArray(config.policies) ? config.policies : [];
+    config.policies = [...policies, { action: 'integration.use', resource: `skill:${id}`, effect: 'deny' }];
+    return true;
+  }
+
+  let changed = false;
+  for (const { owner, key } of lists) {
+    const kept = owner[key].filter((statement) => !isSkillDeny(statement, id));
+    if (kept.length === owner[key].length) continue;
+    changed = true;
+    if (kept.length > 0) owner[key] = kept;
+    else delete owner[key];
+  }
+  if (changed && isRecord(config.experimental) && Object.keys(config.experimental).length === 0) {
+    delete config.experimental;
+  }
+  return changed;
+}
+
 export {
   PLUGIN_SECTION,
   isRecord,
@@ -855,4 +910,6 @@ export {
   findWebSearchProjectOverride,
   writeWarmingEnabled,
   writeWarmingDuration,
+  skillSwitchRequestSchema,
+  writeSkillDisabled,
 };

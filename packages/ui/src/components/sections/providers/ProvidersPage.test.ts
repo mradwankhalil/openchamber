@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import type { ConnectionInfo, IntegrationInfo } from '@opencode/client';
-import { requiresProviderAuth } from './providerAvailability';
 import {
   findIntegrationForProvider,
   getCredentialConnections,
@@ -10,7 +9,6 @@ import {
   getSignInIntegrationId,
   getSignInMethods,
   providerHasCredentials,
-  shouldAutoOpenAuthPanel,
   shouldShowApiKeyAuth,
   shouldShowModelsSection,
   usesMachineCredentials,
@@ -26,14 +24,6 @@ const integration = (overrides: Partial<IntegrationInfo> = {}): IntegrationInfo 
 
 const credential: ConnectionInfo = { type: 'credential', id: 'cred_1', label: 'API key', method: 'key' };
 const envConnection: ConnectionInfo = { type: 'env', name: 'ANTHROPIC_API_KEY' };
-
-describe('ProvidersPage provider authentication', () => {
-  test('does not require credentials for a custom provider defined in config', () => {
-    expect(requiresProviderAuth(true, false, true)).toBe(false);
-    expect(requiresProviderAuth(true, false, false)).toBe(true);
-    expect(requiresProviderAuth(true, true, false)).toBe(false);
-  });
-});
 
 describe('integration method helpers', () => {
   test('findIntegrationForProvider matches a provider to the integration of the same id', () => {
@@ -119,14 +109,9 @@ describe('provider credential state helpers', () => {
     expect(providerHasCredentials({ connections: [], optionsApiKey: null })).toBe(false);
   });
 
-  test('OAuth-only provider without credentials opens the panel and hides models', () => {
+  test('OAuth-only provider without credentials hides models', () => {
     const hasCredentials = providerHasCredentials({ connections: [] });
     expect(hasCredentials).toBe(false);
-    expect(shouldAutoOpenAuthPanel({
-      integrationsLoaded: true,
-      hasCredentials,
-      userDismissed: false,
-    })).toBe(true);
     expect(shouldShowModelsSection({
       modelCount: 1,
       integrationsLoaded: true,
@@ -137,11 +122,6 @@ describe('provider credential state helpers', () => {
   test('provider with a stored credential shows Connected and models', () => {
     const hasCredentials = providerHasCredentials({ connections: [credential] });
     expect(hasCredentials).toBe(true);
-    expect(shouldAutoOpenAuthPanel({
-      integrationsLoaded: true,
-      hasCredentials,
-      userDismissed: false,
-    })).toBe(false);
     expect(shouldShowModelsSection({
       modelCount: 3,
       integrationsLoaded: true,
@@ -182,24 +162,11 @@ describe('provider credential state helpers', () => {
     // After the integration refetch, the stored credential shows up.
     const after = providerHasCredentials({ connections: [credential] });
     expect(after).toBe(true);
-    expect(shouldAutoOpenAuthPanel({
-      integrationsLoaded: true,
-      hasCredentials: after,
-      userDismissed: false,
-    })).toBe(false);
     expect(shouldShowModelsSection({
       modelCount: 2,
       integrationsLoaded: true,
       hasCredentials: after,
     })).toBe(true);
-  });
-
-  test('explicit hide keeps the auth panel closed while credentials are still missing', () => {
-    expect(shouldAutoOpenAuthPanel({
-      integrationsLoaded: true,
-      hasCredentials: false,
-      userDismissed: true,
-    })).toBe(false);
   });
 
   test('models stay visible while integrations are still loading', () => {
@@ -276,7 +243,6 @@ describe('Vertex with Application Default Credentials', () => {
     const hasCredentials = providerHasCredentials({ connections: [], machineCredentials });
     expect(hasCredentials).toBe(true);
     expect(shouldShowModelsSection({ modelCount: 2, integrationsLoaded: true, hasCredentials })).toBe(true);
-    expect(shouldAutoOpenAuthPanel({ integrationsLoaded: true, hasCredentials, userDismissed: false })).toBe(false);
   });
 
   test('a stored key still counts as a connected account', () => {

@@ -8,12 +8,15 @@ the UI is on a different machine.
 
 ## Contract
 
-- Assistant image syntax renders as an icon and filename. Once a text part
-  settles, the chat replaces each label with the picture
-  (`packages/ui/src/components/chat/markdown/inlineMarkdownImages.ts`).
+- Assistant image syntax initially renders as a filename label. Once a text
+  part settles and its media nears the viewport, React-owned `MarkdownMedia`
+  components load the picture through the scoped `MarkdownMediaProvider`
+  (`packages/ui/src/components/chat/markdown/`). The chat draws at most 12
+  images per text part. No rendered-subtree rewriting is involved.
 - `POST /api/openchamber/sessions/:sessionId/markdown-image-grants` prepares the
   local images of a message part in one request, with no count limit; the
-  32 KB body limit bounds how many paths fit. The server fetches the assistant
+  256 KB body limit bounds how many paths fit, enough for a page of several
+  hundred images. The server fetches the assistant
   message once and verifies every exact image source before reading files.
 - Authorization recognizes the same common inline and reference-style image
   destinations collected by the UI, including balanced parentheses, while

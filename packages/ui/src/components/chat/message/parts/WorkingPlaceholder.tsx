@@ -271,7 +271,7 @@ export function WorkingPlaceholder({
       data-waiting={displayedPermission ? 'true' : undefined}
     >
       {providerLogo}
-      <span className="text-[13px] leading-4">{label}</span>
+      <span className="text-[0.8125rem] leading-4">{label}</span>
     </div>
   );
 }

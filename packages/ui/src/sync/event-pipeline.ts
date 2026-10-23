@@ -17,7 +17,7 @@
 import type { OpenCodeClient, OpenCodeEvent } from "@opencode/client"
 import { z } from "zod"
 import { opencodeClient } from "@/lib/opencode/client"
-import { GLOBAL_EVENT_DIRECTORY, routeWireEvent, syncEventSessionID, type SyncEvent } from "@/lib/opencode/events"
+import { GLOBAL_EVENT_DIRECTORY, hostTurnStart, routeWireEvent, syncEventSessionID, type SyncEvent } from "@/lib/opencode/events"
 import type { Metadata } from "@/lib/opencode/model"
 import { getRuntimeUrlResolver } from "@/lib/runtime-url"
 import { clearRuntimeUrlAuthToken, refreshRuntimeUrlAuthToken } from "@/lib/runtime-auth"
@@ -122,6 +122,9 @@ const openchamberStatusSchema = z.object({
     sessionId: z.string().min(1).optional(),
     status: z.enum(["idle", "busy", "retry"]),
     metadata: z.object({ attempt: z.number(), message: z.string(), next: z.number() }).partial().optional(),
+    // The host's clock when it sent the event, and when the running turn began on it.
+    timestamp: z.number().optional(),
+    turnStartedAt: z.number().optional(),
   }),
 })
 
@@ -259,17 +262,20 @@ const OPENCHAMBER_TYPE_PREFIX = "openchamber:"
 function translateOpenchamberStatus(payload: unknown): SyncEvent | null {
   const parsed = openchamberStatusSchema.safeParse(payload)
   if (!parsed.success) return null
-  const { sessionID, sessionId, status, metadata } = parsed.data.properties
+  const { sessionID, sessionId, status, metadata, timestamp, turnStartedAt } = parsed.data.properties
   const id = sessionID ?? sessionId
   if (!id) return null
+  const turnStart = status !== "idle" && timestamp !== undefined && turnStartedAt !== undefined
+    ? { turnStart: hostTurnStart(turnStartedAt, timestamp) }
+    : {}
   if (status === "retry") {
     if (metadata?.attempt === undefined || metadata.message === undefined || metadata.next === undefined) return null
     return {
       type: "session.status",
-      properties: { sessionID: id, status: { type: "retry", attempt: metadata.attempt, message: metadata.message, next: metadata.next } },
+      properties: { sessionID: id, status: { type: "retry", attempt: metadata.attempt, message: metadata.message, next: metadata.next }, ...turnStart },
     }
   }
-  return { type: "session.status", properties: { sessionID: id, status: { type: status } } }
+  return { type: "session.status", properties: { sessionID: id, status: { type: status }, ...turnStart } }
 }
 
 /** Translates an `openchamber:*` bridge payload into a sync event, or null when it is not a valid one. */
@@ -438,6 +444,14 @@ function coalesceKey(event: SyncEvent): string | undefined {
 
 /** Merges a later event into the queued one it coalesces with. */
 function mergeCoalesced(previous: SyncEvent, next: SyncEvent): SyncEvent {
+  // A later step of the same turn knows nothing of its start; the turn that
+  // began in this flush keeps it until something reports the turn over.
+  if (previous.type === "session.status" && next.type === "session.status") {
+    const turnStart = next.properties.turnStart ?? previous.properties.turnStart
+    return turnStart && next.properties.status.type !== "idle"
+      ? { ...next, properties: { ...next.properties, turnStart } }
+      : next
+  }
   if (previous.type === "message.part.delta" && next.type === "message.part.delta") {
     return { ...next, properties: { ...next.properties, delta: previous.properties.delta + next.properties.delta } }
   }

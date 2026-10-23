@@ -632,6 +632,9 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.tunnelMode === 'string') {
       result.tunnelMode = normalizeTunnelMode(candidate.tunnelMode);
     }
+    if (Number.isInteger(candidate.tunnelHttpsPort) && candidate.tunnelHttpsPort >= 1 && candidate.tunnelHttpsPort <= 65535) {
+      result.tunnelHttpsPort = candidate.tunnelHttpsPort;
+    }
     if (candidate.managedLocalTunnelConfigPath === null) {
       result.managedLocalTunnelConfigPath = null;
     } else if (typeof candidate.managedLocalTunnelConfigPath === 'string') {
@@ -689,6 +692,9 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.walkthroughModelOverride === 'string') {
       const trimmed = candidate.walkthroughModelOverride.trim();
       result.walkthroughModelOverride = trimmed.length > 0 ? trimmed : undefined;
+    }
+    if (candidate.walkthroughModelVariant !== undefined) {
+      result.walkthroughModelVariant = asNonEmptyString(candidate.walkthroughModelVariant) ?? undefined;
     }
     for (const key of ['fallbackModel', 'fallbackVariant']) {
       const value = z.string().trim().safeParse(candidate[key]);

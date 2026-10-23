@@ -15,8 +15,9 @@ import {
   writeCachedWalkthrough,
   writePointer,
 } from './store.js';
-import { readWalkthroughModelOverride } from './model-settings.js';
+import { readWalkthroughModelOverride, readWalkthroughModelVariant } from './model-settings.js';
 import { loadSourceSections, parseSource, sourceKey, WalkthroughSourceError } from './sources.js';
+import { supportsChangeRequestPatch } from './pull-request.js';
 
 // Walkthrough generation is always user-initiated and never automatic: it costs
 // tokens, and a background regeneration on every keystroke would be a way to
@@ -118,7 +119,7 @@ const jobKey = (repoRoot, sourceKeyValue, readContext) => readContext
 const readContextForSource = (source, readContext) => {
   if (source.kind !== 'pr') return undefined;
   const valid = readContext
-    && (readContext.provider === 'github' || readContext.provider === 'gitlab')
+    && supportsChangeRequestPatch(readContext.provider)
     && isString(readContext.instance)
     && isString(readContext.accountId)
     && isString(readContext.repositoryId)
@@ -126,7 +127,7 @@ const readContextForSource = (source, readContext) => {
     && isString(readContext.directory)
     && isString(readContext.primaryRemote);
   if (!valid) {
-    throw fail('A trusted GitHub or GitLab read context is required for pull request walkthroughs', 400, {
+    throw fail('A trusted source control read context is required for pull request walkthroughs', 400, {
       code: 'INVALID_SOURCE_CONTROL_READ_CONTEXT',
     });
   }
@@ -202,13 +203,20 @@ const modelLabel = (model) => `${model.providerID}/${model.modelID}`;
 // own choosing, the walkthrough stays on that provider rather than on
 // whichever provider happens to be connected, and on that model when the
 // provider has no small one.
-const resolveModel = (directory, explicitModel, providerID, modelID) => describeSmallModel({
-  directory,
-  outputReserveTokens: walkthroughOutputTokens,
-  overrideModel: explicitModel || readWalkthroughModelOverride(),
-  preferredProviderID: providerID || undefined,
-  preferredModelID: modelID || undefined,
-});
+// The saved thinking level goes with the saved model only: a model picked for
+// one review runs at its own default level.
+const resolveModel = (directory, explicitModel, providerID, modelID) => {
+  const savedModel = readWalkthroughModelOverride();
+  const overrideModel = explicitModel || savedModel;
+  return describeSmallModel({
+    directory,
+    outputReserveTokens: walkthroughOutputTokens,
+    overrideModel,
+    overrideVariant: overrideModel && overrideModel === savedModel ? readWalkthroughModelVariant() : undefined,
+    preferredProviderID: providerID || undefined,
+    preferredModelID: modelID || undefined,
+  });
+};
 
 export const __testing = { generationTimeoutMs, walkthroughOutputTokens };
 
@@ -520,6 +528,7 @@ async function runGeneration({ directory, source, repoRoot, key, force, explicit
     directory,
     sessionID: `openchamber-walkthrough-${cacheKey}`,
     model: `${model.providerID}/${model.modelID}`,
+    variant: model.variant,
     responseSchema: options.responseSchema,
     onOverflow: 'error',
     timeoutMs: generationTimeoutMs(hunkCount),

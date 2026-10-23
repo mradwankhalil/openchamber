@@ -43,7 +43,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
   - The registry is `lib/guests/tool-presentation.ts`: `useGuestToolPresentation(part.tool)` / `resolveGuestToolPresentation` return the first matching rule of an active guest (exact `match` beats a suffix wildcard; first extension wins) or `null`. Rules are compiled once per catalog array; each part does one linear scan.
   - The lookup always gets the **full** tool name OpenCode reported (`mcp.jira.search`); `normalizeToolName` still feeds every built-in switch, so built-in behavior is untouched when there is no rule.
   - Hook points, each falling back to today's code when the rule is `null` or silent on that field: icon (`getToolIcon`), header title (`title` template, else `name`, else `getToolMetadata`), header subtitle (`subtitle` template replaces both the description and the justification text), and the expanded body (`output`: `text` / `code` / `json` / `markdown` / `table`, checked at the top of `renderResultContent` and inside `ToolScrollableTextOutput`; `auto` keeps detection). A `table` whose output is not an array or `{ items: [] }` falls through to detection.
-  - `GuestToolTable.tsx` draws the table with the same cell classes the markdown decorator gives assistant tables, capped at 200 rows with a count line.
+  - `GuestToolTable.tsx` draws a tool-output table with bounded, wrapping cells, capped at 200 rows with a count line.
   - VS Code and mobile mark the guest catalog unsupported, so the registry is empty and nothing changes there.
 
 - `toolRenderUtils.ts`
@@ -76,6 +76,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
   - One selection at a time: when the menu stops tracking a frame selection (cleared, a press outside, the app selecting text, another page selecting) the host posts a clear message and the page drops its selection without echoing it back; a selection in one page clears the others' (`message/pageQuoteBridge.ts`). Escape pressed in the page closes the menu the same way, as Escape does for a selection in the chat: the bootstrap passes it on only while the page has a reported selection and its script left the key alone, so without a selection Escape stays the page's own. It travels as its own message and is never replayed as a key, because a bare Escape reaching the app's key handling would prime the abort of the running turn.
   - Quotes taken in a page persist like reply-text quotes. The host posts the page's marks (id, anchor, focused) when they change and when the frame loads; the page re-finds each by text and context and paints it with the CSS Custom Highlight API (`--oc-quote-mark`; focus, hover and flash share one color). A click on a mark posts its id and box (an empty id for a click on no mark) and the highlight layer opens the mark popover on click only, since the pointer over a frame is invisible to the app; the popover does not follow scrolling inside the frame. A page mark's popover opens only for a mark of the page that reported the click. Reveal and flash scroll the frame into view and ask the page to scroll to and flash the quote. The frame is as tall as the page, so in the chat the page's `scrollIntoView` scrolls the chat around the frame, which brings a quote far down a long page into view (checked in Chromium with the frame in its own process); in the full-screen view it scrolls the page inside the frame. Anchors without `page` are unchanged; an older client strips `page` and finds no highlight.
   - The frame takes the page's full reported height (at least 48 px; the 20,000 px ceiling only stops a page that grows with its frame), so a page never scrolls inside the chat: a scrolling frame keeps the wheel or a swipe that starts on it, so the chat stopped under the pointer until the page reached its end, and on a phone a frame as tall as the screen left no place to swipe the chat from. A long page reads in the full-screen view too. The page's root font size is the chat's body text size in px (`--oc-text`, from `--text-markdown` and the app's rem, so it follows the interface size setting live and is larger on phones, as the chat is); the tool description asks agents to size text in rem or em, so their text scales with it, while px stays fixed. The full-screen view builds the page `contained`, which stops its scrolling at the edges without the elastic bounce. A page that fits its frame gets `overflow-y: hidden` from the bootstrap, so a touch that starts on it scrolls the chat instead of bouncing inside the frame (iOS keeps a touch in any document that can scroll). Media is capped at the column width; content still wider scrolls sideways (`overflow-x: auto`, `overscroll-behavior-x: none`), and the tool description asks agents to give a wide table its own scroll box. A page wider than its frame has a horizontal scrollbar drawn like the app's (10 px, thumb from `--foreground` at the app's 18% and 36%), whose thumb shows only while the pointer is over the frame (#4949): the host posts pointer enter and leave on the frame element, the same hover that shows the buttons above the page, and the page marks its root with `data-oc-pointer`. The page's own `:hover` was not used, because with synthetic input in Chromium it stayed set after the pointer left the sandboxed frame, which runs in its own process. On a touch screen (`pointer: coarse`) the thumb always shows, as the buttons above the page do. The track keeps its place while the thumb is hidden, so hovering moves nothing, and the reported height includes it (the window's height less the root's client height); the tooltip check re-measures when that changes, since the bar can appear without the root resizing. The vertical bar has no width. Firefox has no per-axis scrollbar styles, so both its bars are thin and follow the same rule; Safari on iOS draws no styled scrollbar and reserves no room for one, so there the page looks as before. Only the horizontal bounce is off: `overscroll-behavior-y` stays default, because turning it off would also keep a vertical swipe from reaching the chat. The last height is kept per call, so a row the timeline unmounted comes back at its size. The reported height reaches down to where the body's content ends, overflow included unless the body clips it, and to the lowest absolutely positioned element outside any box that scrolls or clips. The document's scroll height counts content past the root's box only while the frame is shorter than where it ends, so a hidden tooltip parked below the page's last block (#4940), or a picture taller than the box it sat in, made the frame grow and shrink on every frame, and the text under the page shook with it. The body's scroll height does not depend on the frame's height, so it ends that loop; it misses an absolutely positioned element placed against the page itself, which the element check covers.
+  - A page that scrolls itself (the body, or a box spanning the frame from top to bottom with `height:100vh` or `100%` and `overflow:auto`) never outgrows its frame, so its reported height was the frame's own and it stayed a 48 px strip scrolling inside. The bootstrap adds what such a box hides below its edge, once per box height: a fixed-height box that only happened to span the frame does not follow the frame, and growing it again would swing the frame between two heights. A box that starts lower (an app shell with a header above a `flex:1` scroller) is not detected; the tool description already forbids `100vh` and `height:100%` on html and body.
   - A frame is transparent (`opacity: 0`) until the page's first size report or its load, whichever comes first. What a new frame paints before the page's own document is not the page, and under a dark theme a page flashed white each time the timeline mounted it again while scrolling. The size report arrives once the page is laid out, so a page with slow remote images does not wait for them; the space is already held at the page's remembered height. Opacity and not `visibility: hidden`, which Chromium may treat as a hidden cross-origin frame and throttle, holding the size report back.
   - The bootstrap moves a tooltip or popup the page positions itself back inside the frame when it sticks out past an edge (`translate`, so the page's own `transform` still applies). Only absolutely or fixed positioned elements that are partly inside are moved; one wholly outside, wider than the frame, or inside a box that scrolls or clips is left alone. Hover counts as a trigger, because a CSS `:hover` tooltip changes nothing in the DOM. The tool description also asks agents to keep tooltips inside the page.
   - In the mobile layout (`useUIStore.isMobile`) the page has no full screen or download: it is already as wide as the screen.
@@ -97,12 +98,11 @@ behavior across newlines. The message root does not select one direction for
 all its children. Code widgets, diagrams, math and technical references remain
 LTR isolates, including their controls.
 
-`markdown/decorate.ts` gives list items and blockquotes `dir="auto"` for marker
-and border placement. Paragraphs use CSS rather than their own `dir` attribute,
-so their text still participates in that parent direction. Each list item owns
-its logical gutter, allowing adjacent Arabic and English items. Inline code
-and code widgets have explicit LTR attributes so they do not choose the
-containing item's direction. Direction changes preserve source and copy text.
+The Streamdown component map and shared CSS own direction without a DOM
+annotation pass. Each list item owns its logical gutter, allowing adjacent
+Arabic and English items. Inline code and code widgets remain LTR isolates.
+Direction changes must preserve source and copy text. Disclosures use native
+`details` and `summary` with a React-owned chevron that follows the open state.
 
 ### Turn footer copy and image
 
@@ -110,10 +110,225 @@ The footer under a turn's last assistant message copies and saves the whole
 reply: the text parts of every assistant message in the turn, in order, with
 tool output and reasoning left out. `MessageList` hands the earlier text to the
 last message as `earlierAssistantText`; per-message copy buttons keep copying
-only their own text. Earlier messages may be folded or not mounted, so a
-reply of more than one text part is drawn by `buildTurnImageExportSource` from
-Markdown with the chat's classes and `decorateMarkdown`. A reply of one text
-part keeps the copy of what the chat rendered.
+only their own text. Earlier messages may be folded or not mounted, so
+`buildTurnImageExportSource` renders each text part through
+`markdown/renderMarkdownForExport.tsx`. Whole-message rich clipboard content
+uses that helper too. It mounts the same `MarkdownContent` component used on
+screen and removes its temporary host after taking the result. Image export
+prepares code highlighting with a bounded wait, then synchronously commits the
+prepared tokens before cloning the result. Export
+disables filesystem probes and media loading, preserves original media source
+metadata, and omits controls and authenticated asset URLs.
+
+Rich clipboard output normalizes only its detached result: code and Mermaid source become
+semantic `pre/code` with literal source newlines, and media becomes safe text
+labels without loaded URLs. This does not modify the live React subtree or
+run a second Markdown parser. Ordinary code selections copy raw code;
+prose follows the Markdown/plain setting and retains safe rich HTML. The
+desktop `openchamber:copy` event follows the same selection policy.
+
+### Why selection cloning follows the Range boundaries
+
+`markdown/selectionRange.ts` owns code-source coverage for Markdown selection,
+rootless tool selections, and rich clipboard copies. Native `cloneContents`
+retains attributes on partial elements, so full code-source metadata is removed
+only from clones whose original content is not completely selected. Partial
+elements lie on the two Range boundary ancestor chains; following their
+first/last-child clone paths avoids scanning unrelated code blocks and pairing
+query results by index. Restored ancestor shells use the same coverage rule.
+The live React tree is read-only, and detached copies remain self-contained
+after React unmounts. Local selections still read committed token rows; whole
+code copies retain the existing full-source policy. Selection capture timing
+and highlighting retention are independent of this cloning step.
+
+### Markdown ownership
+
+`MarkdownRendererImpl.tsx` connects Streamdown to the application component
+map. Streamdown and React own the ordinary Markdown subtree. Application
+components own navigation, file references, media, Mermaid and controls;
+`markdown/streamdownPlugins.ts` owns parsing and HTML/URL policy. Screen,
+clipboard and image rendering share this configuration. The stable consumer
+root is `.markdown-content[data-markdown-content]`; code and table consumers
+use native `data-streamdown` markers.
+
+#### Why React owns Markdown updates
+
+Using Streamdown's parsing and component lifecycle keeps screen and export
+rules together. A second HTML renderer or a post-render wrapping pass would
+split that ownership and require separate state restoration. Preserve
+disclosure choices and readable code through stream, settlement and async
+highlight updates in the native renderer tests.
+
+Chat parts choose their parser mode on first mount: completed history uses
+static mode; a live or not-yet-finalized part uses streaming mode and keeps that
+block tree after settlement. A new message/part identity resets the choice.
+Assistant media ownership is explicit and independent of parser mode, so static
+history keeps the same image grants and remote-media policy. Ordinary static
+documents retain local/document media behavior.
+
+Streamdown configuration objects and parser plugins retain their references.
+Arrival context values change only with the active flag or committed block
+count. Existing blocks keep their initial animation choice. The memoized code
+body receives its highlighter directly, isolating token-row traversal from
+copy-button state and unrelated presentation context updates. File annotations
+retain unmodified token rows; a warm result does not allocate plain fallback
+rows. Export source collection runs after commit, not during rendering.
+
+Tables use one React-owned wrapper for the end-aligned toolbar and scrollable
+canvas. Streamdown still owns cell rendering; its table wrapper and controls
+are not nested under a second toolbar. Copy/download preserves bare URLs in
+CSV/TSV and escaped links in Markdown, with copy feedback on the trigger.
+Each table measures its body columns locally, with headings excluded from that
+intrinsic layout; header-only tables use their headings. React then renders its
+colgroup. Short columns keep their width; long columns share remaining space,
+with the original 120px minimum. Container resize refits saved widths; content
+or font changes require fresh measurement. Inline code wraps only in capped
+columns. This preserves the previous sizing policy without a document-wide
+decorator or imperative colgroup replacement.
+
+Code copy/wrap buttons remain visible without hover. File navigation is enabled
+only for settled content with file references enabled; mobile keeps navigation
+while skipping filesystem probes. Selection-ending clicks are consumed without
+opening a file, and platform-specific Cmd/Ctrl clicks retain external opening.
+
+#### Why KaTeX is pinned by an override
+
+`@streamdown/math` renders through `rehype-katex`, which depends on KaTeX
+0.16, while the stylesheet the app loads (`styles/katex-css`) comes from the
+KaTeX the UI depends on. The root `overrides` entry keeps one KaTeX in the
+tree, so the markup and its stylesheet are always the same version.
+
+#### Why Mermaid retains synchronous rendering and a separate viewer
+
+Completed Mermaid fences use beautiful-mermaid's synchronous renderer with the
+original 100-entry LRU, keyed by source and SVG/ASCII mode. Screen SVGs reference
+semantic CSS colors, so theme changes preserve geometry and the viewer's current
+viewBox. Downloads and offline rendering resolve those palette references to
+concrete theme colors on the original SVG, never the panned live DOM. Incomplete
+fences show source; there is no streaming layout queue or idle-render delay.
+
+React owns the block, scroll container and floating toolbar. The viewer owns
+only SVG viewBox interactions. Button visibility does not disable gestures.
+New viewers settle for two animation frames and batch all size reads before
+viewBox writes; early interaction initializes that viewer immediately. Cleanup
+removes pending work and listeners. Preview sizing measures each new SVG once,
+prefers content bounds, and uses saved original bounds for its fallback rather
+than observing every pan/zoom attribute write. ASCII copy uses the displayed
+text; SVG copy uses source, and both show copied feedback.
+Fullscreen height passes through Streamdown's intermediate root. Recreated
+controllers read saved original bounds rather than the previously fitted or
+zoomed viewBox, so reset remains tied to the diagram's original geometry.
+Screen SVGs remain visibility-hidden inside their reserved viewport until a
+fit with nonzero dimensions completes. This avoids painting the raw diagram
+before the two-frame batch runs. Offline exports bypass this visibility gate.
+
+#### Why block edge margins use wrapper-local CSS variables
+
+Nested structural first/last selectors caused subtree style invalidation during
+token insertion and virtual row replacement in session-switch traces. Separate
+selectors detect the wrapper edge and consume its CSS variable on the content
+edge. Each wrapper resets the variables; paragraph, heading and compact-message
+defaults preserve interior margins. CSS tracks appended and removed blocks
+without dependency patches, additional parsing or imperative DOM writes. Static
+rendering keeps its direct-child rules. This CSS alternative still needs its
+own browser performance comparison; the explicit-metadata experiment does not
+establish its invalidation cost.
+
+Markdown code in languages with a `@pierre/highlights` lexer (about 80, every
+common one) is tokenized on the main thread, synchronously, in one pass over
+the whole block with `MARKDOWN_HIGHLIGHTS_THEME`, so the block paints
+highlighted on its first commit. The rest run in `streamdown-code.worker.ts`
+on Shiki/Oniguruma with the same grammar sanitization as the shared code
+worker and `MARKDOWN_SHIKI_THEME`. Until the Highlights import settles, the
+first blocks wait for it and then take the same split. Both themes resolve to the same `--md-*` variables.
+For Shiki languages, complete-line grammar state stays in eight bounded worker
+lineages; edits restart from a matching prefix or a full pass. The client preserves the pre-migration cache
+policy: four recent streaming results, four complete-line snapshots, and a
+2000-entry, 24 MiB estimated completed-result LRU. Language and the existing
+dual-hash content fingerprint key pure highlighting. A single oversized entry
+is retained; no filesystem or runtime-dependent annotations enter this cache.
+Only completed requests coalesce. Streaming results promote to the completed
+cache when the same source settles. Snapshot sequence numbers keep an older
+response from replacing a newer base in the same lineage.
+Streaming requests reuse complete prefix rows and transfer only suffix token
+ranges and palette indexes in two ArrayBuffers. Text is reconstructed from the
+caller's source using UTF-16 offsets, without JSON encode/decode. Whitespace
+tokens may absorb foreground differences but preserve font/background and
+decoration boundaries. `MarkdownCode` owns the React token rows and line numbers,
+using Streamdown's public container and header. A warm lookup renders tokens on
+the first commit; unchanged row arrays skip row rendering. Async results carry
+their input and append lineage, so abandoned contexts and shorter late results
+cannot replace newer displays. Shiki never runs on the main thread:
+unsupported workers, oversized input and failed requests leave readable code.
+Main-thread Highlights results go through the same caches; streaming rows that
+match the previous result of the same block keep their identity. Each dispatched request has a five-second
+deadline. A timeout terminates the worker, caches only the offending failure in
+the same LRU, and replays other pending requests with fresh deadlines. A crash
+or message error ends all pending requests without caching their failure;
+subsequent requests may retry. Work serializes inside the worker, with no new
+main-thread queue admission limit. The existing `openchamber_stream_highlight`
+full-pass flag bypasses incremental reuse. Language-load failure falls back to
+text. Line budgets remain 1200 settled, 300 open-fence, and 200 in VS Code.
+Lexical file-path matches have a separate bounded source cache; confirmation
+stays directory/runtime-bound. Empty path results do not trigger another token
+callback, and annotations reuse results only within their resolver instance.
+VS Code loads the bundled worker through its existing webview blob-worker
+boundary. Image export awaits the same token path with a bounded fallback to
+readable source. The code body reads prepared tokens during render, so the final
+flush commits them without DOM readiness markers or an observer.
+
+#### Why pending code retains its last result
+
+Like Streamdown's highlighted body, the code body uses plain text on first mount
+and retains the last display while an appended input waits for highlighting.
+It does not splice tokens itself: the worker owns complete-line grammar and token
+reuse. Replacing the entire block with plain rows between worker results discarded
+prefix identity and repeatedly deleted and recreated highlighted tokens.
+
+A mounted body records the displayed result's actual input after commit. Results
+for intermediate append inputs may advance that display even when newer input is
+pending, so continuous output does not starve updates. Shorter late results cannot
+roll it back. Edits, deletions, language changes and plugin/context changes start
+a new lineage; callbacks from abandoned lineages are ignored even if the text
+later returns to an old prefix. Exact cached and policy-driven plain results take
+precedence. Worker failure publishes the requested plain text through the existing
+plugin fallback. This is one mounted component's display state, not a shared cache.
+
+The separate code worker (`markdown-shiki.worker.ts`) remains shared by
+non-Markdown code views for Shiki languages. Their client renders Highlights
+languages on the main thread, and `getCachedHighlightedCode` /
+`getCachedHighlightedLines` answer them synchronously for a highlighted first
+paint.
+CodeMirror (`lib/codemirror/codeHighlight.ts`) runs Highlights' `LiveTokenizer`
+on the main thread, so an edit re-tokenizes only the lines it changed and
+colors land with the keystroke; it uses this worker only for languages without
+a Highlights lexer. Its whole-block HTML, per-line HTML and themed token APIs,
+cache and timeout/replay rules are unchanged. Markdown does not call that
+worker's HTML interfaces. Its `init` message warms Highlights only; Shiki and
+its WebAssembly start on the first language Highlights has no lexer for.
+
+#### Why Highlights languages run on the main thread without lineages
+
+Highlights tokenizes without regular expressions, about a millisecond per
+100 KB, which is less than a worker round trip; the line budgets cap a block
+well below that. Running it on the main thread removes the plain first frame,
+and re-tokenizing a streamed fence from its first line costs less than keeping
+and matching lineage state. Its lexers are written per
+language and cannot backtrack, so the `template-call` hang behind the
+sanitization does not apply to them. A runtime whose WebAssembly lacks SIMD
+fails the Highlights import, and every language falls back to Shiki.
+
+#### Why the code plugin uses the application's WASM worker
+
+The official code plugin tokenizes both configured themes even when they are
+identical. This application uses one CSS-variable theme, so its worker runs one
+pass and, for Shiki languages, reuses the existing grammar sanitization and
+complete-line state rules. Transferring suffix ranges keeps repeated token strings and
+unchanged rows out of worker replies while preserving native Streamdown tokens.
+Cache eviction, request coalescing, timeout replay and grammar-lineage retention
+follow the pre-migration worker. The payload and its byte estimate change from
+HTML to tokens so React can own the code body; streaming-only prefixes stay in
+the bounded recent results.
 
 ### Optional history disclosure
 
@@ -241,44 +456,52 @@ preceding rendered elements, so adding a reasoning element whose child returns
 `null` would leave a divider above a direct answer. Visible reasoning and tool
 rows keep their divider.
 
+### Why media reconnects in layout setup
+
+The content owner survives effect disconnection, while requests and document
+object URLs belong to one connection. Layout setup makes that connection usable
+before child passive effects resolve sources; a deferred terminal dispose only
+covered immediate StrictMode replay and left longer hidden intervals unusable.
+Document consumers clear revoked URLs before paint and load fresh ones through
+the same owner.
+
 ### Message parts
 
-- Assistant markdown treats raw HTML as inert visible text. The final generated
-  HTML is sanitized as defense in depth, with script and style elements
-  forbidden, so message content cannot inject active DOM or application-wide
-  CSS into any runtime surface. Link text goes through the same inline
-  renderer, so raw HTML inside `[...]` stays text too. Only the Files
-  Markdown preview opts into rendering raw HTML (`allowRawHtml`, see
-  `components/views/files/DOCUMENTATION.md`). Safe custom application links go through the
-  app-link confirmation flow in every supported renderer, including VS Code.
-- File references become links only once the file is confirmed
-  (`MarkdownRendererImpl` `useFileReferenceInteractions`): inline code, links
-  and path-like tokens inside code blocks are probed through the bounded,
-  cached stat queue after the message settles (never while it streams, never
-  on mobile), and each pass writes all its links at once. Inside a code block
-  nothing is written for a token that leads nowhere, so code full of
-  `console.log` and `this.state` stays plain text with no DOM change; a real
-  file's token gets its span and link a moment after the message shows.
-- Assistant images appear where the text puts them. The Markdown renderer
-  draws assistant image syntax as a label, the shared image icon and the file
-  name, and never loads an image itself (`label` mode in `markdownCore.ts`);
-  tool and simple Markdown keep their own image rendering. A label for a
-  workspace-local or embedded PNG/JPEG/GIF/WebP image outside a link carries
-  its source (`data-openchamber-markdown-image-source`). Once the text part
-  settles (`time.end`), `markdown/inlineMarkdownImages.ts` replaces each such
-  label with the picture, at most 30rem wide and tall, in a bordered frame.
-  A paragraph made only of two or more images becomes one row of equal height
-  that spans the text width (`arrangeImageRow`): each image grows with its
-  width-to-height ratio, the shared height stops at 30rem or the smallest
-  image's natural height, and below 8rem the row wraps. A label loads only when
-  it nears the viewport, so mounted history reads no image files, and the
-  picture replaces the label only after it decoded, so the row grows once.
+- Assistant Markdown treats raw HTML as inert visible text, including HTML
+  inside link text. `streamdownPlugins.ts` applies the restricted rehype policy
+  and sanitizer, retaining Streamdown's hardening plugin. Files previews and
+  reference descriptions/comments opt into safe raw HTML with `allowRawHtml`.
+  Author styles, application classes and active content remain forbidden.
+  Restricted disclosures have a dedicated remark parser in ordinary chat.
+  Safe custom application links keep the app-link confirmation flow; only
+  existing session routes qualify as `openchamber:` links. VS Code keeps
+  session links inert.
+- File references use `markdown/markdownFileReferences.ts`, `MarkdownLink`
+  and the code plugin's token metadata. Automatic confirmation runs through
+  the bounded, cached stat queue after settlement and never on mobile.
+  Code-path annotations are declarative; unconfirmed tokens stay code.
+  Automatic probes skip emails, handles and digit-leading suffixes
+  (`user@gmail.com`, `v1.2.3`, `backup.7z`); an `@` after a slash is a path
+  (`node_modules/@types/...`) and still links. Clicks on a link keep the broad rules, so a
+  file-looking href opens the viewer and never a new window (#3858).
+  Directory/runtime changes must reject older results. Explicit file links
+  retain their navigation behavior independently of automatic probing.
+- Assistant media nodes belong to `MarkdownMedia` and `MarkdownMediaContext`.
+  A workspace-local or embedded PNG/JPEG/GIF/WebP image outside a link starts
+  as a label. Loading requires settlement and proximity to the viewport.
+  React updates that node after the picture loads, at most 30rem wide and
+  tall. An image-only paragraph coordinates equal-height rows through local
+  component state, using image aspect ratios and wrapping at small widths.
+  Mixed prose paragraphs keep their normal flow. No label scan or detached
+  DOM restoration participates in loading.
   An image that is missing, too large or fails validation keeps its label.
-  Remote images never load: they stay links to themselves (see
-  `MarkdownImageMode`), so a model or a fetched page cannot learn when the
-  user read the message. A click opens the shared attachment preview overlay
+  Remote model/tool Markdown images stay labels or links, so a model or a
+  fetched page cannot learn when the user read the message. Documents and
+  references retain their explicit inline-image policy. A click on loaded
+  assistant media opens the shared attachment preview overlay
   with every drawn image of the message as its gallery. Copying a selection
-  writes `![name](source)`, never the authenticated asset URL.
+  writes `![name](source)` from `data-oc-media-source`, never the authenticated
+  asset URL. Incomplete image syntax emits no loading placeholder.
   In server-backed runtimes, the first label of a part to near the viewport
   prepares all of that part's local images (at most 12) in one request to the
   grant route, then loads them through the authenticated `/api/fs/raw` asset
@@ -289,13 +512,26 @@ rows keep their divider.
   Workspace-external images, wherever they are on the machine, receive the
   existing path-bound `outsideFileGrant` only when the server verifies the
   exact source in the owning assistant message and the file's signature.
+  Effect cleanup aborts the connected media requests and revokes document object
+  URLs. Layout setup reconnects the same content owner before child passive
+  effects register and resolve sources. Each async operation captures its own
+  signal, so a late completion cannot use a later connection. Loaded chat image
+  presentation keeps its owner identity; document URLs are resolved again after
+  revocation. Runtime changes dispose the old owner synchronously, including
+  same-runtime credential renewal. Reconnection also checks the URL resolver
+  identity because hidden providers can miss endpoint events.
+
 - `read` and `skill` are **static navigation tools** and render via `StaticToolRow`.
+  A `read` of an image adds a fullscreen icon after the title, placed and
+  styled like the open icon of the edit rows; it opens the image with the files zone expanded over the chat
+  (`openContextFile` with `expanded`). Only web and desktop show it: VS Code
+  and mobile open files full size already, through the path itself.
 - Every other tool, including search/fetch, OpenCode built-ins, custom tools, plugins, and MCP tools, is **expandable** and renders through `ToolPart`.
 - The managed `openchamber` plugin tool uses the expandable path and hides its broad protocol input. The plugin supplies the selected action's human description as the native tool title; the UI renders that metadata without owning an action map. The full versioned result envelope renders through the same neutral JSON summary/tree/raw views as other tools, without a tool-specific output card.
 - Selecting a JSON summary, tree, or raw view saves that mode in the persisted UI settings. New and refreshed JSON tool outputs read the saved mode across sessions; missing or invalid preferences use Summary. A summary section's chevron turns on that section's own `<details>` state (`JsonSummarySection`), never on an enclosing one, so a nested row that is still collapsed keeps pointing right while its parent is open.
 - `ToolPart` defers expanded content after a user toggle, preventing large tool input/output payloads from mounting during the initial chat render.
-- The rich tool diff preview lives in `ToolPartDiffPreview.tsx` and is lazy-loaded from `ToolPart`. It is the only tool-card piece that imports the `@pierre/diffs` + Shiki rendering stack, keeping that stack out of the eager chat startup graph. While its chunk loads (first rendered diff only) the plain-text patch from `PlainDiffFallback.tsx` renders as the Suspense fallback, mirroring the preview's error fallback. Patches over 256 KiB or 2,000 lines skip rich parsing and use a bounded plain-text preview; navigation keeps the original patch. `ToolPart` itself must not statically import `@pierre/diffs` runtime modules or `@/lib/shiki/appThemeRegistry`.
-- The `@pierre/diffs` stack is knowingly unprotected against the JS/TS `template-call` backtracking that OOM'd the renderer in openchamber/openchamber#2587. Our own markdown Shiki worker sanitizes every grammar it loads (`@/lib/shiki/sanitizeTemplateCallGrammar`), but the diff worker pool runs `preferredHighlighter: 'shiki-wasm'` (`DiffWorkerProvider.tsx`) and resolves its languages by id through `@pierre/diffs`' own registry — `langs` accepts `SupportedLanguages` strings only, so there is no seam to hand it a pre-sanitized `LanguageRegistration`. A pathological template literal inside a rendered diff can therefore still hang that pool's Oniguruma engine. The available levers are upstream (a `langs` overload accepting grammar objects) or switching that pool to the JS regex engine; neither is done.
+- The rich tool diff preview lives in `ToolPartDiffPreview.tsx` and is lazy-loaded from `ToolPart`. It is the only tool-card piece that imports the `@pierre/diffs` highlighting stack, keeping that stack out of the eager chat startup graph. While its chunk loads (first rendered diff only) the plain-text patch from `PlainDiffFallback.tsx` renders as the Suspense fallback, mirroring the preview's error fallback. Patches over 256 KiB or 2,000 lines skip rich parsing and use a bounded plain-text preview; navigation keeps the original patch. `ToolPart` itself must not statically import `@pierre/diffs` runtime modules or `@/lib/shiki/appThemeRegistry`.
+- `@pierre/diffs` highlights with `DIFFS_HIGHLIGHTER` from `@/lib/shiki/diffsHighlighter`: `highlights` wherever WebAssembly with SIMD runs, `shiki-js` otherwise. The library allows one highlighter type per thread and throws on a second, so the worker pool in `DiffWorkerProvider.tsx` and every main-thread `File`, `PatchDiff` and `FileDiff` pass that same value. Highlights has no lexer for some languages, and the per-thread rule leaves no Shiki fallback in files and diffs, so `diffsHighlighter.ts` maps the readable ones to a close relative (templates to HTML, ini-style files to TOML, `.env` to bash); the rest render as plain text. Highlights lexers cannot backtrack, so the JS/TS `template-call` hang from openchamber/openchamber#2587 does not reach diffs. On the `shiki-js` fallback the stack is still unprotected: its `langs` accepts `SupportedLanguages` strings only, leaving no place for a sanitized `LanguageRegistration`.
 - OpenCode 2 Code Mode arrives as one tool, `execute`, whose input is a short
   JS script (`input.code`) calling the MCP and integration tools as functions.
   The row is named **Script** (`toolHelpers.ts`), uses the `braces` icon, and is
@@ -317,7 +553,7 @@ rows keep their divider.
 - The result of a session the agent dispatched with `returnResult` arrives as a `synthetic` message with `source: "openchamber-session"` (`@/lib/opencode/dispatched-session`, delivered by the server's `lib/dispatch-results`). It is a background report like a subagent run (`isBackgroundReportEntry`): it opens a turn, so the woken agent's reply renders below it, and a fork after an answer cuts before it. `TimelineNotice` renders it as one collapsed row, `Session finished: <title>` (failed / stopped variants carry the status icon), that opens to the answer as Markdown with an `Open session` action going through `openSessionLink`.
 - A session notice is a labelled message OpenCode, a plugin or OpenChamber puts into a session: a `synthetic` message with a `description`, or the `system` message OpenCode writes when the session's instructions change. `@/lib/opencode/session-notices` decides which ones the timeline shows (plugin notices, a restart, a `!command` that could not start, a move to another folder), and its header lists every kind, shown and hidden, with the reason; change that list there when a kind turns out to be noise. The rest about the session's instructions (skills, MCP servers, instruction files, "Loaded AGENTS.md") stays hidden as noise. The live `session.instructions.updated` event gets the `instructionSources` metadata OpenCode stores, so a live move reads like one loaded from history. A shown notice draws through `SessionNoticeBlock` as one folded row with an info icon (a `!command` that could not start takes the error icon) that opens to the text the model received. `attachSyntheticContext` places it: a notice that lands while a step runs becomes a row of that step, the final step included after it answers (the notice came before the step's `time.completed`) and also when a prompt was queued behind the running step; one that lands before the run's first step joins that step, and until the step exists turn projection keeps it in the prompt's turn (`TurnRecord.waitingNotices`, drawn by `TurnItem`), so it shows even when the run fails or is stopped before its first token and the turn stays the live tail. The row is a tool part only OpenChamber makes (`SESSION_NOTICE_TOOL`) that records whether it sits before or after the step's own parts, so Activity counts and trims it with the step's other rows and `MessageBody` draws it as a notice; `streamingTailEntry` puts these rows back before or after the step's live parts, and a turn whose only row is a notice gets no Activity fold (`hasLiveActivity`). A notice after an answer stays its own entry between turns; when a step follows, the last such notice opens that step's turn, as a hidden one did before, and a notice the answer took moves out of it to open that turn.
 - Reasoning streaming presentation derives from the live stream phase (`streaming`/`cooldown`), never from missing persisted timing: a cached part without `time.end` is not live, and a part whose `time.end` is set never streams (issue #2020).
-- Text that draws nothing takes no space (#5215). Some models send text parts holding only a zero-width space between steps, and `trim()` keeps those characters, so each became a blank line in Activity. `lib/invisibleText.ts` (`isInvisibleText`: whitespace plus Unicode's default-ignorable characters) is the one test for "empty" text: `isEmptyTextPart`, the assistant text, reasoning and user text renderers, turn projection, the turn summary and the live turn's final-answer check all use it, and the markdown splitter (`markdown/markdownCore.ts`) drops a top-level block whose source is only such characters. Only a whole part or block counts, so a ZWJ inside an emoji or a ZWNJ inside a Persian word stays. A CSS rule cannot do this: `:empty` does not match an element holding a zero-width character.
+- Text that draws nothing takes no space (#5215). `lib/invisibleText.ts` supplies the shared test for whitespace and Unicode default-ignorable characters. Part renderers and turn projection use it for whole parts. `MarkdownArrivalBlock` omits an invisible-only streaming block before creating its wrapper; `remarkVisibleBlocks` in `streamdownPlugins.ts` filters top-level source ranges after disclosure reconstruction, including static rendering which bypasses that wrapper. Its source view omits the leading BOM as the parser does, so node offsets still identify the intended text. Both checks use the complete source block, so code fences and joiners inside visible text remain intact. The shared predicate avoids divergent definitions of empty text; CSS `:empty` cannot detect zero-width characters.
 - Assistant text parts carry the same part-finalization gate (`assistantTextVisibility.ts`): the block-level reveal (`lib/streamTextCommit.ts`) holds a still-growing part's unfinished block, and the reply takes new text at most every 400 ms, while a part sealed with `time.end` renders in full immediately — including while the turn stays blocked on a pending question or permission ask (#3277).
 
 ## "I want to change description for Perplexity" (example recipe)
@@ -355,9 +591,9 @@ Why: only navigation tools use the compact static path; all other tools need obs
   pasted or picked file. `UserTextPart` gets the message's file names and draws
   each citation of one of them as an inline chip with its file-type icon. The
   Markdown path rewrites it to a `#openchamber-attachment:` link
-  (`lib/messages/inlineMessageLinks.ts`) that `markdownCore` renders as a span
-  and `decorate.ts` gives its icon; the plain-text path builds the same chip
-  directly. Brackets around anything that is not an attachment stay text.
+  (`lib/messages/inlineMessageLinks.ts`) that `markdown/MarkdownLink.tsx`
+  renders as a chip; the plain-text path builds the same chip directly.
+  Brackets around anything that is not an attachment stay text.
   In a sent message a citation opens what its attachment chip above the
   message opens: one resolver (`lib/messages/attachmentPreview.ts`) decides for
   both, and `message/useOpenAttachment.ts` carries it out per runtime. An image
@@ -379,8 +615,12 @@ Why: only navigation tools use the compact static path; all other tools need obs
   routes to it when the part's metadata carries an `openchamberContext`
   payload (see `lib/messages/contextParts.ts`, which owns both the send-time
   builder and the read-back parser). Linked source-control issues/change
-  requests and Linear issues are instead converted to link file-parts in
-  `normalizeUserDisplayParts.ts`. Legacy pre-metadata messages still render
+  requests and tracker items are instead converted to link file-parts in
+  `normalizeUserDisplayParts.ts`; a tracker item's part names its tracker in
+  its type (`application/vnd.openchamber.tracker-item-link; provider=linear`)
+  so the chip wears the tracker's mark, and Linear's older type still reads as
+  Linear's. A `linear-issue` context payload from before trackers parses as a
+  `tracker-item` of Linear (`lib/messages/contextParts.ts`). Legacy pre-metadata messages still render
   via text sniffing (`<terminal_context>` blocks, `GitHub issue context (JSON)`
   and `Linear issue context (JSON)` prefixes).
 - Tools: `ToolPart.tsx`, `ToolPartDiffPreview.tsx`, `PlainDiffFallback.tsx`, `ProgressiveGroup.tsx`, `toolPresentation.tsx`, `toolRenderUtils.ts`, `ToolRevealOnMount.tsx`, `GuestToolTable.tsx`

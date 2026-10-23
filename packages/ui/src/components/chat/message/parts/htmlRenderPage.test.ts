@@ -409,6 +409,46 @@ describe('the page height', () => {
         const sizes = page.reports.flatMap((report) => (report?.kind === 'size' ? [report.height] : []));
         expect(sizes).toEqual([300, 310]);
     });
+
+    // A box as tall as the frame (`height:100vh;overflow:auto`) holding 349 px
+    // of content, or one of a fixed 200 px height around the same content.
+    const mountScroller = (fixedHeight?: number) => {
+        const page = mountPage(undefined, '<div id="screen" style="overflow-y:auto"><div style="height:349px"></div></div>');
+        const { win } = page;
+        const root = win.document.documentElement;
+        const screen = win.document.getElementById('screen');
+        if (!screen) throw new Error('no scroller');
+        let frameHeight = 48;
+        const boxHeight = () => fixedHeight ?? frameHeight;
+        Object.defineProperty(win, 'innerHeight', { get: () => frameHeight, configurable: true });
+        Object.defineProperty(root, 'clientHeight', { get: () => frameHeight, configurable: true });
+        Object.defineProperty(root, 'scrollHeight', { get: () => Math.max(frameHeight, boxHeight()), configurable: true });
+        root.getBoundingClientRect = () => new win.DOMRect(0, 0, 600, boxHeight());
+        Object.defineProperty(screen, 'clientHeight', { get: () => boxHeight(), configurable: true });
+        Object.defineProperty(screen, 'scrollHeight', { get: () => Math.max(boxHeight(), 349), configurable: true });
+        screen.getBoundingClientRect = () => new win.DOMRect(0, 0, 600, boxHeight());
+
+        const sizes = () => page.reports.flatMap((report) => (report?.kind === 'size' ? [report.height] : []));
+        win.dispatchEvent(new win.Event('resize'));
+        for (let round = 0; round < 6; round += 1) {
+            frameHeight = sizes().at(-1) ?? frameHeight;
+            win.dispatchEvent(new win.Event('resize'));
+        }
+        return { sizes: sizes(), root };
+    };
+
+    test('grows to the content of a box that scrolls the whole frame', () => {
+        const { sizes, root } = mountScroller();
+        expect(sizes).toEqual([349]);
+        expect(root.style.overflowY).toBe('hidden');
+    });
+
+    test('keeps a fixed-height scroll box at its own height', () => {
+        const { sizes } = mountScroller(200);
+        // The box spans the frame once the frame fits it; grown past that
+        // once, it does not follow, and the frame goes back for good.
+        expect(sizes).toEqual([200, 349, 200]);
+    });
 });
 
 describe('the page scrollbar', () => {

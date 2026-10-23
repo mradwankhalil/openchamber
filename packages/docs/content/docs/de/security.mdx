@@ -170,7 +170,7 @@ Zur Kontrolle öffnen Sie Einstellungen → Anbieter: Oben erscheint ein Hinweis
 - Vorlesen über OpenAI ist aus. Ein eigener Server für Sprachausgabe oder Transkription muss auf demselben Rechner laufen. Lokale Stimmen und lokale Diktiermodelle funktionieren weiter.
 - Push-Benachrichtigungen an Telefone und Browser enthalten nur einen allgemeinen Titel wie „Agent response is ready“, ohne Nachrichtentext oder Sitzungsnamen. Desktop-Benachrichtigungen bleiben auf Ihrem Rechner und behalten den vollständigen Text.
 - Update-Prüfungen laufen weiter, damit Sicherheitsfixes Sie weiterhin erreichen, aber sie melden nie Nutzungsdaten, nicht einmal die anonyme Installations-ID.
-- [Externe Tunnel](/de/tunnels/) (Cloudflare, ngrok) sind aus. Ein Tunnelanbieter entschlüsselt den Traffic an seinem Edge und sieht jede Anfrage im Klartext.
+- [Externe Tunnel](/de/tunnels/) (Cloudflare, ngrok, Tailscale) sind aus. Cloudflare und ngrok entschlüsseln den Traffic an ihrem Edge und sehen jede Anfrage im Klartext; Tailscale Serve und Funnel öffnen diesen Rechner für andere Geräte.
 - `.drawio`-Diagramme öffnen sich als XML-Text. Der Diagrammeditor ist eine Seite von diagrams.net, und ein dort geöffnetes Diagramm wird ihr übergeben.
 - Der Integrationskatalog in der Seitenleiste ist ausgeblendet. Er installiert externe Dienste aus einer Liste, die mit OpenChamber ausgeliefert wird. MCP-Server, Plugins und Skills in den Einstellungen hinzuzufügen funktioniert wie bisher.
 - Schriften für Oberfläche und Code, die von einem öffentlichen CDN geladen werden, fallen auf die Systemschriften zurück. Deine Auswahl bleibt für die Zeit ohne den Modus erhalten.

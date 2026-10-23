@@ -4,7 +4,7 @@
 
 Keep authored definitions separate from runtime colors. Optional values are meaningful defaults, not missing rendering data. `compactTheme` removes semantic defaults; the maintainer script checks resolved-color equality before replacing JSON files. Existing custom files are read without rewriting them.
 
-`syntax.ts` owns syntax inheritance. Chat's static worker theme and the file/diff TextMate theme use `buildSyntaxTokenRules`; CodeMirror uses the same resolved palette. Changes to inheritance must preserve explicit overrides and pass compact round-trip tests. The worker theme contains CSS variables so switching palettes does not require tokenizing code again.
+`syntax.ts` owns syntax inheritance. Code is highlighted by `@pierre/highlights` for the languages it has a lexer for and by Shiki for the rest, so every palette is built in two formats from the same resolved roles: TextMate rules in `buildSyntaxTokenRules`, and Zed token styles in `lib/shiki/zedThemeFromAppTheme.ts`, whose table maps each Highlights token name to a syntax role. Files, diffs and CodeMirror get concrete colors; chat code gets the CSS-variable form of each, so switching palettes does not require tokenizing code again. Highlights accepts only hex colors, so the Zed builder converts `rgb()` itself and other color functions through a canvas where a document exists. Changes to inheritance must preserve explicit overrides and pass compact round-trip tests.
 
 CodeMirror, Shiki/Pierre and chat/tool output use the authored
 `syntax.base.background` directly, exposed as `--syntax-background` in CSS.

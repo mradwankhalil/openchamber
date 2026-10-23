@@ -20,11 +20,14 @@ has to ask for it.
   `PROMPT_VERSION`.
 - `schema.js` — response schema, response normalization, tolerant JSON parsing.
 - `store.js` — content-addressed cache entries plus mutable pointers.
-- `pull-request.js` — PR diffs and per-file contents: GitHub through the
-  shared octokit helper (the host is resolved from the checkout's remote, not
-  the PR's source repo, so an enterprise checkout pulls its diff from its own
-  host with that host's token), GitLab merge requests through the readers the
-  runtime injects from the GitLab module (`readGitLabChangeRequestPatch`/`File`).
+- `pull-request.js` — change request diffs and per-file contents through the
+  provider-neutral readers the runtime injects from the source-control module
+  (`readChangeRequestPatch`/`File`), which dispatch by the context's provider
+  to its `resources.readChangeRequestPatch`/`File` (GitHub's are
+  `github/change-request-patch.js`, GitLab's `gitlab/resources.js`, Gitea's
+  `gitea/resources.js`, Gerrit's `gerrit/resources.js`). It also
+  says which providers walkthroughs serve: those whose descriptor has
+  `capabilities.changeRequestPatch`.
 - `model-settings.js` — the feature's own model override.
 - `languages.js` — the languages the prose may be written in.
 - `index.js` — orchestration.
@@ -106,7 +109,8 @@ only while PR mode is visible. Selection ownership and handoff rules are in
 `packages/ui/src/stores/DOCUMENTATION.md`.
 
 PR sources may include `sourceRepo: { owner, repo }`. `owner` is a single
-segment on GitHub and a namespace path on GitLab (`group/subgroup`), matching
+segment on GitHub and Gitea, a namespace path on GitLab (`group/subgroup`), and
+on Gerrit the project path before its last slash, matching
 what each provider's project mapper produces. It qualifies the cache/job
 key as `pr:<owner>/<repo>:<number>`, so equal numbers in different repositories
 stay apart. Number-only sources keep `pr:<number>` and read the repository behind
@@ -123,7 +127,10 @@ without one it reads nothing. It returns GitHub's complete published diff as
 text, with no model readiness checks or generation. A GitLab context returns
 the merge request's diff, rebuilt by `gitlab/resources.js` into the same git
 patch shape from GitLab's per-file hunks (GitLab diffs against the merge base,
-like GitHub). Successful empty patches return 200; auth,
+like GitHub). A Gitea context returns Gitea's own `.diff` of the pull request. A Gerrit
+context returns the diff part of the patchset's `/patch` against its first
+parent, for the current patchset or the named `revision`.
+Successful empty patches return 200; auth,
 GitHub and malformed-response failures remain errors. Walkthrough generation
 keeps its existing empty-diff refusal. UI comparison behavior is documented in
 `packages/ui/src/components/views/DOCUMENTATION.md`.
@@ -172,6 +179,14 @@ falls back to whatever the small-model chain resolves to. Choosing a model *is*
 the opt-out, so there is no separate toggle to disagree with the picker — the
 settings picker simply shows "Small model will be used" until a choice is made,
 and clearing it restores the fallback.
+
+`walkthroughModelVariant` is the thinking level chosen beside that model in
+Settings. It applies only while the walkthrough runs on the saved model: a
+model picked for one review runs at its own default level, and changing or
+clearing the saved model clears the level. The server checks it against the
+catalog the way the small model's level is checked (`small-model`'s
+`resolveModelVariant`). The level is not part of the cache key, so changing it
+keeps the review on screen until the user regenerates.
 
 The separation exists because the two roles pull in opposite directions: the
 small model is chosen to be cheap and fast for recaps and commit messages, while
@@ -312,7 +327,14 @@ scope.
 The key covers walkthrough version, prompt version, repo root, source, provider,
 model, output language, and every file's path/status/hunk-ids. PR keys also cover
 the validated source-control provider, normalized instance, immutable account ID,
-repository ID, binding revision, directory, trusted primary remote, and PR number. The key is computed from the
+repository ID, binding revision, directory, trusted primary remote, and PR number.
+A PR source may name a `revision` (a full commit SHA) on a provider that keeps
+revisions (`capabilities.revisions`, Gerrit's patchsets); the source key becomes
+`pr:<…>:<number>@<revision>`, so the job, cache entry and pointer of each
+revision are separate, while a source without one keeps the key it always had.
+The routes refuse a revision for any other provider with
+`400 INVALID_SOURCE_CONTROL_READ_CONTEXT` before reading. The shared UI does
+not name a revision yet, so its walkthroughs cover the current patchset. The key is computed from the
 *current* diff, so a hit means the walkthrough was written about exactly this
 code; there is no freshness question to ask of an entry, because staleness is a
 miss. Returning the working tree to an earlier state therefore costs nothing.
@@ -457,8 +479,9 @@ For a PR source, all four routes also require flat `provider`, `instance`,
 query or JSON body. They do not accept a nested context object. The source-control
 binding service validates these immutable fields before walkthrough service,
 cache, job, credential, repository-coordinate, or provider work. The server
-accepts a validated GitHub or GitLab context and refuses any other provider with
-`422 UNSUPPORTED_WALKTHROUGH_PROVIDER`. It resolves the exact bound
+accepts a validated context whose provider's descriptor has
+`capabilities.changeRequestPatch` (GitHub, GitLab, Gitea and Gerrit today) and refuses any
+other provider with `422 UNSUPPORTED_WALKTHROUGH_PROVIDER`. It resolves the exact bound
 account and trusted primary remote, with no active-account or default-remote
 fallback, and every successful PR response echoes the trusted `readContext`.
 An exact-account `401` reconciles the account through the source-control binding

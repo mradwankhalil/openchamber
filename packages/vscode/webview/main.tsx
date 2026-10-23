@@ -799,6 +799,18 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     }
   }
 
+  if (pathname === '/api/config/skill-switch' && method === 'PUT') {
+    const body = await extractJsonBody(input, init, method);
+    const directory = getRequestDirectoryHint(url, input, init);
+    try {
+      const data = await sendBridgeMessage('api:config/skill-switch', { ...body, directory });
+      return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
   if (pathname === '/api/config/mcp') {
     const verb = method;
     const body = await extractJsonBody(input, init, method);
@@ -900,11 +912,23 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     return 200;
   };
 
-  // Skills catalog: /api/config/skills/catalog
+  // Skills catalog: /api/config/skills/catalog lists the sources,
+  // /api/config/skills/catalog/source scans one of them.
   if (pathname === '/api/config/skills/catalog') {
+    try {
+      const data = await sendBridgeMessage('api:config/skills:catalog');
+      return new Response(JSON.stringify(data), { status: skillsCatalogStatusFromPayload(data), headers: { 'Content-Type': 'application/json' } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ ok: false, error: { kind: 'unknown', message } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
+  if (pathname === '/api/config/skills/catalog/source') {
+    const sourceId = url.searchParams.get('sourceId') ?? '';
     const refresh = url.searchParams.get('refresh') === 'true';
     try {
-      const data = await sendBridgeMessage('api:config/skills:catalog', { refresh });
+      const data = await sendBridgeMessage('api:config/skills:catalog/source', { sourceId, refresh });
       return new Response(JSON.stringify(data), { status: skillsCatalogStatusFromPayload(data), headers: { 'Content-Type': 'application/json' } });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
