@@ -70,6 +70,7 @@ import { ascendingId } from "./ids"
 import { runningShellFromWire, shellCancellationNote, type RunningShell, type ShellToStop } from "./background-shell"
 import { subagentCancellationNote } from "./subagent-run"
 import { toJsonRecord } from "./json"
+import { readMessageThroughAncestors } from "./message-ownership"
 import {
   deniesAnyProvider,
   mergeConfigDocuments,
@@ -1211,6 +1212,18 @@ class OpencodeService {
 
   async getSessionMessage(id: string, messageID: string, directory?: string | null): Promise<{ info: Message; parts: Part[] }> {
     const info = await call("session.message.get", () => this.clientFor(directory).session.message.get({ sessionID: id, messageID }))
+    const [projected] = projectMessages([info], id)
+    return { info: projected.message, parts: projected.parts }
+  }
+
+  async getToolContentMessage(id: string, messageID: string, directory: string): Promise<{ info: Message; parts: Part[] }> {
+    const runtimeKey = getRuntimeKey()
+    const info = await readMessageThroughAncestors(id, {
+      readMessage: (sessionID) => call("session.message.get", () => this.clientFor(directory).session.message.get({ sessionID, messageID })),
+      readParentID: async (sessionID) => (await this.getSession(sessionID, directory)).parentID,
+      isNotFound: isOpencodeNotFound,
+      isCurrent: () => getRuntimeKey() === runtimeKey,
+    })
     const [projected] = projectMessages([info], id)
     return { info: projected.message, parts: projected.parts }
   }

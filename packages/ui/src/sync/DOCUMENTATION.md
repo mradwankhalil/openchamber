@@ -736,6 +736,13 @@ always whole, and so are calls arriving by the event stream, except `read` and
 reducer drops it the moment the call finishes (`withoutUnshownResult`), with
 the same marker.
 
+Tool completion checks existing transcript membership and a result shell before
+requesting `getToolContentMessage`. This dedicated adapter operation may read
+ancestors as described in `lib/opencode/DOCUMENTATION.md`; ordinary message
+reads remain session-strict. Completion writes only into the original store
+while the runtime and message are still current, so an evicted store or a
+removed message is never recreated by the response.
+
 A successful local session creation publishes its session record and calls `SessionMessageLoader.initializeCreatedSession` before selection starts navigation loading. The create response establishes an empty transcript only if no transcript has arrived yet. Initialization supersedes an earlier unresolved history load, preserves any messages or metadata received before the create response, and uses the server-returned directory. Opening that new session needs no history read; forced recovery and later eviction still use normal fetching. Creation responses from a previous runtime cannot select or initialize a session in the current runtime.
 
 Initial loads use smaller requests on constrained VS Code/mobile surfaces and publish the cursor-extended ten-turn window described above. The mounted chat timeline requests one history batch when its pinned viewport is underfilled, when the user scrolls toward history, or when load older is pressed; mobile uses the explicit button. Timeline caches, pending work, prepend snapshots, and stale checks use runtime + directory + session identity so equal session IDs in different worktrees cannot share lifecycle state. Older pages are fetched through the same loader and merged with optimistic records before publication. The same chronology contract applies in the VS Code webview because it consumes this shared loader and sync store; the extension bridge must transport OpenCode records without introducing its own ID-based ordering.
