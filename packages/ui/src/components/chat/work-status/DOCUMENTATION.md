@@ -358,10 +358,23 @@ for it.
 
 Pins are most useful on a long session — which is exactly when the pinned
 message sits before the loaded part of the transcript. Session metadata keeps
-only the pin's id, time and role, so a pin that is not loaded reads its one
+the pin's id, time, role and owning `sessionID`. A child accepts only its own
+explicitly owned pins. It accepts a legacy ownerless pin only when its message
+was created strictly after the child; missing session ids and incomplete child
+timestamps fail closed. Root sessions, including user forks, keep inherited pins.
+A pin that is not loaded reads its one
 message from OpenCode (`opencodeClient.getSessionMessage`) for the row's text.
-No session is materialised for it, a loaded pin costs nothing, and a failed
-read leaves the placeholder until the section mounts again.
+That read targets only the displayed session and never walks to a parent, and the
+row keeps only a text part whose session and message ids match the pin, so a
+parent's text cannot supply the label. No session is materialised for it, a loaded pin
+costs nothing, and a failed read leaves the placeholder until the section mounts
+again.
+
+### Why pin ownership filtering applies only to child sessions
+
+Child and subagent sessions must not display parent pins. User forks retain
+their existing pin inheritance and compaction cursor. Copied messages receive
+new ids, so mapping inherited pins to forked messages needs a separate change.
 
 ### PR status is deliberately read-only
 

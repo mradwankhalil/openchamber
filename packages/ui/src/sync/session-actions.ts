@@ -1284,7 +1284,7 @@ export async function setContextObligatoryMessage(
   pinned: boolean,
 ): Promise<Session> {
   return patchSessionMetadata(sessionId, directory, (metadata) =>
-    withContextObligatoryMessage(metadata, message, pinned))
+    withContextObligatoryMessage(metadata, message, pinned, sessionId))
 }
 
 async function cleanupReviewMetadataBeforeDelete(

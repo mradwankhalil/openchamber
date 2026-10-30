@@ -88,7 +88,7 @@ mock.module("@/lib/startupTrace", () => ({
   markStartupTrace: mock(() => undefined),
 }))
 
-const { OpencodeApiError, createRuntimeOpencodeClient, opencodeClient } = await import(`./client?client-test=${Date.now()}`)
+const { OpencodeApiError, createRuntimeOpencodeClient, isOpencodeNotFound, opencodeClient } = await import(`./client?client-test=${Date.now()}`)
 const { readProjectConfigError } = await import("./configError")
 
 const sessionInfo = {
@@ -364,6 +364,17 @@ describe("error normalisation", () => {
     // A lost response proves nothing about whether the server ran the request,
     // so a prompt send it fails must confirm before rolling the message back.
     expect(isAmbiguousSendFailure(error)).toBe(true)
+  })
+
+  // Pinned-message hydration and the dead-link check both rely on this: one
+  // request against the requested session, and a miss stays a recognisable 404.
+  test("getSessionMessage reads only the requested session and keeps a miss a 404", async () => {
+    responses.push(json({ _tag: "MessageNotFoundError", message: "gone" }, 404))
+    const error = await opencodeClient.getSessionMessage("ses_child", "msg_parent").catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(OpencodeApiError)
+    expect(isOpencodeNotFound(error)).toBe(true)
+    expect(requests).toHaveLength(1)
+    expect(requests[0].url.pathname).toBe("/api/session/ses_child/message/msg_parent")
   })
 
   test("fetchPermission maps 404 to resolved and everything else to unknown", async () => {
