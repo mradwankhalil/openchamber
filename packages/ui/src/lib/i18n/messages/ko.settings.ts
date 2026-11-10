@@ -613,6 +613,7 @@ export const settingsDict = {
   'settings.agents.sidebar.section.builtIn': '내장 에이전트',
   'settings.agents.sidebar.section.custom': '사용자 정의 에이전트',
   'settings.agents.sidebar.badge.system': 'system',
+  'settings.agents.sidebar.badge.hidden': '숨김',
   'settings.agents.sidebar.dialog.deleteTitle': '에이전트 삭제',
   'settings.agents.sidebar.dialog.deleteDescription': '"{name}" 에이전트를 삭제하시겠습니까?',
   'settings.agents.sidebar.renameDialog.title': '에이전트 이름 변경',

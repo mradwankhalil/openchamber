@@ -613,6 +613,7 @@ export const settingsDict = {
   "settings.agents.sidebar.section.builtIn": "Вбудовані агенти",
   "settings.agents.sidebar.section.custom": "Спеціальні агенти",
   "settings.agents.sidebar.badge.system": "Системний",
+  "settings.agents.sidebar.badge.hidden": "прихований",
   "settings.agents.sidebar.dialog.deleteTitle": "Видалити агента",
   "settings.agents.sidebar.dialog.deleteDescription": "Ви впевнені, що хочете видалити агента \"{name}\"?",
   "settings.agents.sidebar.renameDialog.title": "Перейменувати агента",

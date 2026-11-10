@@ -646,6 +646,7 @@ export const settingsDict = {
   'settings.agents.sidebar.section.builtIn': 'Ingebouwde agents',
   'settings.agents.sidebar.section.custom': 'Aangepaste agents',
   'settings.agents.sidebar.badge.system': 'systeem',
+  'settings.agents.sidebar.badge.hidden': 'verborgen',
   'settings.agents.sidebar.dialog.deleteTitle': 'Agent verwijderen',
   'settings.agents.sidebar.dialog.deleteDescription': 'Weet u zeker dat u agent "{name}" wilt verwijderen?',
   'settings.agents.sidebar.renameDialog.title': 'Agent hernoemen',

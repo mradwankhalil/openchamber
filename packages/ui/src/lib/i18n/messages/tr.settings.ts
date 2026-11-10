@@ -618,6 +618,7 @@ export const settingsDict = {
   'settings.agents.sidebar.section.builtIn': 'Yerleşik Agent\'lar',
   'settings.agents.sidebar.section.custom': 'Özel Agent\'lar',
   'settings.agents.sidebar.badge.system': 'sistem',
+  'settings.agents.sidebar.badge.hidden': 'gizli',
   'settings.agents.sidebar.dialog.deleteTitle': 'Agent\'ı sil',
   'settings.agents.sidebar.dialog.deleteDescription': '"{name}" adlı agent\'ı silmek istediğinizden emin misiniz?',
   'settings.agents.sidebar.renameDialog.title': 'Agent\'ı yeniden adlandır',

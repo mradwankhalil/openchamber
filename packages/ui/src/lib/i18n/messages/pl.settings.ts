@@ -175,6 +175,7 @@ export const settingsDict = {
   'settings.agents.page.toast.updateFailed': 'Nie udało się zaktualizować agenta',
   'settings.agents.page.toast.updated': 'Agent został zaktualizowany pomyślnie',
   'settings.agents.sidebar.badge.system': 'system',
+  'settings.agents.sidebar.badge.hidden': 'ukryty',
   'settings.agents.sidebar.dialog.deleteDescription': 'Czy na pewno chcesz usunąć agenta "{name}"?',
   'settings.agents.sidebar.dialog.deleteTitle': 'Usuń Agenta',
   'settings.agents.sidebar.empty.description': 'Użyj przycisku +, aby utworzyć nowego',

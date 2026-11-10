@@ -645,6 +645,7 @@ export const settingsDict = {
   'settings.agents.sidebar.section.builtIn': 'סוכנים מובנים',
   'settings.agents.sidebar.section.custom': 'סוכנים מותאמים',
   'settings.agents.sidebar.badge.system': 'מערכת',
+  'settings.agents.sidebar.badge.hidden': 'מוסתר',
   'settings.agents.sidebar.dialog.deleteTitle': 'מחק סוכן',
   'settings.agents.sidebar.dialog.deleteDescription': "למחוק את הסוכן \"{name}\"?",
   'settings.agents.sidebar.renameDialog.title': 'שנה שם לסוכן',

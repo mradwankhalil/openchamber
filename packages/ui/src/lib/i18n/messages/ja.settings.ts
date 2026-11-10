@@ -646,6 +646,7 @@ export const settingsDict = {
   'settings.agents.sidebar.section.builtIn': 'ビルトイン Agent',
   'settings.agents.sidebar.section.custom': 'カスタム Agent',
   'settings.agents.sidebar.badge.system': 'システム',
+  'settings.agents.sidebar.badge.hidden': '非表示',
   'settings.agents.sidebar.dialog.deleteTitle': 'Agent を削除',
   'settings.agents.sidebar.dialog.deleteDescription': 'Agent "{name}" を削除してもよろしいですか？',
   'settings.agents.sidebar.renameDialog.title': 'Agent の名前変更',

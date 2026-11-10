@@ -610,6 +610,7 @@ export const settingsDict = {
   'settings.agents.sidebar.section.builtIn': '內建 Agents',
   'settings.agents.sidebar.section.custom': '自訂 Agents',
   'settings.agents.sidebar.badge.system': '系統',
+  'settings.agents.sidebar.badge.hidden': '隱藏',
   'settings.agents.sidebar.dialog.deleteTitle': '刪除 Agent',
   'settings.agents.sidebar.dialog.deleteDescription': '確定要刪除 agent「{name}」嗎？',
   'settings.agents.sidebar.renameDialog.title': '重新命名 Agent',

@@ -613,6 +613,7 @@ export const settingsDict = {
   'settings.agents.sidebar.section.builtIn': '内置智能体',
   'settings.agents.sidebar.section.custom': '自定义智能体',
   'settings.agents.sidebar.badge.system': '系统',
+  'settings.agents.sidebar.badge.hidden': '隐藏',
   'settings.agents.sidebar.dialog.deleteTitle': '删除智能体',
   'settings.agents.sidebar.dialog.deleteDescription': '确定要删除智能体“{name}”吗？',
   'settings.agents.sidebar.renameDialog.title': '重命名智能体',

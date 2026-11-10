@@ -645,6 +645,7 @@ export const settingsDict = {
   'settings.agents.sidebar.section.builtIn': 'الوكلاء المضمّنون',
   'settings.agents.sidebar.section.custom': 'الوكلاء المخصصون',
   'settings.agents.sidebar.badge.system': 'النظام',
+  'settings.agents.sidebar.badge.hidden': 'مخفي',
   'settings.agents.sidebar.dialog.deleteTitle': 'حذف الوكيل',
   'settings.agents.sidebar.dialog.deleteDescription': "هل تريد بالتأكيد حذف الوكيل \"{name}\"؟",
   'settings.agents.sidebar.renameDialog.title': 'إعادة تسمية الوكيل',

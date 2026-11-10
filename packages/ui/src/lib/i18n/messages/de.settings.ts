@@ -629,6 +629,7 @@ export const settingsDict = {
   'settings.agents.sidebar.section.builtIn': 'Integrierte Agents',
   'settings.agents.sidebar.section.custom': 'Benutzerdefinierte Agents',
   'settings.agents.sidebar.badge.system': 'system',
+  'settings.agents.sidebar.badge.hidden': 'versteckt',
   'settings.agents.sidebar.dialog.deleteTitle': 'Agent löschen',
   'settings.agents.sidebar.dialog.deleteDescription': 'Möchten Sie den Agent "{name}" wirklich löschen?',
   'settings.agents.sidebar.renameDialog.title': 'Agent umbenennen',
