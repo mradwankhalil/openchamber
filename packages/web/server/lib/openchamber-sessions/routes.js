@@ -340,8 +340,9 @@ const applySessionSelection = async ({ client, sessionID, model, agent, variant 
   if (agent) await client.session.switchAgent({ sessionID, agent });
 };
 
-const createSession = async ({ client, directory, title, titleByUser = false, startedByExtension = null }) => {
+const createSession = async ({ client, directory, parentID, title, titleByUser = false, startedByExtension = null }) => {
   const input = { location: { directory } };
+  if (parentID) input.parentID = parentID;
   const openchamberMetadata = {};
   if (title) {
     input.title = title;
@@ -1167,6 +1168,10 @@ export const createOpenChamberSessionService = (dependencies) => {
   // `options` come from this server, never from a request body.
   const createInDirectory = async (payload, { titleByUser = false, startedByExtension = null } = {}, onCreated = () => {}) => {
     const title = asNonEmptyString(payload.title);
+    const parentID = asNonEmptyString(payload.parentId);
+    if (payload.parentId !== undefined && (!parentID || parentID.length > 256)) {
+      throw new OpenChamberControlError('parentId must be a non-empty session id of at most 256 characters', 400);
+    }
     const prompt = asNonEmptyString(payload.prompt);
     const goalInput = resolveGoalInput(payload, prompt);
     if (!goalInput.ok) {
@@ -1199,6 +1204,19 @@ export const createOpenChamberSessionService = (dependencies) => {
     }
 
     if (typeof waitForOpenCodeReady === 'function') await waitForOpenCodeReady(10_000, 250);
+
+    // Session ids are global to this OpenCode server. Check before creating a
+    // worktree so a bad parent cannot leave a checkout behind.
+    if (parentID) {
+      try {
+        await clientFor(resolvedDirectory.directory).session.get({ sessionID: parentID });
+      } catch (error) {
+        if (error?._tag === 'SessionNotFoundError' || error?._tag === 'InvalidRequestError') {
+          throw new OpenChamberControlError(`Parent session not found: ${parentID}`, 404);
+        }
+        throw new OpenChamberControlError(`Could not check whether parent session ${parentID} exists`, 503);
+      }
+    }
 
     const projectPath = resolvedDirectory.projectPath ?? resolvedDirectory.directory;
     if (prompt) {
@@ -1290,6 +1308,7 @@ export const createOpenChamberSessionService = (dependencies) => {
     const sessionID = await createSession({
       client,
       directory: sessionDirectory,
+      parentID,
       ...(title ? { title } : {}),
       titleByUser,
       startedByExtension,
@@ -1329,6 +1348,7 @@ export const createOpenChamberSessionService = (dependencies) => {
       ...(goalInput.enabled ? { goalEnabled: true } : {}),
       ...(goalInput.tokenBudget ? { goalTokenBudget: goalInput.tokenBudget } : {}),
     };
+    if (parentID) result.parentID = parentID;
     // Set when the project's folder could not be used and the session started at the worktree root.
     if (startDirectoryFallback) result.startDirectoryFallback = startDirectoryFallback;
     if (setup.untrustedSkipped.length > 0) result.untrustedSetupCommandsSkipped = setup.untrustedSkipped;

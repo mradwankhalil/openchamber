@@ -130,6 +130,7 @@ const ALL_PARAMETER_PROPERTIES = {
   projectId: { type: 'string', description: 'Not with directory' },
   directory: { type: 'string', description: "Absolute path; default: this session's directory" },
   sessionId: { type: 'string' },
+  parentId: { type: 'string', description: 'session.create only: nest under this existing session on the same server. Omit to create a root' },
   messageId: { type: 'string', description: 'Fork boundary' },
   link: {
     type: 'object',

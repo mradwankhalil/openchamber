@@ -952,6 +952,9 @@ export const createOpenChamberControlService = (dependencies) => {
     if (input.pullRequest !== undefined && action !== 'session.create') {
       throw new OpenChamberControlError('pullRequest applies only to session.create', 400);
     }
+    if (input.parentId !== undefined && action !== 'session.create') {
+      throw new OpenChamberControlError('parentId applies only to session.create', 400);
+    }
     const sessionID = asNonEmptyString(input.sessionId);
     const parentSessionID = asNonEmptyString(contextSessionId);
     const returnResult = input.returnResult === true;
@@ -979,6 +982,7 @@ export const createOpenChamberControlService = (dependencies) => {
       ...(typeof input.setUpstream === 'boolean' ? { setUpstream: input.setUpstream } : {}),
       ...(asNonEmptyString(input.messageId) ? { messageId: input.messageId.trim() } : {}),
     };
+    if (input.parentId !== undefined) payload.parentId = input.parentId;
     // A pull request makes a worktree of its own, so its branch name (and a
     // start ref the session service refuses) travel without a worktree name.
     if (input.pullRequest !== undefined) {

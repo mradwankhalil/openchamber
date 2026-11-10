@@ -54,6 +54,13 @@ describe('service host calls', () => {
     expect(answer).toEqual({ status: 200, body: { result: { sessionId: 'ses_1', directory: '/repo' } } });
   });
 
+  test('passes a service-created session parent through the public request schema', async () => {
+    const { call, control } = harness();
+    const answer = await call('sessions.start', { prompt: 'hi', directory: '/repo', parentId: 'ses_parent' });
+    expect(answer.status).toBe(200);
+    expect(control.execute).toHaveBeenCalledWith('session.create', { prompt: 'hi', directory: '/repo', parentId: 'ses_parent' }, undefined, { startedByExtension: 'desk' });
+  });
+
   test('reads a session in its own folder', async () => {
     const { call, control } = harness();
     await call('sessions.status', { sessionId: 'ses_1' });

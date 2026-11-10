@@ -191,7 +191,7 @@ Ship `service/main.js` already built. Same packaging rule as `panel/main.js`.
 
 | Call | Needs | What it does |
 |---|---|---|
-| `sessions.start({ prompt, projectId?, directory?, title?, model?, variant?, agent? })` | `contributes.sessionControl` | Creates a session and sends it the prompt. Answers `{ sessionId, directory }` |
+| `sessions.start({ prompt, projectId?, directory?, title?, parentId?, model?, variant?, agent? })` | `contributes.sessionControl` | Creates a session and sends it the prompt. `parentId` nests it under an existing session on this server; omitted creates a root. Unknown ids, including ids from another server, return 404. Answers `{ sessionId, directory }` |
 | `sessions.send(sessionId, prompt)` | `sessionControl` | Sends to a session. A form or page the agent waits on there is closed first, as when the user writes in the chat, so the message never waits behind it |
 | `sessions.retry(sessionId)` | `sessionControl` | Sends the session's last message again, for a turn that failed |
 | `sessions.status(sessionId)` | `sessionControl` | `idle`, `busy`, or `waiting` when only the user can move it on |

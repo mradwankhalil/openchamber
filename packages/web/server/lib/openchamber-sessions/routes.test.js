@@ -661,6 +661,75 @@ describe('openchamber session routes', () => {
     expect(sessionCreateMock).toHaveBeenCalledWith({ location: { directory: '/repo/app' } });
   });
 
+  it('creates a session with the explicit OpenCode parent and reports it', async () => {
+    const { app } = createApp();
+    const response = await request(app)
+      .post('/api/openchamber/sessions')
+      .send({ directory: '/repo/app', parentId: 'ses_parent' })
+      .expect(200);
+
+    expect(sessionGetMock).toHaveBeenCalledWith({ sessionID: 'ses_parent' });
+    expect(sessionCreateMock).toHaveBeenCalledWith({ location: { directory: '/repo/app' }, parentID: 'ses_parent' });
+    expect(response.body.parentID).toBe('ses_parent');
+  });
+
+  it('keeps an omitted parent as a root without a parent lookup', async () => {
+    const { app } = createApp();
+    const response = await request(app)
+      .post('/api/openchamber/sessions')
+      .send({ directory: '/repo/app' })
+      .expect(200);
+
+    expect(response.body).not.toHaveProperty('parentID');
+    expect(sessionCreateMock).toHaveBeenCalledWith({ location: { directory: '/repo/app' } });
+    expect(sessionGetMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts a parent in another directory on the same OpenCode server', async () => {
+    sessionGetMock.mockResolvedValueOnce({ id: 'ses_parent', location: { directory: '/repo/other' } });
+    const { app } = createApp();
+    await request(app)
+      .post('/api/openchamber/sessions')
+      .send({ directory: '/repo/app', parentId: 'ses_parent' })
+      .expect(200);
+
+    expect(sessionCreateMock).toHaveBeenCalledWith({ location: { directory: '/repo/app' }, parentID: 'ses_parent' });
+  });
+
+  it.each(['SessionNotFoundError', 'InvalidRequestError'])('rejects an unknown or foreign parent (%s) before creating a worktree', async (_tag) => {
+    sessionGetMock.mockRejectedValueOnce({ _tag });
+    const { app } = createApp();
+    const response = await request(app)
+      .post('/api/openchamber/sessions')
+      .send({ directory: '/repo/app', parentId: 'ses_unknown', worktree: { name: 'side-task' } })
+      .expect(404);
+
+    expect(response.body.error).toBe('Parent session not found: ses_unknown');
+    expect(sessionCreateMock).not.toHaveBeenCalled();
+    expect(createWorktreeMock).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a failed parent lookup as a missing parent or create a root', async () => {
+    sessionGetMock.mockRejectedValueOnce(new Error('OpenCode unavailable'));
+    const { app } = createApp();
+    await request(app)
+      .post('/api/openchamber/sessions')
+      .send({ directory: '/repo/app', parentId: 'ses_parent' })
+      .expect(503);
+
+    expect(sessionCreateMock).not.toHaveBeenCalled();
+  });
+
+  it.each([null, '', '   ', 42, {}, 'x'.repeat(257)])('rejects an invalid parent id (%j)', async (parentId) => {
+    const { app } = createApp();
+    await request(app)
+      .post('/api/openchamber/sessions')
+      .send({ directory: '/repo/app', parentId })
+      .expect(400);
+
+    expect(sessionCreateMock).not.toHaveBeenCalled();
+  });
+
   it('does not claim user ownership for a title from the agent service', async () => {
     const service = createOpenChamberSessionService({
       archiveStore: createMemoryArchiveStore(),

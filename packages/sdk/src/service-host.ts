@@ -114,6 +114,8 @@ export type MentionsResolveResult = { text: string };
 /** Starts a session and sends it `prompt`. `projectId` and `directory` name one scope; give at most one. */
 export type ServiceSessionStart = {
   prompt: string;
+  /** Existing session on this server. Omit to create a root; an unknown id is a 404. */
+  parentId?: string;
   projectId?: string;
   directory?: string;
   title?: string;

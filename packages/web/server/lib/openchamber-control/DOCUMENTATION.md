@@ -416,6 +416,17 @@ other.
   prompt goes out; a failed read records the id alone. A slash-command
   prompt goes through `session.command`, which takes no metadata, so it
   carries no link.
+- `session.create` and `POST /api/openchamber/sessions` accept `parentId` to
+  create an OpenCode subsession. It becomes the record's `parentID`, which
+  the sidebar already nests and archive/delete already cascade. Omitting it
+  keeps the root behavior, even when a calling session supplies prompt
+  attribution. The id must name an existing session on this OpenCode server;
+  another directory is allowed because session ids are server-wide. An unknown
+  id, including one from another server, is a 404. A failed lookup is a 503.
+  An empty, non-string or over-256-character id is a 400. Validation happens
+  before worktree creation. This option does not change OpenCode's subagent path.
+  The create response includes `parentID` when supplied. OpenCode's session
+  record and events remain the authoritative source of parentage.
 - `work.name` names the task the session (default: the calling one) works on
   (`../openchamber-sessions/work-naming.js`, wired through the `workNaming`
   dependency; without it the action answers 503). In a linked worktree it sets

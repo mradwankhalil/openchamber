@@ -506,6 +506,18 @@ describe('OpenChamber control service', () => {
     expect(sessionService.send).toHaveBeenLastCalledWith('ses_caller', { directory: '/repo', prompt: 'Go' });
   });
 
+  it('passes an explicit parent to session creation independently of prompt attribution', async () => {
+    const { service, sessionService } = createService();
+    await service.execute('session.create', { parentId: 'ses_parent' }, '/repo', { contextSessionId: 'ses_caller' });
+    expect(sessionService.create).toHaveBeenCalledWith({ directory: '/repo', parentId: 'ses_parent', promptedBySessionId: 'ses_caller' });
+  });
+
+  it.each(['session.send', 'session.fork'])('refuses parentId on %s instead of ignoring it', async (action) => {
+    const { service } = createService();
+    await expect(service.execute(action, { sessionId: 'ses_1', prompt: 'Go', parentId: 'ses_parent' }, '/repo'))
+      .rejects.toThrow('parentId applies only to session.create');
+  });
+
   it('names the calling session\'s task, and says so when the server cannot', async () => {
     const setWorktreeTaskTitle = vi.fn(async (_directory, { title }) => ({ applied: true, title }));
     const { service, client } = createService({

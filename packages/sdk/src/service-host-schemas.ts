@@ -26,6 +26,7 @@ export const serviceHostCallSchema = z.discriminatedUnion('method', [
       projectId: shortText.optional(),
       directory: directory.optional(),
       title: shortText.optional(),
+      parentId: sessionId.optional(),
       model: shortText.optional(),
       variant: shortText.optional(),
       agent: shortText.optional(),
