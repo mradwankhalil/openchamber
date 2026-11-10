@@ -747,7 +747,11 @@ type GuestCall<Type extends string, Payload = never> = Envelope & { type: Type; 
 export type GuestHelloMessage = Envelope & { type: 'hello' };
 export type GuestToastMessage = GuestCall<'toast', ToastRequest>;
 export type GuestOpenUrlMessage = GuestCall<'open-url', { url: string }>;
-export type GuestOpenSurfaceMessage = GuestCall<'open-surface', { surfaceId: string }>;
+export type OpenSurfaceOptions = {
+  /** Select a Project knowledge section when `surfaceId` is `notes`; ignored by other surfaces. */
+  tab?: 'notes' | 'todos' | 'plans';
+};
+export type GuestOpenSurfaceMessage = GuestCall<'open-surface', { surfaceId: string } & OpenSurfaceOptions>;
 export type GuestBlockAnswerMessage = GuestCall<'block-answer', { text: string }>;
 export type GuestClipboardWriteMessage = GuestCall<'clipboard-write', { text: string }>;
 export type GuestComposeMessage = GuestCall<'compose', ComposeRequest>;

@@ -58,6 +58,8 @@ test('a status section without a project opens its panel under the chat, as the 
   const previousDraft = useSessionUIStore.getState().newSessionDraft;
   const previousSessionId = useSessionUIStore.getState().currentSessionId;
   const previousDirectory = useDirectoryStore.getState().currentDirectory;
+  const previousTab = useUIStore.getState().projectContextTab;
+  const previousPanels = useUIStore.getState().contextPanelByDirectory;
   useSessionUIStore.setState({
     currentSessionId: null,
     newSessionDraft: { ...previousDraft, open: true, target: 'chat', directoryOverride: null, preparedChatDirectory: chatDirectory },
@@ -103,10 +105,28 @@ test('a status section without a project opens its panel under the chat, as the 
     expect(result('open-1')).toMatchObject({ ok: true });
     expect(shown()).toEqual(['plugin:repro']);
 
+    // The contract passes the chosen section through the bridge, even when
+    // Project knowledge is already visible. Opening without a tab preserves it.
+    for (const tab of ['todos', 'plans', 'notes'] as const) {
+      await send({ channel: 'openchamber.sdk', v: 1, type: 'open-surface', id: `knowledge-${tab}`, payload: { surfaceId: 'notes', tab } });
+      expect(result(`knowledge-${tab}`)).toMatchObject({ ok: true });
+      expect(shown()).toContain('notes');
+      expect(useUIStore.getState().projectContextTab).toBe(tab);
+    }
+    await act(async () => { useUIStore.getState().setProjectContextTab('plans'); });
+    await send({ channel: 'openchamber.sdk', v: 1, type: 'open-surface', id: 'knowledge-default', payload: { surfaceId: 'notes' } });
+    expect(result('knowledge-default')).toMatchObject({ ok: true });
+    expect(useUIStore.getState().projectContextTab).toBe('plans');
+
+    // Other surfaces ignore the Project knowledge option.
+    await send({ channel: 'openchamber.sdk', v: 1, type: 'open-surface', id: 'other-tab', payload: { surfaceId: 'plugin:repro', tab: 'todos' } });
+    expect(result('other-tab')).toMatchObject({ ok: true });
+    expect(useUIStore.getState().projectContextTab).toBe('plans');
+
     // Asking again keeps it open; the rail icon would toggle it closed.
     await send({ channel: 'openchamber.sdk', v: 1, type: 'open-surface', id: 'open-2', payload: { surfaceId: 'plugin:repro' } });
     expect(result('open-2')).toMatchObject({ ok: true });
-    expect(shown()).toEqual(['plugin:repro']);
+    expect(shown()).toContain('plugin:repro');
 
     // A chat column opens only beside a chat, so alone it shows nothing.
     await send({ channel: 'openchamber.sdk', v: 1, type: 'open-surface', id: 'open-chat', payload: { surfaceId: 'chat' } });
@@ -120,12 +140,16 @@ test('a status section without a project opens its panel under the chat, as the 
     });
     await send({ channel: 'openchamber.sdk', v: 1, type: 'open-surface', id: 'open-none', payload: { surfaceId: 'plugin:repro' } });
     expect(result('open-none')).toMatchObject({ ok: false, code: 'NO_DIRECTORY' });
+    await send({ channel: 'openchamber.sdk', v: 1, type: 'open-surface', id: 'knowledge-none', payload: { surfaceId: 'notes', tab: 'todos' } });
+    expect(result('knowledge-none')).toMatchObject({ ok: false, code: 'NO_DIRECTORY' });
+    expect(useUIStore.getState().projectContextTab).toBe('plans');
   } finally {
     await act(async () => root.unmount());
     for (const restore of restores) restore();
     fetch.mockRestore();
     useSessionUIStore.setState({ newSessionDraft: previousDraft, currentSessionId: previousSessionId });
     useDirectoryStore.setState({ currentDirectory: previousDirectory });
+    useUIStore.setState({ projectContextTab: previousTab, contextPanelByDirectory: previousPanels });
     useGuestsStore.getState().resetForRuntimeSwitch(runtimeKey);
     await dom.happyDOM.close();
     for (const [key, descriptor] of originals) {

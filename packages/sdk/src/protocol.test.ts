@@ -24,6 +24,18 @@ import {
   parseHostMessage,
 } from './protocol.ts';
 
+test('open-surface preserves only supported Project knowledge tabs', () => {
+  const message = { channel: OPENCHAMBER_SDK_CHANNEL, v: 1, type: 'open-surface', id: 'open-1', payload: { surfaceId: 'notes' } };
+  expect(guestMessageSchema.parse(message)).toEqual(message);
+  for (const tab of ['notes', 'todos', 'plans']) {
+    const withTab = { ...message, payload: { ...message.payload, tab } };
+    expect(guestMessageSchema.parse(withTab)).toEqual(withTab);
+  }
+  for (const tab of ['memory', 'unknown', '', null, 1]) {
+    expect(guestMessageSchema.safeParse({ ...message, payload: { ...message.payload, tab } }).success).toBe(false);
+  }
+});
+
 test('background action messages round-trip and reject invalid payloads', () => {
   const action = { channel: OPENCHAMBER_SDK_CHANNEL, v: 1, type: 'action', id: 'a1', payload: {
     kind: 'message', action: 'count', sessionId: 's1', sessionTitle: 'Session', directory: null, messageId: 'm1', role: 'assistant', text: 'Hello',

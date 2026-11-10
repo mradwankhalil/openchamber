@@ -560,6 +560,27 @@ describe('connectHost', () => {
     host.dispose();
   });
 
+  test('posts open-surface with an optional Project knowledge tab', async () => {
+    const parent = createFrame();
+    const guest = createFrame();
+    guest.parent = parent.parent;
+    const host = connectHost({ target: guest, acceptSource: () => true });
+    try {
+      for (const tab of [undefined, 'notes', 'todos', 'plans'] as const) {
+        const opened = host.openSurface('notes', tab ? { tab } : undefined);
+        const message = parent.posted.at(-1);
+        if (message?.type !== 'open-surface') throw new Error('Expected open-surface');
+        expect(message.payload).toEqual(tab ? { surfaceId: 'notes', tab } : { surfaceId: 'notes' });
+        guest.dispatch(new MessageEvent('message', {
+          data: { channel: OPENCHAMBER_SDK_CHANNEL, v: 1, type: 'result', id: message.id, ok: true },
+        }));
+        await opened;
+      }
+    } finally {
+      host.dispose();
+    }
+  });
+
   test('posts clipboard-write and compose', async () => {
     const parent = createFrame();
     const guest = createFrame();

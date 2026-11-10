@@ -4,8 +4,18 @@ import { useUIStore } from '@/stores/useUIStore';
 import { openGuestSurface } from './open-surface';
 
 describe('openGuestSurface', () => {
+  const initialTab = useUIStore.getState().projectContextTab;
   afterEach(() => {
-    useUIStore.setState({ agentWorkflowFeatureAvailable: false, agentWorkflowToolEnabled: false, contextPanelByDirectory: {} });
+    useUIStore.setState({ agentWorkflowFeatureAvailable: false, agentWorkflowToolEnabled: false, contextPanelByDirectory: {}, projectContextTab: initialTab });
+  });
+
+  test('an unsupported runtime leaves the selected knowledge tab unchanged', () => {
+    useUIStore.setState({ projectContextTab: 'plans' });
+    expect(openGuestSurface({ mode: 'notes', tab: 'todos', directory: '/repo', supported: false })).toMatchObject({
+      ok: false, code: 'UNSUPPORTED',
+    });
+    expect(useUIStore.getState().projectContextTab).toBe('plans');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toBeUndefined();
   });
 
   for (const [label, flags] of [

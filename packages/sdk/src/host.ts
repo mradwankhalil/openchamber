@@ -2,7 +2,7 @@ import { OPENCHAMBER_SDK_API_VERSION, OPENCHAMBER_SDK_CHANNEL } from './api-vers
 import { GUEST_STORAGE_KEY_MAX, GUEST_STORAGE_VALUE_BYTES, type GuestProjectsSnapshot, type GuestWorktreesSnapshot, type GuestSessionsSnapshot, type GuestWorkspaceQuery, type GuestWorkspaceSnapshot, type GuestStorageOptions, type GuestStorageRequest, type GuestStorageResult } from './workspace.ts';
 import type { GuestStatusControl, GuestStatusControlEvent } from './status-controls.ts';
 import { isGuestStatusControls } from './status-controls.ts';
-import type { GuestBlockCall, JsonValue } from './contract.ts';
+import type { GuestBlockCall, JsonValue, OpenSurfaceOptions } from './contract.ts';
 import { isGuestPopoverRequest, type GuestPopoverClosedEvent, type GuestPopoverRequest } from './popover.ts';
 import {
   GUEST_FILE_EDITOR_CONTENT_MAX,
@@ -176,8 +176,11 @@ export type HostClient = {
    * Show a context panel surface (`git`, or `plugin:<panel id>`). Resolves once
    * it is on screen; one already open stays open. No chat or project yet is
    * `NO_DIRECTORY`, a surface that cannot open here `UNSUPPORTED`.
+   * For Project knowledge (`notes`), `options.tab` selects Notes, Todos or
+   * Plans, including when already open. Omit it to keep the current tab.
+   * Other surfaces ignore `options.tab`.
    */
-  openSurface: (surfaceId: string) => Promise<void>;
+  openSurface: (surfaceId: string, options?: OpenSurfaceOptions) => Promise<void>;
   writeClipboard: (text: string) => Promise<void>;
   compose: (request: ComposeRequest) => Promise<void>;
   attach: (request: AttachIssueRequest) => Promise<void>;
@@ -965,12 +968,12 @@ export const connectHost = (options: HostClientOptions = {}): HostClient => {
       id: nextId(ids),
       payload: { text: text.trim().slice(0, GUEST_BLOCK_ANSWER_MAX) },
     }),
-    openSurface: (surfaceId) => request({
+    openSurface: (surfaceId, options) => request({
       channel: OPENCHAMBER_SDK_CHANNEL,
       v: OPENCHAMBER_SDK_API_VERSION,
       type: 'open-surface',
       id: nextId(ids),
-      payload: { surfaceId },
+      payload: options?.tab === undefined ? { surfaceId } : { surfaceId, tab: options.tab },
     }),
     writeClipboard: (text) => request({
       channel: OPENCHAMBER_SDK_CHANNEL,

@@ -451,6 +451,7 @@ export type {
   GuestOauthDisconnectMessage,
   GuestOauthStartMessage,
   GuestOpenSurfaceMessage,
+  OpenSurfaceOptions,
   GuestOpenUrlMessage,
   GuestRequest,
   GuestRequestMessage,

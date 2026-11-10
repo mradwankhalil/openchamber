@@ -734,8 +734,9 @@ export const PluginPane: React.FC<PluginPaneProps> = ({
           directoryRef.current || effectiveDirectoryRef.current || null,
           !isVSCodeRuntime() && !isMobileSurfaceRuntime(),
         ),
-        openSurface: (surfaceMode) => openGuestSurface({
+        openSurface: (surfaceMode, tab) => openGuestSurface({
           mode: surfaceMode,
+          tab,
           // A status section in a chat draft without a project has no
           // directory of its own; the rail opens its panels under the chat's.
           directory: directoryRef.current || effectiveDirectoryRef.current || null,

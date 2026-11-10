@@ -552,6 +552,7 @@ export const guestMessageSchema = z.discriminatedUnion('type', [
     id: z.string().min(1),
     payload: z.object({
       surfaceId: z.string().trim().min(1).max(64),
+      tab: z.enum(['notes', 'todos', 'plans']).optional(),
     }),
   }),
   z.object({
