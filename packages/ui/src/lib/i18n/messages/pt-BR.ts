@@ -1859,6 +1859,8 @@ export const dict: Record<I18nKey, string> = {
   "planView.actions.linkToExistingSession": "Vincular a uma sessão existente",
   "planView.link.noSessions": "Nenhuma sessão disponível",
   "planView.link.failed": "Não foi possível vincular este plano. Tente novamente.",
+  "planView.link.loadFailed": "Não foi possível carregar as sessões.",
+  "planView.link.retry": "Tentar novamente",
   "planView.actions.copyPlanContents": "Copiar conteúdo do plano",
   "planView.state.loading": "Carregando...",
   "diffView.binary.unavailable": "O conteúdo deste arquivo não pode ser visualizado.",

@@ -3102,6 +3102,8 @@ export const dict: Record<I18nKey, string> = {
   'planView.actions.linkToExistingSession': 'Połącz z istniejącą sesją',
   'planView.link.noSessions': 'Brak dostępnych sesji',
   'planView.link.failed': 'Nie udało się połączyć planu. Spróbuj ponownie.',
+  'planView.link.loadFailed': 'Nie udało się wczytać sesji.',
+  'planView.link.retry': 'Spróbuj ponownie',
   'planView.error.previewUnavailable': 'Podgląd jest niedostępny',
   'planView.error.saveFailed': 'Nie udało się zapisać',
   'planView.error.loadFailed': 'Nie udało się wczytać tego planu',

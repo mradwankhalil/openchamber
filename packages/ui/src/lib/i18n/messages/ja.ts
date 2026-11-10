@@ -1899,6 +1899,8 @@ export const dict: Record<I18nKey, string> = {
   'planView.actions.linkToExistingSession': '既存のセッションにリンク',
   'planView.link.noSessions': '利用可能なセッションがありません',
   'planView.link.failed': 'このプランをリンクできませんでした。もう一度お試しください。',
+  'planView.link.loadFailed': 'セッションを読み込めませんでした。',
+  'planView.link.retry': '再試行',
   'planView.actions.copyPlanContents': '計画内容をコピー',
   'planView.state.loading': '読み込み中...',
   'diffView.binary.unavailable': 'このファイルの内容は表示できません。',

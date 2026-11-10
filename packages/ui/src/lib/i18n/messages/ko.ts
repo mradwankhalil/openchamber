@@ -1903,6 +1903,8 @@ export const dict: Record<I18nKey, string> = {
   'planView.actions.linkToExistingSession': '기존 세션에 연결',
   'planView.link.noSessions': '사용 가능한 세션이 없습니다',
   'planView.link.failed': '이 계획을 연결하지 못했습니다. 다시 시도하세요.',
+  'planView.link.loadFailed': '세션을 불러오지 못했습니다.',
+  'planView.link.retry': '다시 시도',
   'planView.actions.copyPlanContents': '플랜 내용 복사',
   'planView.state.loading': '로드 중…',
   'diffView.binary.unavailable': '이 파일의 콘텐츠는 볼 수 없습니다.',

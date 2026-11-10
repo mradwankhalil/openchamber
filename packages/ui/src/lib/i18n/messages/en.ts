@@ -1902,6 +1902,8 @@ export const dict = {
   'planView.actions.linkToExistingSession': 'Link to existing session',
   'planView.link.noSessions': 'No sessions available',
   'planView.link.failed': 'Could not link this plan. Try again.',
+  'planView.link.loadFailed': 'Could not load sessions.',
+  'planView.link.retry': 'Retry',
   'planView.actions.sendToNewWorktreeSession': 'Send to new worktree session',
   'planView.actions.copyPlanContents': 'Copy plan contents',
   'planView.state.loading': 'Loading...',

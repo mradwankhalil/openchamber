@@ -1816,6 +1816,8 @@ export const dict = {
   'planView.actions.linkToExistingSession': 'ربط بجلسة موجودة',
   'planView.link.noSessions': 'لا توجد جلسات متاحة',
   'planView.link.failed': 'تعذر ربط هذه الخطة. حاول مجددًا.',
+  'planView.link.loadFailed': 'تعذر تحميل الجلسات.',
+  'planView.link.retry': 'إعادة المحاولة',
   'planView.actions.copyPlanContents': 'نسخ محتويات الخطة',
   'planView.state.loading': 'جارٍ التحميل…',
   'diffView.binary.unavailable': 'لا يمكن عرض محتوى هذا الملف.',

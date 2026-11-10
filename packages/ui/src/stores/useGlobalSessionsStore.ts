@@ -396,7 +396,7 @@ const mergeSessionLists = (existing: Session[], incoming?: Session[]): Session[]
  * keep an old copy of a session it does not own. Letting that copy win put
  * sessions the user had marked done back under "In work".
  */
-const addUnlistedLiveSessions = (active: Session[], archived: Session[], live?: Session[]): Session[] => {
+export const addUnlistedLiveSessions = (active: Session[], archived: Session[], live?: Session[]): Session[] => {
   if (!live || live.length === 0) return active;
   const listed = new Set([...active, ...archived].map((session) => session.id));
   const unlisted = live.filter((session) => {

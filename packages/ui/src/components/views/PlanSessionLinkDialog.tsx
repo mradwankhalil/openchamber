@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useI18n } from '@/lib/i18n';
 import type { SavedProjectPlanTarget } from '@/lib/projectContextApi';
-import { useGlobalSessionsStore, refreshGlobalSessions } from '@/stores/useGlobalSessionsStore';
+import { addUnlistedLiveSessions, useGlobalSessionsStore, refreshGlobalSessions } from '@/stores/useGlobalSessionsStore';
 import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { useAllLiveSessions } from '@/sync/sync-context';
 
@@ -14,20 +14,30 @@ export function PlanSessionLinkDialog({ target, onClose }: {
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const globalSessions = useGlobalSessionsStore((state) => state.activeSessions);
+  const activeSessions = useGlobalSessionsStore((state) => state.activeSessions);
+  const archivedSessions = useGlobalSessionsStore((state) => state.archivedSessions);
+  const loadStatus = useGlobalSessionsStore((state) => state.status);
   const liveSessions = useAllLiveSessions();
-  const sessions = React.useMemo(() => {
-    const merged = new Map(globalSessions.map((session) => [session.id, session]));
-    for (const session of liveSessions) merged.set(session.id, session);
-    return [...merged.values()].filter((session) => !session.time?.archived);
-  }, [globalSessions, liveSessions]);
+  // The global records decide, archived ones included: a directory store can keep
+  // an unarchived copy of a session it does not own. Live adds only unlisted sessions.
+  const sessions = React.useMemo(
+    () => addUnlistedLiveSessions(activeSessions, archivedSessions, liveSessions).filter((session) => !session.time?.archived),
+    [activeSessions, archivedSessions, liveSessions],
+  );
+  const listState = sessions.length > 0 ? 'ready'
+    : loadStatus === 'error' ? 'error'
+      : loadStatus === 'ready' ? 'empty'
+        : 'loading';
   const [sessionId, setSessionId] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
   const submittingRef = React.useRef(false);
   const [failed, setFailed] = React.useState(false);
-  React.useEffect(() => {
+  const loadSessions = React.useCallback(() => {
     void refreshGlobalSessions().catch(() => undefined);
   }, []);
+  React.useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
 
   const link = async () => {
     if (submittingRef.current || !sessions.some((session) => session.id === sessionId)) return;
@@ -45,6 +55,9 @@ export function PlanSessionLinkDialog({ target, onClose }: {
   };
 
   const title = t('planView.actions.linkToExistingSession');
+  const emptyLabel = listState === 'error' ? t('planView.link.loadFailed')
+    : listState === 'loading' ? t('common.loading')
+      : t('planView.link.noSessions');
   return (
     <Dialog open onOpenChange={(open) => { if (!open && !submittingRef.current) onClose(); }}>
       <DialogContent className="max-w-md">
@@ -57,7 +70,7 @@ export function PlanSessionLinkDialog({ target, onClose }: {
           </SelectTrigger>
           <SelectContent>
             {sessions.length === 0
-              ? <SelectItem value="__empty" disabled>{t('planView.link.noSessions')}</SelectItem>
+              ? <SelectItem value="__empty" disabled>{emptyLabel}</SelectItem>
               : sessions.map((session) => (
                 <SelectItem key={session.id} value={session.id}>
                   <span className="truncate">{session.title || session.id}</span>
@@ -66,6 +79,12 @@ export function PlanSessionLinkDialog({ target, onClose }: {
               ))}
           </SelectContent>
         </Select>
+        {listState === 'error' ? (
+          <div role="alert" className="flex items-center justify-between gap-2 typography-meta text-destructive">
+            <span>{t('planView.link.loadFailed')}</span>
+            <Button variant="outline" size="sm" onClick={loadSessions}>{t('planView.link.retry')}</Button>
+          </div>
+        ) : null}
         {failed ? <p role="alert" className="typography-meta text-destructive">{t('planView.link.failed')}</p> : null}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="sm" disabled={submitting} onClick={onClose}>

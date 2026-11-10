@@ -1657,6 +1657,8 @@ export const dict = {
   'planView.actions.linkToExistingSession': 'Lier à une session existante',
   'planView.link.noSessions': 'Aucune session disponible',
   'planView.link.failed': 'Impossible de lier ce plan. Réessayez.',
+  'planView.link.loadFailed': 'Impossible de charger les sessions.',
+  'planView.link.retry': 'Réessayer',
   'planView.actions.copyPlanContents': 'Copier le contenu du plan',
   'planView.state.loading': 'Chargement...',
   'diffView.binary.unavailable': 'Le contenu de ce fichier ne peut pas être visualisé.',

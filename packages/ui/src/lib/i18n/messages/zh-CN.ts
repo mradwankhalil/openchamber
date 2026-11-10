@@ -1869,6 +1869,8 @@ export const dict: Record<I18nKey, string> = {
   'planView.actions.linkToExistingSession': '关联到现有会话',
   'planView.link.noSessions': '没有可用的会话',
   'planView.link.failed': '无法关联此计划，请重试。',
+  'planView.link.loadFailed': '无法加载会话。',
+  'planView.link.retry': '重试',
   'planView.actions.copyPlanContents': '复制计划内容',
   'planView.state.loading': '加载中...',
   'diffView.binary.unavailable': '该文件内容无法查看。',

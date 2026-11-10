@@ -1816,6 +1816,8 @@ export const dict = {
   'planView.actions.linkToExistingSession': 'קישור להפעלה קיימת',
   'planView.link.noSessions': 'אין הפעלות זמינות',
   'planView.link.failed': 'לא ניתן לקשר את התוכנית. יש לנסות שוב.',
+  'planView.link.loadFailed': 'לא ניתן לטעון את ההפעלות.',
+  'planView.link.retry': 'ניסיון חוזר',
   'planView.actions.copyPlanContents': 'העתק את תוכן התוכנית',
   'planView.state.loading': 'טוען…',
   'diffView.binary.unavailable': 'אי אפשר להציג את התוכן של הקובץ הזה.',

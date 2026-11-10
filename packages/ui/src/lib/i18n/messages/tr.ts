@@ -1778,6 +1778,8 @@ export const dict = {
   'planView.actions.linkToExistingSession': 'Mevcut oturuma bağla',
   'planView.link.noSessions': 'Kullanılabilir oturum yok',
   'planView.link.failed': 'Bu plan bağlanamadı. Tekrar deneyin.',
+  'planView.link.loadFailed': 'Oturumlar yüklenemedi.',
+  'planView.link.retry': 'Tekrar dene',
   'planView.actions.copyPlanContents': 'Plan içeriğini kopyala',
   'planView.state.loading': 'Yükleniyor...',
   'diffView.binary.unavailable': 'Bu dosyanın içeriği görüntülenemiyor.',

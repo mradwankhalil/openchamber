@@ -1859,6 +1859,8 @@ export const dict: Record<I18nKey, string> = {
   "planView.actions.linkToExistingSession": "Пов’язати з наявною сесією",
   "planView.link.noSessions": "Немає доступних сесій",
   "planView.link.failed": "Не вдалося пов’язати цей план. Спробуйте ще раз.",
+  "planView.link.loadFailed": "Не вдалося завантажити сесії.",
+  "planView.link.retry": "Спробувати ще раз",
   "planView.actions.copyPlanContents": "Скопіювати вміст плану",
   "planView.state.loading": "Завантаження...",
   "diffView.binary.unavailable": "Вміст цього файлу не можна переглянути.",

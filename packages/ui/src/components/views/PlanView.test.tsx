@@ -13,9 +13,12 @@ type PlanFixture = {
   mutations: Array<{ path: string; method: string; body: unknown }>;
   linkResponse: { status: number };
   navigations: string[];
+  sessionLoad: { fail: boolean; calls: number };
 };
 
-const withPlanView = async (run: (fixture: PlanFixture) => Promise<void>, options: { managedChat?: boolean; emptySessions?: boolean } = {}) => {
+type PlanFixtureOptions = { managedChat?: boolean; emptySessions?: boolean; failedSessionLoad?: boolean; archivedGlobal?: Session[] };
+
+const withPlanView = async (run: (fixture: PlanFixture) => Promise<void>, options: PlanFixtureOptions = {}) => {
   const dom = new Window({ url: 'http://runtime.test' });
   const originals = new Map<string, PropertyDescriptor | undefined>();
   for (const [name, value] of Object.entries({
@@ -39,9 +42,14 @@ const withPlanView = async (run: (fixture: PlanFixture) => Promise<void>, option
   const linkResponse = { status: 200 };
   const navigations: string[] = [];
   globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(input instanceof Request ? input.url : String(input), 'http://runtime.test');
-    if (init?.method && init.method !== 'GET' && url.pathname !== '/auth/url-token') {
-      mutations.push({ path: url.pathname, method: init.method, body: init.body ? JSON.parse(String(init.body)) : null });
+    const request = input instanceof Request ? input : null;
+    const url = new URL(request ? request.url : String(input), 'http://runtime.test');
+    // Read method and body from either call form, so a Request-based SDK call is recorded too.
+    const method = (init?.method ?? request?.method ?? 'GET').toUpperCase();
+    const rawBody = init?.body != null ? String(init.body) : request && method !== 'GET' && method !== 'HEAD' ? await request.clone().text() : '';
+    const body: unknown = rawBody ? JSON.parse(rawBody) : null;
+    if (method !== 'GET' && method !== 'HEAD' && url.pathname !== '/auth/url-token') {
+      mutations.push({ path: url.pathname, method, body });
     }
     if (url.pathname.endsWith('/plans/A/session')) {
       if (linkResponse.status !== 200) return Response.json({ error: 'Link failed' }, { status: linkResponse.status });
@@ -52,8 +60,8 @@ const withPlanView = async (run: (fixture: PlanFixture) => Promise<void>, option
     if (url.pathname === '/api/config/settings') return Response.json({});
     if (url.pathname.endsWith('/event')) return new Response(new ReadableStream(), { headers: { 'Content-Type': 'text/event-stream' } });
     if (url.pathname.endsWith('/plans/A')) {
-      if (init?.method === 'PUT') {
-        const { raw } = z.object({ raw: z.string() }).parse(JSON.parse(String(init.body)));
+      if (method === 'PUT') {
+        const { raw } = z.object({ raw: z.string() }).parse(body);
         writes.push(raw);
         stored.raw = raw;
         return Response.json({ plan: link, raw });
@@ -78,9 +86,23 @@ const withPlanView = async (run: (fixture: PlanFixture) => Promise<void>, option
     cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     time: { created: 1, updated: 2 },
   };
+  const sessionLoad = { fail: options.failedSessionLoad === true, calls: 0 };
   useGlobalSessionsStore.setState({
-    activeSessions: options.emptySessions ? [] : [existing, { ...existing, id: 'ses_archived', title: 'Archived', time: { ...existing.time, archived: 3 } }],
-    loadSessions: async () => ({ activeSessions: [existing], archivedSessions: [] }),
+    activeSessions: options.emptySessions || options.failedSessionLoad ? [] : [existing, { ...existing, id: 'ses_archived', title: 'Archived', time: { ...existing.time, archived: 3 } }],
+    archivedSessions: options.archivedGlobal ?? [],
+    status: options.failedSessionLoad ? 'idle' : 'ready',
+    // Stands in for the global load: a cold failure leaves nothing listed, a later success lists the session.
+    loadSessions: async () => {
+      sessionLoad.calls += 1;
+      if (sessionLoad.fail) {
+        useGlobalSessionsStore.setState({ status: 'error' });
+        return { activeSessions: [], archivedSessions: [] };
+      }
+      if (options.failedSessionLoad) useGlobalSessionsStore.setState({ activeSessions: [existing] });
+      useGlobalSessionsStore.setState({ status: 'ready' });
+      const state = useGlobalSessionsStore.getState();
+      return { activeSessions: state.activeSessions, archivedSessions: state.archivedSessions };
+    },
   });
   const { PlanView } = await import('./PlanView');
   const projectRef = { id: options.managedChat ? 'openchamber:chats' : 'plan-fixture', path: '/plan-fixture' };
@@ -97,7 +119,7 @@ const withPlanView = async (run: (fixture: PlanFixture) => Promise<void>, option
       </SyncProvider>
     </RuntimeAPIContext.Provider></ThemeSystemProvider></I18nProvider>));
     await wait(30);
-    await run({ host, wait, stored, writes, mutations, linkResponse, navigations });
+    await run({ host, wait, stored, writes, mutations, linkResponse, navigations, sessionLoad });
   } finally {
     await act(async () => root.unmount());
     useProjectContextStore.getState().reset();
@@ -174,6 +196,24 @@ const openLinkPicker = async (host: HTMLElement, wait: PlanFixture['wait'], acti
   await wait(30);
 };
 
+const openLinkDialog = async (host: HTMLElement, wait: PlanFixture['wait']) => {
+  const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="Implement"]');
+  if (!trigger) throw new Error('Missing Implement');
+  await act(async () => trigger.click());
+  const link = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === 'Link to existing session');
+  if (!link) throw new Error('Missing link');
+  await act(async () => link.click());
+  await wait(30);
+};
+
+const openPickerOptions = async (wait: PlanFixture['wait']) => {
+  const picker = document.querySelector<HTMLElement>('[role="dialog"] [role="combobox"]');
+  if (!picker) throw new Error('Missing picker');
+  await act(async () => picker.click());
+  await wait(30);
+  return [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((option) => option.textContent ?? '');
+};
+
 const confirmLink = async (wait: PlanFixture['wait']) => {
   const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
     .find((button) => button.textContent === 'Link to existing session');
@@ -226,6 +266,60 @@ test('a plan with no available sessions cannot confirm a link', async () => {
     await wait(30);
     expect(document.body.textContent).toContain('No sessions available');
   }, { emptySessions: true });
+}, 20_000);
+
+test('an archived session stays out of the picker when a directory store keeps an unarchived copy', async () => {
+  const base = {
+    projectID: 'project', directory: '/plan-fixture', cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  };
+  const archived: Session = { ...base, id: 'ses_done', title: 'Done elsewhere', time: { created: 1, updated: 2, archived: 3 } };
+  await withPlanView(async ({ host, wait }) => {
+    const { getSyncChildStores } = await import('@/sync/sync-refs');
+    const store = getSyncChildStores().getChild('/plan-fixture');
+    if (!store) throw new Error('Expected mounted directory store');
+    // Stale live copies: the archived session without time.archived, a listed session
+    // with an old title, and one session no global list has seen yet.
+    await act(async () => store.setState({ session: [
+      { ...archived, time: { created: 1, updated: 9 } },
+      { ...base, id: 'ses_existing', title: 'Stale live title', time: { created: 1, updated: 9 } },
+      { ...base, id: 'ses_live_only', title: 'Only in the live store', time: { created: 1, updated: 4 } },
+    ] }));
+    try {
+      await openLinkDialog(host, wait);
+      const options = await openPickerOptions(wait);
+      expect(options.some((option) => option.includes('Done elsewhere'))).toBe(false);
+      expect(options.some((option) => option.includes('Stale live title'))).toBe(false);
+      expect(options.some((option) => option.includes('Already working on it'))).toBe(true);
+      expect(options.some((option) => option.includes('Only in the live store'))).toBe(true);
+    } finally {
+      // The directory store outlives this mount; later tests must not inherit these copies.
+      await act(async () => store.setState({ session: [] }));
+    }
+  }, { archivedGlobal: [archived] });
+}, 20_000);
+
+test('a failed cold session load shows an error with retry instead of an empty list', async () => {
+  await withPlanView(async ({ host, wait, mutations, sessionLoad }) => {
+    await openLinkDialog(host, wait);
+    expect(sessionLoad.calls).toBeGreaterThan(0);
+    const alert = document.querySelector<HTMLElement>('[role="dialog"] [role="alert"]');
+    expect(alert?.textContent).toContain('Could not load sessions.');
+    expect(document.body.textContent).not.toContain('No sessions available');
+    const options = await openPickerOptions(wait);
+    expect(options).toEqual(['Could not load sessions.']);
+
+    sessionLoad.fail = false;
+    const retry = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === 'Retry');
+    if (!retry) throw new Error('Missing retry');
+    const callsBeforeRetry = sessionLoad.calls;
+    await act(async () => retry.click());
+    await wait(30);
+    expect(sessionLoad.calls).toBe(callsBeforeRetry + 1);
+    expect(document.querySelector('[role="dialog"] [role="alert"]')).toBeNull();
+    expect((await openPickerOptions(wait)).some((option) => option.includes('Already working on it'))).toBe(true);
+    expect(mutations).toEqual([]);
+  }, { failedSessionLoad: true });
 }, 20_000);
 
 test('cancelling the picker does not link, and a failed link stays open for retry', async () => {

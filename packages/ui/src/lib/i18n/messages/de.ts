@@ -1639,6 +1639,8 @@ export const dict = {
   'planView.actions.linkToExistingSession': 'Mit bestehender Sitzung verknüpfen',
   'planView.link.noSessions': 'Keine Sitzungen verfügbar',
   'planView.link.failed': 'Der Plan konnte nicht verknüpft werden. Bitte erneut versuchen.',
+  'planView.link.loadFailed': 'Sitzungen konnten nicht geladen werden.',
+  'planView.link.retry': 'Erneut versuchen',
   'planView.actions.copyPlanContents': 'Plan-Inhalt kopieren',
   'planView.state.loading': 'Wird geladen...',
   'diffView.binary.unavailable': 'Der Inhalt dieser Datei kann nicht angezeigt werden.',

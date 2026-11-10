@@ -1886,6 +1886,8 @@ export const dict: Record<I18nKey, string> = {
   'planView.actions.linkToExistingSession': '連結至現有會話',
   'planView.link.noSessions': '沒有可用的會話',
   'planView.link.failed': '無法連結此計畫，請重試。',
+  'planView.link.loadFailed': '無法載入會話。',
+  'planView.link.retry': '重試',
   'planView.actions.copyPlanContents': '複製計畫內容',
   'planView.state.loading': '載入中...',
   'diffView.binary.unavailable': '該檔案內容無法查看。',

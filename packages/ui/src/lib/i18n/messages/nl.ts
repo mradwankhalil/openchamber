@@ -1898,6 +1898,8 @@ export const dict = {
   'planView.actions.linkToExistingSession': 'Koppelen aan bestaande sessie',
   'planView.link.noSessions': 'Geen sessies beschikbaar',
   'planView.link.failed': 'Kan dit plan niet koppelen. Probeer het opnieuw.',
+  'planView.link.loadFailed': 'Kan sessies niet laden.',
+  'planView.link.retry': 'Opnieuw proberen',
   'planView.actions.copyPlanContents': 'Inhoud van plan kopiëren',
   'planView.state.loading': 'Laden...',
   'diffView.binary.unavailable': 'De inhoud van dit bestand kan niet worden getoond.',
