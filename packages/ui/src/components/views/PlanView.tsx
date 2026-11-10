@@ -43,6 +43,7 @@ import { useInContextPanelHeader } from '@/components/layout/contextPanelHeaderS
 import { cn } from '@/lib/utils';
 import { useMarkdownLocalAssets } from './files/previews/useMarkdownLocalAssets';
 import { watchFileOnScreen } from '@/lib/watchedFiles';
+import { PlanSessionLinkDialog } from './PlanSessionLinkDialog';
 
 /** The open plan's check while OpenCode watches its file: only for a watch lost on an OpenCode restart. */
 const WATCHED_PLAN_POLL_MS = 30_000;
@@ -179,9 +180,9 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
   // Managed chats have no project directory to create a session in: their
   // sessions live in per-session directories under the chats root, which
   // createSession cannot prepare. Until a managed-chat send path exists,
-  // Improve/Implement stay unavailable for plans stored under the Chats
-  // owner — an OpenCode session created directly in the shared root would
-  // break the managed-chats model.
+  // sending to a new session stays unavailable for plans stored under the
+  // Chats owner — an OpenCode session created directly in the shared root
+  // would break the managed-chats model. Linking an existing session is safe.
   const isManagedChatPlan = savedPlanProjectRef?.id === CHAT_DRAFT_PROJECT_ID;
   const canCreateWorktree = React.useMemo(
     () => {
@@ -193,6 +194,8 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
   );
   const [pendingPlanSend, setPendingPlanSend] = React.useState<PendingPlanSend | null>(null);
   const [isPlanSendSubmitting, setIsPlanSendSubmitting] = React.useState(false);
+  const [linkSessionOpen, setLinkSessionOpen] = React.useState(false);
+  React.useEffect(() => { setLinkSessionOpen(false); }, [savedPlanKey]);
 
   // Set once a saved project plan has actually loaded.
   const [loadedProjectPlanId, setLoadedProjectPlanId] = React.useState<string | null>(null);
@@ -800,9 +803,15 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
       </DropdownMenuItem>
       <DropdownMenuItem
         onClick={() => setPendingPlanSend({ action, target: 'worktree' })}
-        disabled={!canCreateWorktree}
+        disabled={isManagedChatPlan || !canCreateWorktree}
       >
         {t('planView.actions.sendToNewWorktreeSession')}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onClick={() => setLinkSessionOpen(true)}
+        disabled={!savedPlanProjectRef || !savedPlanId}
+      >
+        {t('planView.actions.linkToExistingSession')}
       </DropdownMenuItem>
     </>
   );
@@ -855,14 +864,14 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
                 id: 'improve',
                 label: t('planView.actions.improve'),
                 icon: 'loop-right-ai',
-                disabled: !content.trim() || isManagedChatPlan,
+                disabled: !content.trim(),
                 menu: sendMenu('improve'),
               },
               {
                 id: 'implement',
                 label: t('planView.actions.implement'),
                 icon: 'code-ai',
-                disabled: !content.trim() || isManagedChatPlan,
+                disabled: !content.trim(),
                 menu: sendMenu('implement'),
               },
             ],
@@ -908,6 +917,14 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
         allowRunAsGoal={pendingPlanSend?.action === 'implement'}
         onConfirm={handleConfirmPlanSend}
       />
+
+      {linkSessionOpen && savedPlanProjectRef && savedPlanId ? (
+        <PlanSessionLinkDialog
+          key={savedPlanKey}
+          target={{ projectRef: savedPlanProjectRef, planId: savedPlanId }}
+          onClose={() => setLinkSessionOpen(false)}
+        />
+      ) : null}
 
       <div className="flex-1 min-h-0 min-w-0 relative">
         <ScrollableOverlay outerClassName="h-full min-w-0" className="h-full min-w-0">
