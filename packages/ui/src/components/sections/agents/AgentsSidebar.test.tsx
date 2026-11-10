@@ -39,6 +39,9 @@ afterEach(async () => {
 
 const agent = (name: string, extra: Record<string, unknown> = {}) => ({
   name,
+  id: name,
+  displayName: name,
+  hidden: false,
   description: `${name} description`,
   mode: 'primary' as const,
   request: { settings: {}, headers: {}, body: {} },
@@ -56,8 +59,8 @@ test('a hidden agent keeps its editable row and carries a hidden badge', async (
       ],
     },
     disabledAgentsByDirectory: { __default__: [] },
-    loadAgents: async () => {},
-    loadDisabledAgents: async () => {},
+    loadAgents: async () => true,
+    loadDisabledAgents: async () => true,
   });
 
   await act(async () => {
